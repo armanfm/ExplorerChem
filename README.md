@@ -1071,6 +1071,19 @@ Tool results will be published only after execution and human review. This READM
 
 This distinction prevents planned architecture from being presented as completed functionality.
 
+## Current deployment
+
+The current contract is deployed on the Ethereum Sepolia testnet:
+
+| Contract | Address | Explorer |
+|---|---|---|
+| ExploreChemRegistry | `0xAfbE9a85bc94A7C895AE33e22B268049A7ea59F2` | [Sepolia Etherscan](https://sepolia.etherscan.io/address/0xAfbE9a85bc94A7C895AE33e22B268049A7ea59F2) |
+
+The frontend and staging CRE configuration use this address for testnet
+interactions. The contract was deployed with the Chainlink KeystoneForwarder
+for Ethereum Sepolia. Secrets, service-role keys and private salts are not
+included in the repository.
+
 ### Integration change
 
 The corrected `CREReport` is a static 288-byte ABI tuple in this order:
@@ -1148,5 +1161,3 @@ Responsible for technical leadership, software and system architecture, smart-co
 Responsible for product leadership, problem framing, requirements, user experience, business validation, product communication, and presentation strategy.
 
 The original concept and product vision belong to Armando Freire and Jéssica. All final product decisions, source code, documentation, demonstrations, and submissions are reviewed and approved by the ExploreChem team. The team retains full authorship and responsibility for the project.
-
-
