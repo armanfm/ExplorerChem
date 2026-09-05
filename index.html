@@ -640,6 +640,20 @@ let ELEMENTOS=[];
 /* Participantes cadastrados: id, nome, papel, praca, evid, desde, carteiras. */
 let ATORES=[];
 let ATOR_ATIVO=null;
+const actorTypeLabel={MINER:"Minerador",CARRIER:"Transportadora",LABORATORY:"Laboratório",PROCESSOR:"Processador",REFINER:"Purificador",RECYCLER:"Reciclador",MANUFACTURER:"Fabricante",OTHER:"Outro"};
+function persistirAtoresLocais(){try{localStorage.setItem("explorechem_demo_actors",JSON.stringify(ATORES));}catch(e){}}
+function carregarAtoresLocais(){try{const saved=JSON.parse(localStorage.getItem("explorechem_demo_actors")||"[]");if(Array.isArray(saved))ATORES=saved;}catch(e){}}
+async function carregarAtores(){
+  carregarAtoresLocais();
+  try{
+    const {data,error}=await supabaseClient.from("explorerchem_actors").select("id,actor_id,display_name,actor_type,country_code,created_at").order("created_at",{ascending:false});
+    if(!error&&Array.isArray(data)){
+      ATORES=data.map(a=>({dbId:a.id,id:a.actor_id,nome:a.display_name,papel:actorTypeLabel[a.actor_type]||a.actor_type,praca:a.country_code||"—",carteiras:1,evid:0,desde:a.created_at?new Date(a.created_at).toLocaleDateString("pt-BR"):"—"}));
+      persistirAtoresLocais();
+    } else if(error) console.warn("Não foi possível carregar atores do Supabase:",error.message);
+  }catch(error){console.warn("Falha ao carregar atores:",error.message);}
+  if(document.readyState!=="loading") render();
+}
 function novoActorId(){
   if(window.crypto&&typeof window.crypto.getRandomValues==='function'){
     const bytes=new Uint8Array(32); window.crypto.getRandomValues(bytes);
@@ -749,6 +763,11 @@ let walletAddress="";
 let walletChainId="";
 const $=s=>document.querySelector(s);
 let chartInstances=[];
+function getWalletProvider(){
+  const providers=window.ethereum&&window.ethereum.providers;
+  if(Array.isArray(providers)) return providers.find(p=>p.isMetaMask)||providers[0];
+  return window.ethereum;
+}
 
 function chartTheme(){
   const styles=getComputedStyle(document.documentElement);
@@ -805,14 +824,15 @@ function renderWallet(){
 }
 
 async function connectWallet(){
-  if(!window.ethereum){
+  const provider=getWalletProvider();
+  if(!provider){
     toast("Nenhuma carteira Web3 foi detectada neste navegador.");
     return;
   }
   try{
-    const contas=await window.ethereum.request({method:"eth_requestAccounts"});
+    const contas=await provider.request({method:"eth_requestAccounts"});
     walletAddress=contas[0]||"";
-    walletChainId=await window.ethereum.request({method:"eth_chainId"});
+    walletChainId=await provider.request({method:"eth_chainId"});
     renderWallet();
     toast(walletChainId==="0xaa36a7"?"Carteira conectada à Sepolia.":"Carteira conectada. Troque a rede para Sepolia antes de assinar.");
   }catch(error){
@@ -821,11 +841,12 @@ async function connectWallet(){
 }
 
 async function restoreWallet(){
-  if(!window.ethereum||role==="cli") return;
+  const provider=getWalletProvider();
+  if(!provider||role==="cli") return;
   try{
-    const contas=await window.ethereum.request({method:"eth_accounts"});
+    const contas=await provider.request({method:"eth_accounts"});
     walletAddress=contas[0]||"";
-    walletChainId=walletAddress?await window.ethereum.request({method:"eth_chainId"}):"";
+    walletChainId=walletAddress?await provider.request({method:"eth_chainId"}):"";
     renderWallet();
   }catch(error){ renderWallet(); }
 }
@@ -838,8 +859,9 @@ function disconnectWallet(){
 }
 
 async function refreshWalletChain(){
-  if(!window.ethereum) return "";
-  walletChainId=await window.ethereum.request({method:"eth_chainId"});
+  const provider=getWalletProvider();
+  if(!provider) return "";
+  walletChainId=await provider.request({method:"eth_chainId"});
   renderWallet();
   return walletChainId;
 }
@@ -1490,7 +1512,7 @@ function render(){
     const actorType={"Minerador":"MINER","Transportadora":"CARRIER","Laboratório":"LABORATORY","Purificador":"REFINER","Reciclador":"RECYCLER","Fabricante":"MANUFACTURER"}[papel]||"OTHER";
     try{
       if(!window.ethers) throw new Error("Biblioteca Web3 não carregou");
-      const provider=new ethers.BrowserProvider(window.ethereum);
+      const provider=new ethers.BrowserProvider(getWalletProvider());
       const signer=await provider.getSigner();
       const abi=["function registerActor(bytes32 actorId, address controller) external"];
       const contract=new ethers.Contract(EXPLORERCHEM_CONTRACT_ADDRESS,abi,signer);
@@ -1501,7 +1523,7 @@ function render(){
         active:true, onchain_registered_at:new Date().toISOString(), onchain_registration_tx:receipt.hash
       }).select("id,actor_id,display_name,actor_type").single();
       if(error) throw new Error("Blockchain confirmada, mas o Supabase recusou o cadastro: "+error.message);
-      novo.dbId=row.id; ATORES.push(novo); ATOR_ATIVO=novo.id;
+      novo.dbId=row.id; ATORES.push(novo); ATOR_ATIVO=novo.id; persistirAtoresLocais();
       toast("Ator cadastrado na blockchain e no Supabase.");
       setTimeout(()=>render(),450);
     }catch(error){
@@ -1540,12 +1562,15 @@ $("#home").onclick=function(){page=NAVS[role][0][0];render();};
 
 render();
 restoreWallet();
-if(window.ethereum&&typeof window.ethereum.on==="function"){
-  window.ethereum.on("accountsChanged",contas=>{walletAddress=contas[0]||"";renderWallet();});
-  window.ethereum.on("chainChanged",chainId=>{walletChainId=chainId;renderWallet();});
+carregarAtores();
+const walletProvider=getWalletProvider();
+if(walletProvider&&typeof walletProvider.on==="function"){
+  walletProvider.on("accountsChanged",contas=>{walletAddress=contas[0]||"";if(!walletAddress)walletChainId="";renderWallet();});
+  walletProvider.on("chainChanged",chainId=>{walletChainId=chainId;renderWallet();});
 }
 </script>
 </body>
 </html>
+
 
 
