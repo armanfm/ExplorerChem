@@ -51,6 +51,9 @@ button{font:inherit;color:inherit;cursor:pointer;border:0;background:none}
 .session-copy{display:flex;flex-direction:column;line-height:1.3}.session-copy b{font-size:13px;font-weight:500}
 .session-copy span{font-size:12px;color:var(--mute)}
 .wallet-area{margin-left:auto;display:flex;align-items:center}
+.role-switch{display:flex;align-items:center;gap:7px;margin-left:auto}
+.role-switch label{margin:0;color:var(--mute);font-size:11px}
+.role-switch select{width:auto;padding:6px 8px;font-size:12px;border-radius:7px}
 .wallet-connect{display:flex;align-items:center;gap:8px;padding:8px 12px;border:1px solid var(--rule2);
   border-radius:9px;background:var(--panel);font-size:13px;font-weight:500}
 .wallet-connect:hover{border-color:var(--nd);background:var(--nd-soft);color:var(--nd)}
@@ -577,6 +580,12 @@ input:focus,select:focus{border-color:var(--nd);outline:3px solid var(--nd-soft)
   <div class="system-state" aria-label="Sistema operacional e verificado">
     <span class="live-dot"></span><span><b>Ambiente verificado</b><small>dados privados · provas públicas</small></span>
   </div>
+  <div class="role-switch"><label for="roleSelector">Mudar visão</label><select id="roleSelector" aria-label="Mudar visão do sistema">
+    <option value="op">Operador</option>
+    <option value="forn">Fornecedor</option>
+    <option value="transp">Transportadora</option>
+    <option value="cli">Cliente</option>
+  </select></div>
   <div class="wallet-area" id="walletArea"></div>
   <div class="session" id="session" aria-label="Usuário autenticado"></div>
 </header>
@@ -1478,6 +1487,14 @@ function render(){
   $("#session").innerHTML='<span class="session-avatar">'+sessao.iniciais+'</span>'+ 
     '<span class="session-copy"><b>'+sessao.nome+'</b><span>'+sessao.acesso+'</span></span>';
   renderWallet();
+  const roleSelector=$("#roleSelector");
+  if(roleSelector){
+    roleSelector.value=role;
+    roleSelector.onchange=function(){
+      const next=this.value;
+      window.location.href=window.location.pathname+(next==="op"?"":"?role="+encodeURIComponent(next));
+    };
+  }
   $("#nav").innerHTML=NAVS[role].map(n=>
     '<button data-page="'+n[0]+'"'+(n[0]===page?' aria-current="page"':'')+'>'+n[1]+'</button>').join("");
   $("#nav").querySelectorAll("button").forEach(b=>
@@ -1571,6 +1588,3 @@ if(walletProvider&&typeof walletProvider.on==="function"){
 </script>
 </body>
 </html>
-
-
-
