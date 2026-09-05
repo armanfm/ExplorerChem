@@ -217,6 +217,15 @@ Evidence may include:
 - transformation record;
 - manufacturing or recycling record.
 
+### Demo actor navigation
+
+The MVP includes an actor selector below the registration form. After an actor is registered, the operator can select that actor to navigate through the system using the actor's role and visibility scope.
+
+This is a demonstration mechanism that avoids requiring a separate login and wallet for every fictional participant. The connected wallet signs the registration transaction, while each actor receives its own stable `actorId`.
+
+The `actorId` is a randomly generated opaque identifier stored as `actor_id` in Supabase and registered as `actorId` on-chain. It is unique, but it is not a transferable token, NFT, credential, or access key.
+
+In production, this selector will be replaced by verified identity, authenticated accounts, wallet authorization, and backend/RLS access policies.
 ---
 
 ## 7. On-chain data
