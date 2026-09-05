@@ -593,6 +593,7 @@ input:focus,select:focus{border-color:var(--nd);outline:3px solid var(--nd-soft)
 
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="https://cdn.jsdelivr.net/npm/ethers@6.13.5/dist/ethers.umd.min.js"></script>
 
 <script>
 const SUPABASE_URL = "https://mnmflnqmohgsxgavwenn.supabase.co";
@@ -636,6 +637,14 @@ let ELEMENTOS=[];
 
 /* Participantes cadastrados: id, nome, papel, praca, evid, desde, carteiras. */
 let ATORES=[];
+let ATOR_ATIVO=null;
+function novoActorId(){
+  if(window.crypto&&typeof window.crypto.getRandomValues==='function'){
+    const bytes=new Uint8Array(32); window.crypto.getRandomValues(bytes);
+    return '0x'+Array.from(bytes).map(b=>b.toString(16).padStart(2,'0')).join('');
+  }
+  return '0x'+Array.from({length:32},()=>Math.floor(Math.random()*256).toString(16).padStart(2,'0')).join('');
+}
 
 /* Evidências do lote: id, ator, papel, doc, ref, corrente, base, status,
    enviada, calculationRole, correlationGroupId e transferId. */
@@ -1140,8 +1149,12 @@ T.cadastro=()=>
   '<p class="sub">O cadastro grava uma transação: identidade e carteira vão para a blockchain. '+
   'Razão social e contato ficam apenas aqui.</p><div class="split">'+
   '<div class="panel pad"><h3>Identificação</h3>'+
-  '<div class="field"><label for="rs">Razão social</label>'+
-  '<input id="rs" placeholder="Nome empresarial completo"></div>'+
+  '<div class="field"><label for="rs">Razão social</label>'+ 
+  '<input id="rs" placeholder="Nome empresarial completo"></div>'+ 
+  '<div class="field"><label for="actorId">Identificador único da empresa</label>'+ 
+  '<div style="display:flex;gap:8px"><input id="actorId" class="mono" readonly style="flex:1" value="'+novoActorId()+'">'+ 
+  '<button type="button" class="btn ghost sm" id="gerarActorId">Gerar</button></div>'+ 
+  '<p class="sm">Identificador opaco para referência no sistema; não é token transferível nem ativo blockchain.</p></div>'+ 
   '<div class="f2"><div class="field"><label for="pr">Praça de operação</label>'+
   '<input id="pr" placeholder="Cidade, UF"></div>'+
   '<div class="field"><label for="pa">País</label><input id="pa" placeholder="País"></div></div>'+
@@ -1165,8 +1178,15 @@ T.cadastro=()=>
   '<dt>O que acontece depois do destinatário</dt><dd><span class="tag t-pend">Não</span></dd>'+
   '<dt>Documentos de terceiros</dt><dd><span class="tag t-pend">Não</span></dd>'+
   '<dt>Massas e teores de outras correntes</dt><dd><span class="tag t-pend">Não</span></dd></dl></div>'+
-  '<div class="actions"><button class="btn" id="salvarAtor">Cadastrar e assinar</button>'+
-  '<button class="btn ghost">Cancelar</button></div></div></div>';
+  '<div class="actions"><button class="btn" id="salvarAtor">Cadastrar e assinar</button>'+ 
+  '<button class="btn ghost">Cancelar</button></div></div></div>'+ 
+  '<section class="panel pad actor-switcher"><h3>Navegar como ator</h3>'+ 
+  '<p class="sm">Selecione um participante para visualizar sua experiência no MVP. Os dados abaixo são fictícios.</p>'+ 
+  '<div class="f2"><div class="field"><label for="atorSelecionado">Ator da demonstração</label>'+ 
+  '<select id="atorSelecionado"><option value="">Nenhum ator cadastrado ainda</option>'+ 
+  ATORES.map(a=>'<option value="'+val(a.id)+'"'+(ATOR_ATIVO===a.id?' selected':'')+'>'+val(a.nome)+' · '+val(a.papel)+'</option>').join('')+ 
+  '</select></div><div id="atorSelecionadoInfo" class="note">'+ 
+  (ATOR_ATIVO?'Perfil ativo selecionado.':'Cadastre um ator para habilitar a navegação.')+'</div></div></section>';
 
 /* ---------------- Participante ---------------- */
 
@@ -1437,7 +1457,46 @@ function render(){
     if(walletChainId!=="0xaa36a7"){toast("Troque a carteira para a rede Sepolia antes de assinar.");return;}
     toast(msg);
   };};
-  bindOnchain("#salvarAtor","Ator cadastrado. Identidade e carteira assinadas na Sepolia.");
+  const salvarAtor=$("#salvarAtor");
+  if(salvarAtor) salvarAtor.onclick=async function(e){
+    e.preventDefault();
+    if(!walletAddress){toast("Conecte uma carteira autorizada antes de continuar.");return;}
+    if(walletChainId!=="0xaa36a7"){toast("Troque a carteira para a rede Sepolia antes de assinar.");return;}
+    const nome=$("#rs")?.value.trim(), papel=$("#papeis .chip[aria-pressed=\"true\"]")?.textContent.trim();
+    if(!nome||!papel){toast("Informe a razão social e selecione um papel.");return;}
+    const novo={id:$("#actorId")?.value||novoActorId(),nome,papel,praca:$("#pr")?.value||"—",carteiras:1,evid:0,desde:new Date().toLocaleDateString("pt-BR")};
+    if(ATORES.some(a=>a.id===novo.id)){toast("Identificador já usado. Gere outro antes de cadastrar.");return;}
+    salvarAtor.disabled=true; salvarAtor.textContent="Assinando…";
+    const actorType={"Minerador":"MINER","Transportadora":"CARRIER","Laboratório":"LABORATORY","Purificador":"REFINER","Reciclador":"RECYCLER","Fabricante":"MANUFACTURER"}[papel]||"OTHER";
+    try{
+      if(!window.ethers) throw new Error("Biblioteca Web3 não carregou");
+      const provider=new ethers.BrowserProvider(window.ethereum);
+      const signer=await provider.getSigner();
+      const abi=["function registerActor(bytes32 actorId, address controller) external"];
+      const contract=new ethers.Contract(EXPLORERCHEM_CONTRACT_ADDRESS,abi,signer);
+      const tx=await contract.registerActor(novo.id,walletAddress);
+      const receipt=await tx.wait();
+      const {data:row,error}=await supabaseClient.from("explorerchem_actors").insert({
+        actor_id:novo.id, display_name:nome, actor_type:actorType, country_code:($("#pa")?.value||"BR").slice(0,2).toUpperCase(),
+        active:true, onchain_registered_at:new Date().toISOString(), onchain_registration_tx:receipt.hash
+      }).select("id,actor_id,display_name,actor_type").single();
+      if(error) throw new Error("Blockchain confirmada, mas o Supabase recusou o cadastro: "+error.message);
+      novo.dbId=row.id; ATORES.push(novo); ATOR_ATIVO=novo.id;
+      toast("Ator cadastrado na blockchain e no Supabase.");
+      setTimeout(()=>render(),450);
+    }catch(error){
+      console.error(error); toast(error.message||"Não foi possível concluir o cadastro.");
+      salvarAtor.disabled=false; salvarAtor.textContent="Cadastrar e assinar";
+    }
+  };
+  const gerarActorId=$("#gerarActorId");
+  if(gerarActorId) gerarActorId.onclick=function(){
+    let id;
+    do { id=novoActorId(); } while(ATORES.some(a=>a.id===id));
+    const campo=$("#actorId"); if(campo) campo.value=id;
+  };
+  const atorSelecionado=$("#atorSelecionado");
+  if(atorSelecionado) atorSelecionado.onchange=function(){ATOR_ATIVO=this.value||null;toast(ATOR_ATIVO?"Perfil do ator selecionado para navegação.":"Nenhum ator selecionado.");};
   bindOnchain("#enviarEv","Evidência enviada. Hash gravado, estado pendente.");
   bindOnchain("#enviarTransporte","Entrega registrada. EvidenceHash ancorado como PENDING.");
   bind("#enviarConvite","Convite enviado para este resultado.");
@@ -1468,4 +1527,3 @@ if(window.ethereum&&typeof window.ethereum.on==="function"){
 </script>
 </body>
 </html>
-
