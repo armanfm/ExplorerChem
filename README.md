@@ -41,7 +41,7 @@ ExploreChem combines private processing with public cryptographic commitments:
 - hashes prove which document version was submitted;
 - independent documents are correlated inside a protected environment;
 - mass balance is calculated by lot and chemical element;
-- each authorized participant receives a private result commitment;
+- each authorized participant receives its own publicly anchored, privately salted result commitment;
 - previous result versions remain available instead of being overwritten.
 
 ---
@@ -141,7 +141,7 @@ ExploreChem may receive evidence from:
 | Company or actor | Own evidence, direct relationships, and authorized results |
 | Carrier | Assigned pickup, delivery, and incident information |
 | Invited client | Specifically shared dashboard and downloads |
-| Public blockchain observer | Opaque identifiers, hashes, minimal states, and versions |
+| Public blockchain observer | Opaque actor/evidence/result IDs, wallets, hashes, states, revision links, calldata, events and block times |
 
 The private correlation identifier never grants access. Authorization is enforced independently by application and database policies.
 
@@ -185,6 +185,12 @@ mapping(bytes32 actorId => mapping(address wallet => bool authorized))
 `actorId` is a stable logical identity. An organization can add or replace wallets without changing its historical identifier.
 
 Actor registration does not use evidence states such as `PENDING`, `MATCHED`, `FAILED`, or `REVOKED`. Wallet authorization is managed directly by the identity registry.
+
+`registerActor` is owner-only. Connecting a wallet or choosing a role in the UI
+does not register an actor on-chain. A wallet proves control of a key, not a
+verified company identity or mining authorization. The demonstration uses
+fictional organizations; real-world identity checks and customer onboarding
+are production requirements, not claimed as completed by this MVP.
 
 ---
 
@@ -308,11 +314,15 @@ relationId
 verified graph edges
 
 credentials
+private result and input salts
 private endpoints
 access-control relationships
 ```
 
-There is no on-chain `metadataHash` and no metadata salt in this design.
+There is no on-chain `metadataHash`. The original `evidenceHash` remains the
+unsalted hash of the exact document bytes. Private salts ARE used for
+`resultHash` and `aggregateInputHash`; those salted commitments are described
+in Section 17. Neither salt nor its private manifest is sent on-chain.
 
 ---
 
@@ -457,6 +467,11 @@ CORRELATED
 
 The contract does not use `UNMATCHED` or `FAILED` evidence states.
 
+Each on-chain confirmation handles one evidence ID, not an array. The CRE
+sender must submit each confirmation in a separate transaction. New documents
+receive new IDs and start as `PENDING`; existing `MATCHED` records stay
+`MATCHED` when their relationships are revalidated off-chain.
+
 ---
 
 ## 13. CRE/TEE correlation workflow
@@ -560,7 +575,13 @@ The graph must support one-to-one, one-to-many, many-to-one, and many-to-many re
 
 > `correlationGroupId` accelerates discovery. It does not grant trust, access, or validity. Every relevant relationship is revalidated by the CRE/TEE.
 
-If a malicious database administrator changes or deletes a group, the CRE can reconstruct it from hash-verified documents and versioned rules. The group identifier is an index and cache, not a source of truth.
+If a database administrator changes or deletes a group, the CRE can reconstruct
+it from available hash-verified documents and versioned rules. The group
+identifier is an index and cache, not a source of truth. Reconstruction still
+requires access to the documents and a recovery path independent of group
+membership. Hashes do not restore deleted documents or prove that a database
+returned every eligible candidate; availability, backups and completeness
+checks remain infrastructure and workflow responsibilities.
 
 `correlationGroupId`, transfers, edges, and the commercial graph remain off-chain.
 
@@ -614,7 +635,10 @@ The carrier's quantity normally confirms the same physical flow declared by the 
 
 ## 16. Mass-balance workflow
 
-The current contract distinguishes correlation and mass balance through two workflow IDs. These are two logical responsibilities; the architecture does not require two independent CRE systems. They may share infrastructure while keeping payloads, permissions, and policies separate.
+The corrected contract receives both logical report types through `onReport`:
+an individual evidence confirmation or an individual partner balance result.
+One authorized workflow may perform both responsibilities. A distinct balance
+workflow ID is optional, not a requirement for two independent CRE systems.
 
 Mass balance is calculated **by lot**, not by a generic reconciliation period.
 
@@ -629,8 +653,9 @@ load candidate group
 → normalize mass, assay, units, and basis
 → calculate balance by chemical element
 → build a canonical private manifest
-→ apply privateNonce and calculate resultHash
-→ anchor a new version on-chain
+→ generate private salts per partner and revision
+→ calculate resultHash and aggregateInputHash
+→ anchor each partner's new version in a separate transaction
 ```
 
 ### Balance states
@@ -654,7 +679,9 @@ enum BalanceStatus {
 
 ## 17. Minimal private result per actor
 
-The contract records one result for each authorized actor. Related partners do not receive one shared public hash because identical hashes could reveal that they participate in the same operation.
+The contract records one result per actor and revision. Even when two partners
+share the same underlying balance, they receive different public commitments
+through different cryptographically random private salts.
 
 ```solidity
 struct BalanceResult {
@@ -662,13 +689,39 @@ struct BalanceResult {
     bytes32 actorId;
     bytes32 resultHash;
     bytes32 previousResultId;
+    bytes32 aggregateInputHash;
     BalanceStatus status;
     uint32 calculationVersion;
     uint64 createdAt;
 }
 ```
 
-Each `resultHash` is derived from the authorized private view created for that actor and a `privateNonce`. Balance reports are sent to the contract separately for each actor, preventing several partner identities from appearing together in one calldata payload.
+### Three different commitments
+
+| Field | What it commits to | Salt |
+| --- | --- | --- |
+| `evidenceHash` | Exact original document bytes | None; immutable after submission |
+| `aggregateInputHash` | Canonical private set of calculation inputs, including evidence IDs, document hashes and relevant versions | Fresh private input salt per partner and revision |
+| `resultHash` | Canonical private result manifest | Fresh private result salt per partner and revision |
+
+The term `privateNonce` in earlier project material means this private random
+salt; it is not a public transaction nonce. Use independent 32-byte
+cryptographically secure salts for input and result commitments, with distinct
+hash domains. Do not derive salts only from actor IDs, time or lot references.
+
+For each commitment, hash a versioned, unambiguous encoding of the domain,
+chain ID, registry address, actor ID, result revision, canonical private
+manifest hash and private salt. The same computed hash is saved in Supabase
+and on-chain. The private salt and manifest remain under access control and
+are provided only to authorized verifiers who need to reproduce the hash.
+Keep the same salts and hashes for a retry of the same result; use fresh salts
+for a new revision.
+
+Different salts prevent an identical balance or input set from becoming a
+shared public hash across partners. The contract cannot inspect salts or
+enforce their quality; the authenticated workflow must implement this rule.
+
+### Private result manifest
 
 The private manifest committed by `resultHash` includes:
 
@@ -681,14 +734,43 @@ The private manifest committed by `resultHash` includes:
 - extractor versions;
 - correlation-policy version;
 - normalization-rule version;
-- calculation version;
+- algorithm and factor-table versions;
+- result revision (`calculationVersion`);
 - result by chemical element;
 - final state;
-- calculation time or window;
+- calculation time and the relevant lot snapshot;
 - `previousResultId`;
-- `privateNonce`.
+- the reference to the private input manifest committed by `aggregateInputHash`.
 
-The group, evidence list, edges, quantities, calculations, and nonce remain private. On-chain data is limited to `resultId`, `actorId`, `resultHash`, `previousResultId`, state, calculation version, and timestamp.
+The group, evidence list, edges, quantities, calculations and salts remain
+private. The stored result contains `resultId`, `actorId`, `resultHash`,
+`previousResultId`, `aggregateInputHash`, status, revision and timestamp.
+
+### What aggregateInputHash does not prove by itself
+
+`aggregateInputHash` commits to the inputs without listing them publicly.
+The contract cannot derive the evidence list from that hash or check whether
+the hidden inputs were `MATCHED`. The authorized CRE/TEE must verify document
+hashes, re-extract and validate relationships, check input eligibility and
+completeness, prevent double counting, and perform the calculation.
+
+This is an explicit trust boundary of ExploreChem, not a claim that the
+contract independently verifies the private computation. Authentication of a
+workflow is not proof that its rules or implementation are correct.
+
+### Individual reports and transactions
+
+Each `onReport` invocation accepts one evidence confirmation OR one partner
+balance result. No arrays of evidence IDs or partner results are accepted.
+The CRE sender must submit each invocation as a separate transaction, without
+a multicall or external batch combining partners. One record per contract
+call alone cannot prevent an external transaction from composing calls.
+
+The current `BalanceResultAnchored` event retains indexed `actorId`.
+The field supports public association with the registered actor; the stored
+`actorId` also lets the contract reject cross-actor history links. Removing
+the event index would remove a filtering shortcut, not hide the actor: the
+report calldata and `getResult` remain public.
 
 ---
 
@@ -702,7 +784,19 @@ V2 = evidence A + B + C, previousResultId = V1
 V3 = evidence A + B + C + D, previousResultId = V2
 ```
 
-Every version receives a new `resultId` and `resultHash`. Earlier versions remain available and are never overwritten.
+Every revision receives a new `resultId`, a fresh pair of private salts and
+new `resultHash`/`aggregateInputHash` commitments. Earlier versions remain
+available and are never overwritten. Status may change between revisions.
+
+The corrected contract requires revision 1 for a new root and predecessor
+revision + 1 for an update. A predecessor must exist, belong to the same actor
+and have no successor yet. `nextResultId` records that successor and rejects
+forks of an already superseded revision. `calculationVersion` means result
+revision; algorithm versions are committed privately instead.
+
+One actor can have independent histories for different private balances.
+Because lots are not public, the backend/CRE must select the correct history
+and prevent duplicate roots for the same private balance.
 
 An evidence record already marked `MATCHED` does not automatically return to `PENDING`. Its document integrity and relationships may still be revalidated during a relevant run. If new evidence changes the graph or calculation, the CRE creates a new result version while preserving the previous history.
 
@@ -804,7 +898,7 @@ The primary trigger is event-driven. Scheduled reconciliation is a recovery mech
 
 | Layer | Responsibility |
 |---|---|
-| Blockchain | `actorId`, submitter wallet, `evidenceHash`, minimal state, `resultHash`, and version links |
+| Blockchain | Actor/wallet authorization, immutable `evidenceHash`, minimal state, salted `resultHash` and `aggregateInputHash`, revision links and authenticated report acceptance |
 | ExploreChem | Registration, product experience, permissions, audit trail, and history |
 | Supabase/private API | Searchable metadata, lots, groups, transfers, edges, and workflow runs |
 | Private file storage | Original documents, manifests, attachments, and reports |
@@ -821,13 +915,15 @@ The design avoids directly publishing:
 
 - lot number;
 - commercial origin and destination;
-- carrier and counterparty identities;
+- explicit carrier/counterparty relationships and private company profiles;
 - `correlationGroupId`, `transferId`, and graph edges;
 - invoices, reports, and document references;
 - mass, assay, and composition;
 - the complete commercial graph.
 
-> Commercial data is neither published publicly nor stored on-chain. It remains inside ExploreChem's private infrastructure and is used under access control during correlation and calculation.
+> Commercial documents, the explicit correlation graph, quantities and salts
+> remain private. Opaque participant identifiers and on-chain activity remain
+> public. ExploreChem does not promise full participant anonymity.
 
 The current model does not attempt to hide `lotId` from authorized infrastructure operators because the identifier must remain searchable for processing.
 
@@ -837,7 +933,24 @@ Public `actorId`, `evidenceId`, transaction, and timing data may still permit fr
 - identifiers must not embed a tax number, lot, document number, or company name;
 - correlated evidence receives individual on-chain confirmation;
 - partner results are submitted in separate transactions;
-- each partner receives an independent `resultHash` containing a `privateNonce`.
+- each partner and revision uses privately salted `resultHash` AND
+  `aggregateInputHash`, never a shared public input commitment.
+
+### Accepted MVP privacy boundary
+
+The design removes explicit multi-partner report lists and shared balance/input
+hashes. It does not eliminate traffic analysis: actor IDs, wallets, indexed
+events, history links and block times remain visible. Separate transactions
+may still be close in time or in the same block. Multiple workflows do not
+guarantee anonymity, and removing an application timestamp does not remove a
+block timestamp.
+
+`evidenceHash` remains unsalted, so identical original files produce identical
+public document hashes. This is separate from the salted balance commitments.
+
+These are acknowledged limitations of the MVP, not a claim of zero inference
+risk. Authentication and correctness of the authorized CRE/TEE workflow are
+central security requirements and must be tested accordingly.
 
 ---
 
@@ -877,7 +990,35 @@ The processing layer must use:
 
 ### Canonicalization
 
-Before hashing, evidence identifiers and graph edges must use a deterministic order and a versioned serialization format. `privateNonce` is applied after canonical manifest construction so private commitments cannot be enumerated from predictable data.
+Before hashing, evidence identifiers and graph edges must use a deterministic
+order and a versioned serialization format. After canonicalization, use private
+random salts and distinct domains for result and input commitments to resist
+guessing from predictable data. Do not log or send salts in public calldata,
+events, frontend bundles or public repositories. Preserve private manifests
+and salts securely so authorized parties can reproduce past commitments.
+
+### Workflow authentication and private-input trust
+
+The contract accepts reports only from its configured forwarder and expected
+workflow ID. Reports fail closed while the primary workflow ID is unconfigured;
+zero no longer bypasses identity checks. An optional balance workflow ID may
+override the primary ID for result reports. Both report types use `onReport`.
+
+Salts provide no validation or authorization by themselves. The workflow must
+verify the anchored source documents and input eligibility each relevant run.
+This README does not claim an on-chain membership proof, zero-knowledge proof
+or independent contract-side verification of the hidden calculation.
+
+### Completed local contract checks
+
+The corrected contract passed 46 local checks using Solidity 0.8.26 and an
+in-process Ganache chain. Tests covered authorization, workflow validation,
+rejection of the old batch ABI, individual confirmations, salted-commitment
+fixtures, revision history and expiration. Optimized runtime size was 7,756
+bytes with 200 optimizer runs and the Paris EVM target.
+
+These checks are not Foundry/Slither/Mythril results, an independent audit,
+a live-network deployment or a real CRE/TEE end-to-end execution.
 
 ### Planned validation
 
@@ -907,10 +1048,11 @@ Tool results will be published only after execution and human review. This READM
 - `NONE`, `PENDING`, and `MATCHED` evidence states;
 - derived 365-day expiration for pending evidence;
 - report delivery through an authorized forwarder;
-- separate workflow IDs for correlation and mass balance;
+- a required primary workflow ID and an optional distinct balance workflow ID;
+- both individual report types routed through `onReport`;
 - individual correlation verdicts without a public counterparty list;
-- a separate balance result for each actor;
-- `previousResultId` for append-only history;
+- one balance result per actor per call, including `aggregateInputHash`;
+- `previousResultId`, sequential revisions and `nextResultId` for append-only history;
 - public verification functions for evidence and result hashes.
 
 ### MVP architectural decisions being implemented
@@ -921,10 +1063,39 @@ Tool results will be published only after execution and human review. This READM
 - storage and revalidation of graph edges;
 - visibility rules by actor, transfer, lot, and result;
 - evidence-role classification to prevent double counting;
-- canonical private manifest with `privateNonce`;
+- canonical private result and input manifests with independent per-partner,
+  per-revision private salts;
+- CRE encoder updated to the corrected static report ABI and sender configured
+  to use separate transactions;
 - operator, supplier, carrier, and invited-client experiences.
 
 This distinction prevents planned architecture from being presented as completed functionality.
+
+### Integration change
+
+The corrected `CREReport` is a static 288-byte ABI tuple in this order:
+
+```text
+uint8 reportType
+bytes32 evidenceId
+bytes32 resultId
+bytes32 actorId
+bytes32 resultHash
+bytes32 previousResultId
+bytes32 aggregateInputHash
+uint8 balanceStatus
+uint32 calculationVersion
+```
+
+Type 1 fills only `reportType = 1` and `evidenceId`; all result fields are
+zero. Type 2 uses `reportType = 2`, a zero `evidenceId`, and the result fields.
+Encode as `abi.encode(CREReport)`, not packed encoding. The old dynamic arrays
+are no longer compatible; regenerate frontend/backend ABI bindings and update
+the CRE encoder before integrating. These zero values are protocol values.
+
+The contract is not upgradeable. If an earlier version is already deployed,
+a new deployment is required, and historical records must remain associated
+with their original contract address and chain.
 
 ---
 
@@ -977,4 +1148,5 @@ Responsible for technical leadership, software and system architecture, smart-co
 Responsible for product leadership, problem framing, requirements, user experience, business validation, product communication, and presentation strategy.
 
 The original concept and product vision belong to Armando Freire and Jéssica. All final product decisions, source code, documentation, demonstrations, and submissions are reviewed and approved by the ExploreChem team. The team retains full authorship and responsibility for the project.
+
 
