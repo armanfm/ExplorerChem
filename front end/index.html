@@ -592,7 +592,20 @@ input:focus,select:focus{border-color:var(--nd);outline:3px solid var(--nd-soft)
 </div>
 
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+
 <script>
+const SUPABASE_URL = "https://mnmflnqmohgsxgavwen.supabase.co";
+const SUPABASE_PUBLISHABLE_KEY = "sb_publishable_va4nLJ-Uzw2KzYzdOel-hQ_Toeddk-1";
+
+const supabaseClient = supabase.createClient(
+  SUPABASE_URL,
+  SUPABASE_PUBLISHABLE_KEY
+);
+
+/* ===================================================================
+   Dados da aplicação.
+   =================================================================== */
 /* ===================================================================
    Dados da aplicação.
    Vazios por padrão: preencha a partir da API do ExploreChem.
