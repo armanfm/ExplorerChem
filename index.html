@@ -825,6 +825,13 @@ async function restoreWallet(){
   }catch(error){ renderWallet(); }
 }
 
+async function refreshWalletChain(){
+  if(!window.ethereum) return "";
+  walletChainId=await window.ethereum.request({method:"eth_chainId"});
+  renderWallet();
+  return walletChainId;
+}
+
 function toast(m){
   document.querySelectorAll(".toast").forEach(t=>t.remove());
   const t=document.createElement("div");
@@ -1461,7 +1468,8 @@ function render(){
   if(salvarAtor) salvarAtor.onclick=async function(e){
     e.preventDefault();
     if(!walletAddress){toast("Conecte uma carteira autorizada antes de continuar.");return;}
-    if(walletChainId!=="0xaa36a7"){toast("Troque a carteira para a rede Sepolia antes de assinar.");return;}
+    const chainAtual=await refreshWalletChain();
+    if(chainAtual!=="0xaa36a7"){toast("Troque a carteira para a rede Sepolia antes de assinar.");return;}
     const nome=$("#rs")?.value.trim(), papel=$("#papeis .chip[aria-pressed=\"true\"]")?.textContent.trim();
     if(!nome||!papel){toast("Informe a razão social e selecione um papel.");return;}
     const novo={id:$("#actorId")?.value||novoActorId(),nome,papel,praca:$("#pr")?.value||"—",carteiras:1,evid:0,desde:new Date().toLocaleDateString("pt-BR")};
@@ -1527,3 +1535,4 @@ if(window.ethereum&&typeof window.ethereum.on==="function"){
 </script>
 </body>
 </html>
+
