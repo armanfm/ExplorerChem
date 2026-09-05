@@ -602,7 +602,22 @@ const supabaseClient = supabase.createClient(
   SUPABASE_URL,
   SUPABASE_PUBLISHABLE_KEY
 );
+async function testarSupabase() {
+  const { data, error } = await supabaseClient
+    .from("explorerchem_actors")
+    .select("id, actor_id, display_name, actor_type")
+    .limit(5);
 
+  if (error) {
+    console.error("Erro no Supabase:", error);
+    return;
+  }
+
+  console.log("Banco integrado com sucesso.");
+  console.log("Dados recebidos:", data);
+}
+
+testarSupabase();
 /* ===================================================================
    Dados da aplicação.
    =================================================================== */
