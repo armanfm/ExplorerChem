@@ -1084,6 +1084,14 @@ interactions. The contract was deployed with the Chainlink KeystoneForwarder
 for Ethereum Sepolia. Secrets, service-role keys and private salts are not
 included in the repository.
 
+## Demonstration
+
+Published application: [Open ExploreChem](https://armanfm.github.io/ExploreChem/)
+
+The interface presents the authorized operator, supplier, carrier, and client
+experiences. Connect a wallet on Ethereum Sepolia to test the on-chain actions.
+The demonstration data shown in the interface is fictional.
+
 ### Integration change
 
 The corrected `CREReport` is a static 288-byte ABI tuple in this order:
@@ -1161,3 +1169,4 @@ Responsible for technical leadership, software and system architecture, smart-co
 Responsible for product leadership, problem framing, requirements, user experience, business validation, product communication, and presentation strategy.
 
 The original concept and product vision belong to Armando Freire and Jéssica. All final product decisions, source code, documentation, demonstrations, and submissions are reviewed and approved by the ExploreChem team. The team retains full authorship and responsibility for the project.
+
