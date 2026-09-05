@@ -221,9 +221,11 @@ Evidence may include:
 
 The MVP includes an actor selector below the registration form. After an actor is registered, the operator can select that actor to navigate through the system using the actor's role and visibility scope.
 
-This is a demonstration mechanism that avoids requiring a separate login and wallet for every fictional participant. The connected wallet signs the registration transaction, while each actor receives its own stable `actorId`.
+This demonstration mechanism avoids requiring a separate login and wallet for every fictional participant. The connected wallet signs the registration transaction, while each actor receives its own unique and persistent `actorId`.
 
-The `actorId` is a randomly generated opaque identifier stored as `actor_id` in Supabase and registered as `actorId` on-chain. It is unique, but it is not a transferable token, NFT, credential, or access key.
+The `actorId` is a randomly generated opaque identifier stored as `actor_id` in Supabase and registered as `actorId` on-chain. It is unique, but it is not a transferable token, stablecoin, NFT, credential, or access key.
+
+The actor selector is intended only for the MVP demonstration. In production, it will be replaced by verified identity, authenticated accounts, wallet authorization, and backend/RLS access policies.
 
 In production, this selector will be replaced by verified identity, authenticated accounts, wallet authorization, and backend/RLS access policies.
 ---
