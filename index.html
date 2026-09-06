@@ -51,8 +51,6 @@ button{font:inherit;color:inherit;cursor:pointer;border:0;background:none}
 .session-copy{display:flex;flex-direction:column;line-height:1.3}.session-copy b{font-size:13px;font-weight:500}
 .session-copy span{font-size:12px;color:var(--mute)}
 .wallet-area{margin-left:auto;display:flex;align-items:center}
-.actor-context{display:flex;flex-direction:column;line-height:1.15;max-width:210px;padding:6px 10px;border:1px solid var(--rule2);border-radius:9px;background:var(--nd-soft);color:var(--ink2);font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.actor-context b{font-size:10px;color:var(--nd);text-transform:uppercase;letter-spacing:.06em}
 .role-switch{display:flex;align-items:center;gap:7px;margin-left:auto}
 .role-switch label{margin:0;color:var(--mute);font-size:11px}
 .role-switch select{width:auto;padding:6px 8px;font-size:12px;border-radius:7px}
@@ -582,8 +580,11 @@ input:focus,select:focus{border-color:var(--nd);outline:3px solid var(--nd-soft)
   <div class="system-state" aria-label="Sistema operacional e verificado">
     <span class="live-dot"></span><span><b>Ambiente verificado</b><small>dados privados · provas públicas</small></span>
   </div>
-  <div class="role-switch"><label for="roleSelector">Perfil ativo</label><select id="roleSelector" aria-label="Selecionar operador ou ator">
+  <div class="role-switch"><label for="roleSelector">Mudar visão</label><select id="roleSelector" aria-label="Mudar visão do sistema">
     <option value="op">Operador</option>
+    <option value="forn">Fornecedor</option>
+    <option value="transp">Transportadora</option>
+    <option value="cli">Cliente</option>
   </select></div>
   <div class="wallet-area" id="walletArea"></div>
   <div class="session" id="session" aria-label="Usuário autenticado"></div>
@@ -648,29 +649,18 @@ let ELEMENTOS=[];
 /* Participantes cadastrados: id, nome, papel, praca, evid, desde, carteiras. */
 let ATORES=[];
 let ATOR_ATIVO=null;
-let ATORES_CARREGADOS=false;
 const actorTypeLabel={MINER:"Minerador",CARRIER:"Transportadora",LABORATORY:"Laboratório",PROCESSOR:"Processador",REFINER:"Purificador",RECYCLER:"Reciclador",MANUFACTURER:"Fabricante",OTHER:"Outro"};
-function roleForActor(actor){
-  const papel=actor&&String(actor.papel||"").toLowerCase();
-  if(papel.includes("transport")) return "transp";
-  if(papel.includes("laborat")) return "lab";
-  if(papel.includes("fabric")) return "cli";
-  return "forn";
-}
 function persistirAtoresLocais(){try{localStorage.setItem("explorechem_demo_actors",JSON.stringify(ATORES));}catch(e){}}
 function carregarAtoresLocais(){try{const saved=JSON.parse(localStorage.getItem("explorechem_demo_actors")||"[]");if(Array.isArray(saved))ATORES=saved;}catch(e){}}
 async function carregarAtores(){
   carregarAtoresLocais();
-  try{const ativo=localStorage.getItem("explorechem_demo_active_actor");if(ativo&&ATORES.some(a=>a.id===ativo))ATOR_ATIVO=ativo;}catch(e){}
   try{
     const {data,error}=await supabaseClient.from("explorerchem_actors").select("id,actor_id,display_name,actor_type,country_code,created_at").order("created_at",{ascending:false});
     if(!error&&Array.isArray(data)){
       ATORES=data.map(a=>({dbId:a.id,id:a.actor_id,nome:a.display_name,papel:actorTypeLabel[a.actor_type]||a.actor_type,praca:a.country_code||"—",carteiras:1,evid:0,desde:a.created_at?new Date(a.created_at).toLocaleDateString("pt-BR"):"—"}));
-      try{const ativo=localStorage.getItem("explorechem_demo_active_actor");if(ativo&&ATORES.some(a=>a.id===ativo))ATOR_ATIVO=ativo;}catch(e){}
       persistirAtoresLocais();
     } else if(error) console.warn("Não foi possível carregar atores do Supabase:",error.message);
   }catch(error){console.warn("Falha ao carregar atores:",error.message);}
-  ATORES_CARREGADOS=true;
   if(document.readyState!=="loading") render();
 }
 function novoActorId(){
@@ -761,24 +751,22 @@ const NAVS={
   op:[["lote","Visão do lote"],["evidencias","Evidências"],
       ["documento","Documento e verificação"],["atores","Atores da cadeia"],
       ["cadastro","Cadastrar ator"]],
-  forn:[["lote","Visão do lote"],["evidencias","Evidências"],["documento","Documento e verificação"],["atores","Atores da cadeia"],
-        ["enviar","Enviar evidência"],["minhas","Minhas evidências"],["cadeia","Minha cadeia"],["resultado","Resultado do lote"],["convidar","Convidar cliente"],["cadastro","Cadastro de atores"]],
-  lab:[["lote","Visão do lote"],["evidencias","Evidências"],["documento","Documento e verificação"],["atores","Atores da cadeia"],
-       ["analisar","Enviar análise"],["minhas","Minhas análises"],["cadeia","Minha cadeia"],["resultado","Resultado do lote"],["cadastro","Cadastro de atores"]],
-  transp:[["lote","Visão do lote"],["evidencias","Evidências"],["documento","Documento e verificação"],["atores","Atores da cadeia"],
-          ["entrega","Registrar transporte"],["minhas","Minhas evidências"],["cadeia","Minha cadeia"],["transferencia","Minha transferência"],["resultado","Resultado do lote"],["cadastro","Cadastro de atores"]],
+  forn:[["enviar","Enviar evidência"],["minhas","Minhas evidências"],
+        ["cadeia","Minha cadeia"],["resultado","Resultado do lote"],
+        ["convidar","Convidar cliente"]],
+  transp:[["entrega","Registrar transporte"],["minhas","Minhas evidências"],
+          ["transferencia","Minha transferência"]],
   cli:[["dashboard","Dashboard"]]};
 /* Sessão autenticada. Preencha com os dados reais do login. */
 let SESSION={
   op:{iniciais:"—",nome:"Não autenticado",acesso:"Operação"},
   forn:{iniciais:"—",nome:"Não autenticado",acesso:"Participante"},
-  lab:{iniciais:"—",nome:"Não autenticado",acesso:"Laboratório"},
   transp:{iniciais:"—",nome:"Não autenticado",acesso:"Transportadora"},
   cli:{iniciais:"—",nome:"Não autenticado",acesso:"Convidado"}
 };
 
 const roleSolicitada=new URLSearchParams(window.location.search).get("role");
-let role=["op","forn","lab","transp","cli"].includes(roleSolicitada)?roleSolicitada:"op";
+let role=["op","forn","transp","cli"].includes(roleSolicitada)?roleSolicitada:"op";
 let page=NAVS[role][0][0];
 let walletAddress="";
 let walletChainId="";
@@ -824,21 +812,19 @@ const networkName=chainId=>({"0xaa36a7":"Sepolia","0x1":"Ethereum","0x89":"Polyg
 
 function renderWallet(){
   const area=$("#walletArea");
-  const atorAtivo=ATORES.find(a=>a.id===ATOR_ATIVO);
-  const actorBadge=atorAtivo?'<span class="actor-context" title="Identidade usada nesta demonstração"><b>Ator ativo</b> '+val(atorAtivo.nome)+' · '+val(atorAtivo.papel)+'</span>':'';
   if(role==="cli"){
-    area.innerHTML=actorBadge+'<span class="readonly-state">Acesso somente leitura</span>';
+    area.innerHTML='<span class="readonly-state">Acesso somente leitura</span>';
     return;
   }
   if(!walletAddress){
-    area.innerHTML=actorBadge+'<button class="wallet-connect" id="connectWallet" type="button" aria-label="Conectar carteira Web3">'+
+    area.innerHTML='<button class="wallet-connect" id="connectWallet" type="button" aria-label="Conectar carteira Web3">'+
       '<svg width="16" height="16" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6.5h14a2 2 0 0 1 2 2v9H4a2 2 0 0 1-2-2v-11a2 2 0 0 1 2-2h12" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/><circle cx="16.5" cy="12" r="1" fill="currentColor"/></svg>'+ 
       'Conectar carteira</button>';
     $("#connectWallet").onclick=connectWallet;
     return;
   }
   const correta=walletChainId==="0xaa36a7";
-  area.innerHTML=actorBadge+'<div class="wallet-state'+(correta?'':' wallet-warning')+'" title="Carteira conectada">'+
+  area.innerHTML='<div class="wallet-state'+(correta?'':' wallet-warning')+'" title="Carteira conectada">'+
     '<span class="wallet-network">'+networkName(walletChainId)+'</span>'+ 
     '<span class="wallet-address">'+shortWallet(walletAddress)+'</span>'+ 
     '<button type="button" class="wallet-logout" id="disconnectWallet">Logout</button></div>';
@@ -1208,10 +1194,8 @@ T.atores=()=>
   '<p class="note">Documento de registro da empresa não aparece aqui nem para os participantes. '+
   'Um ator reconhece o outro por nome, praça e carteira.</p>';
 
-T.cadastro=()=>{
-  if(role!=="op") return '<h1>Cadastro de atores</h1><p class="sub">Esta tela é visível para consulta, mas somente o operador pode criar ou editar atores.</p>'+ 
-    (ATORES.length?'<div class="panel scrollx"><table><thead><tr><th>Empresa</th><th>Papel</th><th>Identificador</th></tr></thead><tbody>'+ATORES.map(a=>'<tr><td>'+val(a.nome)+'</td><td>'+val(a.papel)+'</td><td class="mono">'+val(a.id)+'</td></tr>').join('')+'</tbody></table></div>':vazio("Nenhum ator cadastrado","O diretório ainda não possui participantes."));
-  return '<div class="crumb">Atores da cadeia · novo participante</div><h1>Cadastrar ator</h1>'+
+T.cadastro=()=>
+  '<div class="crumb">Atores da cadeia · novo participante</div><h1>Cadastrar ator</h1>'+
   '<p class="sub">O cadastro grava uma transação: identidade e carteira vão para a blockchain. '+
   'Razão social e contato ficam apenas aqui.</p><div class="split">'+
   '<div class="panel pad"><h3>Identificação</h3>'+
@@ -1252,18 +1236,7 @@ T.cadastro=()=>{
   '<select id="atorSelecionado"><option value="">Nenhum ator cadastrado ainda</option>'+ 
   ATORES.map(a=>'<option value="'+val(a.id)+'"'+(ATOR_ATIVO===a.id?' selected':'')+'>'+val(a.nome)+' · '+val(a.papel)+'</option>').join('')+ 
   '</select></div><div id="atorSelecionadoInfo" class="note">'+ 
-  (ATOR_ATIVO?'Perfil ativo selecionado.':'Cadastre um ator para habilitar a navegação.')+'</div></div>'+ 
-  (ATOR_ATIVO?'<div class="actions"><button type="button" class="btn" id="entrarComoAtor">Entrar como este ator</button><button type="button" class="btn ghost" id="sairDoAtor">Desconfirmar ator</button></div>':'')+'</section>';
-};
-
-T.acessoNegado=()=>{
-  const ator=ATORES.find(a=>a.id===ATOR_ATIVO);
-  return '<div class="panel pad" style="max-width:720px"><h1>Acesso restrito</h1>'+ 
-    '<p class="sub">Esta visão não pertence ao papel atualmente selecionado.</p>'+ 
-    '<p>Ator ativo: <b>'+val(ator&&ator.nome,"nenhum")+'</b><br>Papel autorizado: <b>'+val(ator&&ator.papel,"não selecionado")+'</b></p>'+ 
-    '<p class="note">Somente o operador visualiza todas as etapas. Um participante acessa apenas suas próprias evidências, sua transferência e os resultados compartilhados.</p>'+ 
-    '<div class="actions"><button class="btn" id="voltarCadastro">Voltar ao cadastro de ator</button></div></div>';
-};
+  (ATOR_ATIVO?'Perfil ativo selecionado.':'Cadastre um ator para habilitar a navegação.')+'</div></div></section>';
 
 /* ---------------- Participante ---------------- */
 
@@ -1299,35 +1272,10 @@ T.enviar=()=>
   '<div class="field"><label for="ts">Temperatura de secagem</label>'+
   '<input id="ts" class="mono" placeholder="105 °C"></div></div>'+
   '<div class="field"><label for="dst">Destinatário</label>'+
-  '<input id="dst" placeholder="Empresa destinatária"></div>'+ 
-  '<div class="field"><label for="incoterm">Condição do frete</label><select id="incoterm">'+
-  '<option value="">Selecione…</option><option value="CIF">CIF — frete e seguro por conta do vendedor</option>'+
-  '<option value="FOB">FOB — frete por conta do comprador</option></select></div>'+ 
-  '<div id="carrierFields" class="panel soft" style="display:none;margin-top:10px;padding:12px">'+
-  '<b>Transportadora contratada</b><p class="sm">No FOB, informe quem fará a custódia entre as partes.</p>'+
-  '<div class="f2"><div class="field"><label for="carrierName">Transportadora</label><input id="carrierName" placeholder="Empresa transportadora"></div>'+
-  '<div class="field"><label for="carrierRef">Referência do frete</label><input id="carrierRef" class="mono" placeholder="CT-e ou referência"></div></div></div>'+ 
+  '<input id="dst" placeholder="Empresa destinatária"></div>'+
   '<p class="note"><b>Não atestado:</b> nenhum valor digitado nesta área entra na correlação ou no '+
   'balanço sem ser confirmado no documento e revalidado pelo CRE/TEE.</p></div>'+
   '<div class="actions"><button class="btn" id="enviarEv">Assinar e enviar</button></div></div></div>';
-
-T.analisar=()=>
-  '<div class="crumb">Laboratório · análise independente</div><h1>Enviar análise da amostra</h1>'+ 
-  '<p class="sub">O laboratório registra somente o laudo e a composição da amostra. Esta evidência não cria uma nova corrente de massa; o CRE/TEE usa o resultado para validar o balanço.</p>'+ 
-  '<div class="split"><div class="stack"><div class="panel pad"><h3>Laudo laboratorial</h3>'+ 
-  '<label class="drop" for="arquivoAnalise"><b>Selecione ou solte o laudo</b>PDF assinado, até 20 MB</label>'+ 
-  '<input id="arquivoAnalise" type="file" accept="application/pdf" style="display:none"><div id="arquivoAnaliseInfo"></div>'+ 
-  '<p class="note">O hash é calculado sobre os bytes originais antes da ancoragem.</p></div></div>'+ 
-  '<div class="stack"><div class="panel pad"><h3>Identificação da análise</h3>'+ 
-  '<div class="f2"><div class="field"><label for="sampleId">Identificador da amostra</label><input id="sampleId" class="mono" placeholder="Amostra do laboratório"></div>'+ 
-  '<div class="field"><label for="labLot">Lote relacionado</label><input id="labLot" class="mono" placeholder="LOT-…"></div></div>'+ 
-  '<div class="f2"><div class="field"><label for="labRef">Referência do laudo</label><input id="labRef" class="mono" placeholder="Número do laudo"></div>'+ 
-  '<div class="field"><label for="sampleAt">Data da amostra</label><input id="sampleAt" type="datetime-local"></div></div>'+ 
-  '<div class="f2"><div class="field"><label for="elementTested">Elemento analisado</label><input id="elementTested" placeholder="Neodímio, cobalto…"></div>'+ 
-  '<div class="field"><label for="assay">Teor encontrado</label><input id="assay" class="mono" placeholder="0,00 %"></div></div>'+ 
-  '<div class="filerow"><b>Função no balanço</b><span>COMPOSITION_ONLY · não soma massa</span></div>'+ 
-  '<p class="note"><b>Validação:</b> os valores digitados são apenas referência. O CRE/TEE relê o laudo ancorado e confirma a composição antes de usar o resultado.</p>'+ 
-  '<div class="actions"><button class="btn" id="enviarAnalise">Assinar e enviar análise</button></div></div></div></div>';
 
 T.entrega=()=>{
   const transferId=LOTE?val(LOTE.assignedTransferId):semDado;
@@ -1541,22 +1489,10 @@ function render(){
   renderWallet();
   const roleSelector=$("#roleSelector");
   if(roleSelector){
-    const opts='<option value="op">Operador — acesso completo</option>'+ATORES.map(a=>'<option value="actor:'+val(a.id)+'">'+val(a.nome)+' — '+val(a.papel)+'</option>').join('');
-    roleSelector.innerHTML=opts;
-    roleSelector.value=role==="op"?"op":(ATOR_ATIVO?"actor:"+ATOR_ATIVO:"op");
-    roleSelector.disabled=role!=="op";
-    roleSelector.title=role!=="op"?"Desconfirme o ator para trocar de perfil.":"Escolha Operador ou um ator cadastrado.";
+    roleSelector.value=role;
     roleSelector.onchange=function(){
       const next=this.value;
-      if(next==="op"){
-        ATOR_ATIVO=null;try{localStorage.removeItem("explorechem_demo_active_actor");}catch(e){}
-        window.location.href=window.location.pathname;
-        return;
-      }
-      const atorId=next.slice(6),ator=ATORES.find(a=>a.id===atorId);
-      if(!ator){toast("Ator não encontrado.");return;}
-      ATOR_ATIVO=ator.id;try{localStorage.setItem("explorechem_demo_active_actor",ATOR_ATIVO);}catch(e){}
-      window.location.href=window.location.pathname+"?role="+encodeURIComponent(roleForActor(ator));
+      window.location.href=window.location.pathname+(next==="op"?"":"?role="+encodeURIComponent(next));
     };
   }
   $("#nav").innerHTML=NAVS[role].map(n=>
@@ -1619,13 +1555,8 @@ function render(){
     const campo=$("#actorId"); if(campo) campo.value=id;
   };
   const atorSelecionado=$("#atorSelecionado");
-  if(atorSelecionado) atorSelecionado.onchange=function(){ATOR_ATIVO=this.value||null;try{localStorage.setItem("explorechem_demo_active_actor",ATOR_ATIVO||"");}catch(e){};renderWallet();toast(ATOR_ATIVO?"Ator ativo selecionado para esta navegação.":"Nenhum ator selecionado.");};
-  const entrarComoAtor=$("#entrarComoAtor");
-  if(entrarComoAtor) entrarComoAtor.onclick=function(){const ator=ATORES.find(a=>a.id===ATOR_ATIVO);if(!ator){toast("Selecione um ator primeiro.");return;}role=roleForActor(ator);page=NAVS[role][0][0];window.location.href=window.location.pathname+"?role="+encodeURIComponent(role);};
-  const sairDoAtor=$("#sairDoAtor");
-  if(sairDoAtor) sairDoAtor.onclick=function(){ATOR_ATIVO=null;try{localStorage.removeItem("explorechem_demo_active_actor");}catch(e){};role="op";page="cadastro";render();toast("Ator desconfirmado. Você voltou ao modo operador.");};
+  if(atorSelecionado) atorSelecionado.onchange=function(){ATOR_ATIVO=this.value||null;toast(ATOR_ATIVO?"Perfil do ator selecionado para navegação.":"Nenhum ator selecionado.");};
   bindOnchain("#enviarEv","Evidência enviada. Hash gravado, estado pendente.");
-  bindOnchain("#enviarAnalise","Análise enviada. Hash gravado como COMPOSITION_ONLY e estado PENDING.");
   bindOnchain("#enviarTransporte","Entrega registrada. EvidenceHash ancorado como PENDING.");
   bind("#enviarConvite","Convite enviado para este resultado.");
   const bindFile=function(inputSel,infoSel){const input=$(inputSel),info=$(infoSel);if(input&&info)input.onchange=function(){
@@ -1633,10 +1564,7 @@ function render(){
     info.innerHTML=file?'<div class="filerow"><b>'+file.name+'</b><span>'+Math.ceil(file.size/1024)+' KB · pronto para hash</span></div>':'';
   };};
   bindFile("#arquivo","#arquivoInfo");
-  bindFile("#arquivoAnalise","#arquivoAnaliseInfo");
   bindFile("#arquivoTransporte","#arquivoTransporteInfo");
-  const incoterm=$("#incoterm"),carrierFields=$("#carrierFields");
-  if(incoterm&&carrierFields) incoterm.onchange=function(){carrierFields.style.display=this.value==="FOB"?"block":"none";};
   const collected=$("#massaColetada"),delivered=$("#massaEntregue"),difference=$("#custodyDifference");
   const parseMass=v=>{const clean=v.replace(/\s*kg/gi,"").replace(/\./g,"").replace(",",".");return Number(clean);};
   const updateDifference=()=>{if(!collected||!delivered||!difference)return;const a=parseMass(collected.value),b=parseMass(delivered.value);difference.innerHTML=Number.isFinite(a)&&Number.isFinite(b)?'<b>Diferença de custódia</b><span>'+Math.max(0,a-b).toLocaleString("pt-BR",{minimumFractionDigits:3,maximumFractionDigits:3})+' kg</span>':'<b>Diferença de custódia</b><span>Informe as duas massas</span>';};
