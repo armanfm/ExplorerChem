@@ -637,4 +637,955 @@ testarSupabase();
    Dados da aplicação.
    Vazios por padrão: preencha a partir da API do ExploreChem.
    Nenhum valor de demonstração permanece neste arquivo.
+   =================================================================== */
+
+/* Lote em exibição. null enquanto nada foi carregado. */
+let LOTE=null;
+
+/* Balanço por elemento. Cada item precisa de:
+   e, nome, entrada, i0, saida, i1, sigma, k  — massas em mg de elemento. */
+let ELEMENTOS=[];
+
+/* Participantes cadastrados: id, nome, papel, praca, evid, desde, carteiras. */
+let ATORES=[];
+let ATOR_ATIVO=null;
+const actorTypeLabel={MINER:"Minerador",CARRIER:"Transportadora",LABORATORY:"Laboratório",PROCESSOR:"Processador",REFINER:"Purificador",RECYCLER:"Reciclador",MANUFACTURER:"Fabricante",OTHER:"Outro"};
+function persistirAtoresLocais(){try{localStorage.setItem("explorechem_demo_actors",JSON.stringify(ATORES));}catch(e){}}
+function carregarAtoresLocais(){try{const saved=JSON.parse(localStorage.getItem("explorechem_demo_actors")||"[]");if(Array.isArray(saved))ATORES=saved;}catch(e){}}
+async function carregarAtores(){
+  carregarAtoresLocais();
+  try{
+    const {data,error}=await supabaseClient.from("explorerchem_actors").select("id,actor_id,display_name,actor_type,country_code,created_at").order("created_at",{ascending:false});
+    if(!error&&Array.isArray(data)){
+      ATORES=data.map(a=>({dbId:a.id,id:a.actor_id,nome:a.display_name,papel:actorTypeLabel[a.actor_type]||a.actor_type,praca:a.country_code||"—",carteiras:1,evid:0,desde:a.created_at?new Date(a.created_at).toLocaleDateString("pt-BR"):"—"}));
+      persistirAtoresLocais();
+    } else if(error) console.warn("Não foi possível carregar atores do Supabase:",error.message);
+  }catch(error){console.warn("Falha ao carregar atores:",error.message);}
+  if(document.readyState!=="loading") render();
+}
+function novoActorId(){
+  if(window.crypto&&typeof window.crypto.getRandomValues==='function'){
+    const bytes=new Uint8Array(32); window.crypto.getRandomValues(bytes);
+    return '0x'+Array.from(bytes).map(b=>b.toString(16).padStart(2,'0')).join('');
+  }
+  return '0x'+Array.from({length:32},()=>Math.floor(Math.random()*256).toString(16).padStart(2,'0')).join('');
+}
+
+/* Evidências do lote: id, ator, papel, doc, ref, corrente, base, status,
+   enviada, calculationRole, correlationGroupId e transferId. */
+let EVIDENCIAS=[];
+
+/* Evidências do participante autenticado: id, doc, ref, enviada, status, hash. */
+let MINHAS=[];
+
+/* Cadeia visível ao participante: [{nome, papel, self}] em ordem de custódia. */
+let CADEIA=[];
+
+/* Evidências da cadeia visível: {participante, doc, enviada, status, self}. */
+let CADEIA_EVIDENCIAS=[];
+
+/* Documento aberto na tela de verificação. Ver formato em T.documento. */
+let DOCUMENTO=null;
+
+/* Série do não contabilizado, em % da entrada, por versão do lote. */
+let SERIE=[];
+
+/* Catálogo de regras. O resultado de cada uma chega junto com o documento. */
+const CATALOGO_REGRAS=[
+  "Base da massa e base do teor coincidem",
+  "Temperatura de secagem entre 100 e 110 °C",
+  "Fórmula do óxido admitida para o elemento",
+  "Mesma versão da tabela de fatores em todas as correntes",
+  "Denominador de pureza igual a massa seca",
+  "Pesagem e amostragem de umidade no mesmo evento"
+];
+
+/* Derivados do balanço. Recalculados por recalcular(). */
+let conformes=0, divergentes=[], VEREDITO="NAO_ATESTADO";
+
+function recalcular(){
+  ELEMENTOS.forEach(x=>{
+    x.muf=(x.entrada+x.i0)-(x.saida+x.i1);
+    x.banda=x.k*x.sigma;
+    x.veredito=Math.abs(x.muf)<=x.banda?"CONFORME":"DIVERGENTE";
+    x.rel=x.entrada?x.muf/x.entrada*100:0;
+  });
+  conformes=ELEMENTOS.filter(x=>x.veredito==="CONFORME").length;
+  divergentes=ELEMENTOS.filter(x=>x.veredito==="DIVERGENTE");
+  VEREDITO=!ELEMENTOS.length?"NAO_ATESTADO":(divergentes.length?"DIVERGENTE":"CONFORME");
+}
+recalcular();
+
+/* Ponto de entrada para dados já filtrados pela API/RLS do Supabase.
+   O parâmetro role precisa corresponder ao perfil autenticado. A URL desta
+   maquete escolhe apenas o layout e nunca deve autorizar dados em produção.
+     carregar({role, lote, elementos, atores, evidencias, minhas,
+               cadeia, cadeiaEvidencias, documento, serie});          */
+function carregar(d){
+  d=d||{};
+  if(d.role!==role) throw new Error("Escopo de dados incompatível com o perfil autenticado.");
+  if("lote" in d) LOTE=d.lote;
+  if("elementos" in d) ELEMENTOS=d.elementos||[];
+  if("serie" in d) SERIE=d.serie||[];
+  if(role==="op"){
+    if("atores" in d) ATORES=d.atores||[];
+    if("evidencias" in d) EVIDENCIAS=d.evidencias||[];
+    if("documento" in d) DOCUMENTO=d.documento;
+  }
+  if(role==="forn"||role==="transp"){
+    if("minhas" in d) MINHAS=d.minhas||[];
+    if("cadeia" in d) CADEIA=d.cadeia||[];
+    if("cadeiaEvidencias" in d) CADEIA_EVIDENCIAS=d.cadeiaEvidencias||[];
+  }
+  recalcular();
+  render();
+}
+window.ExploreChem={carregar:carregar};
+
+const fmt=n=>n.toLocaleString("pt-BR");
+const sgn=n=>(n>0?"+":n<0?"−":"")+fmt(Math.abs(n));
+const pct=n=>n.toFixed(3).replace(".",",")+"%";
+const kg3=n=>(n/1000000).toLocaleString("pt-BR",{minimumFractionDigits:3,maximumFractionDigits:3});
+
+const NAVS={
+  op:[["lote","Visão do lote"],["evidencias","Evidências"],
+      ["documento","Documento e verificação"],["atores","Atores da cadeia"],
+      ["cadastro","Cadastrar ator"]],
+  forn:[["enviar","Enviar evidência"],["minhas","Minhas evidências"],
+        ["cadeia","Minha cadeia"],["resultado","Resultado do lote"],
+        ["convidar","Convidar cliente"]],
+  transp:[["entrega","Registrar transporte"],["minhas","Minhas evidências"],
+          ["transferencia","Minha transferência"]],
+  cli:[["dashboard","Dashboard"]]};
+/* Sessão autenticada. Preencha com os dados reais do login. */
+let SESSION={
+  op:{iniciais:"—",nome:"Não autenticado",acesso:"Operação"},
+  forn:{iniciais:"—",nome:"Não autenticado",acesso:"Participante"},
+  transp:{iniciais:"—",nome:"Não autenticado",acesso:"Transportadora"},
+  cli:{iniciais:"—",nome:"Não autenticado",acesso:"Convidado"}
+};
+
+const roleSolicitada=new URLSearchParams(window.location.search).get("role");
+let role=["op","forn","transp","cli"].includes(roleSolicitada)?roleSolicitada:"op";
+let page=NAVS[role][0][0];
+let walletAddress="";
+let walletChainId="";
+const $=s=>document.querySelector(s);
+let chartInstances=[];
+function getWalletProvider(){
+  const providers=window.ethereum&&window.ethereum.providers;
+  if(Array.isArray(providers)) return providers.find(p=>p.isMetaMask)||providers[0];
+  return window.ethereum;
+}
+
+function chartTheme(){
+  const styles=getComputedStyle(document.documentElement);
+  return {ink:styles.getPropertyValue("--ink").trim(),mute:styles.getPropertyValue("--mute").trim(),
+    rule:styles.getPropertyValue("--rule").trim(),nd:styles.getPropertyValue("--nd").trim(),
+    nd2:styles.getPropertyValue("--nd2").trim(),soft:styles.getPropertyValue("--nd-soft").trim(),
+    ok:styles.getPropertyValue("--ok").trim(),div:styles.getPropertyValue("--div").trim()};
+}
+function chartFallback(id,title){
+  const canvas=$(id); if(!canvas) return;
+  const wrap=canvas.parentElement;
+  wrap.innerHTML='<div class="chart-fallback"><div><b>'+title+'</b>O gráfico ficará disponível quando a biblioteca visual carregar.</div></div>';
+}
+function renderCharts(){
+  chartInstances.forEach(c=>c.destroy()); chartInstances=[];
+  if(typeof Chart==="undefined"){
+    chartFallback("#trendChart","Tendência histórica");
+    chartFallback("#elementChart","Conservação por elemento");
+    return;
+  }
+  const c=chartTheme();
+  const common={responsive:true,maintainAspectRatio:false,animation:{duration:700,easing:"easeOutQuart"},
+    plugins:{legend:{display:false},tooltip:{backgroundColor:c.ink,titleFont:{family:"Manrope",weight:"700"},bodyFont:{family:"Manrope"},padding:10,cornerRadius:10}},
+    scales:{x:{grid:{display:false},ticks:{color:c.mute,font:{family:"Manrope",size:10,weight:"600"}}},y:{grid:{color:c.rule},ticks:{color:c.mute,font:{family:"IBM Plex Mono",size:10},callback:v=>v.toLocaleString("pt-BR")+"%"},beginAtZero:true}}};
+  const trend=document.getElementById("trendChart");
+  if(trend) chartInstances.push(new Chart(trend,{type:"line",data:{labels:["v1.0","v1.1","v1.2","v2.0","v2.1","atual"],datasets:[{data:SERIE,borderColor:c.nd,backgroundColor:c.soft,fill:true,tension:.38,pointRadius:3,pointHoverRadius:6,pointBackgroundColor:c.nd2,borderWidth:2}]},options:common}));
+  const element=document.getElementById("elementChart");
+  if(element) chartInstances.push(new Chart(element,{type:"bar",data:{labels:ELEMENTOS.map(x=>x.e),datasets:[{label:"Disponível",data:ELEMENTOS.map(x=>(x.entrada+x.i0)/1000000),backgroundColor:c.soft,borderColor:c.nd2,borderWidth:1,borderRadius:7},{label:"Contabilizado",data:ELEMENTOS.map(x=>(x.saida+x.i1)/1000000),backgroundColor:c.nd,borderColor:c.nd,borderWidth:1,borderRadius:7}]},options:{...common,plugins:{...common.plugins,legend:{display:true,position:"bottom",labels:{color:c.mute,usePointStyle:true,pointStyle:"circle",padding:14,font:{family:"Manrope",size:10,weight:"600"}}}},scales:{...common.scales,y:{...common.scales.y,ticks:{color:c.mute,font:{family:"IBM Plex Mono",size:10},callback:v=>v.toLocaleString("pt-BR")+" kg"}}}}}));
+}
+
+const shortWallet=address=>address?address.slice(0,6)+"…"+address.slice(-4):"";
+const networkName=chainId=>({"0xaa36a7":"Sepolia","0x1":"Ethereum","0x89":"Polygon"}[chainId]||"Rede "+chainId);
+
+function renderWallet(){
+  const area=$("#walletArea");
+  if(role==="cli"){
+    area.innerHTML='<span class="readonly-state">Acesso somente leitura</span>';
+    return;
+  }
+  if(!walletAddress){
+    area.innerHTML='<button class="wallet-connect" id="connectWallet" type="button" aria-label="Conectar carteira Web3">'+
+      '<svg width="16" height="16" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6.5h14a2 2 0 0 1 2 2v9H4a2 2 0 0 1-2-2v-11a2 2 0 0 1 2-2h12" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/><circle cx="16.5" cy="12" r="1" fill="currentColor"/></svg>'+ 
+      'Conectar carteira</button>';
+    $("#connectWallet").onclick=connectWallet;
+    return;
+  }
+  const correta=walletChainId==="0xaa36a7";
+  area.innerHTML='<div class="wallet-state'+(correta?'':' wallet-warning')+'" title="Carteira conectada">'+
+    '<span class="wallet-network">'+networkName(walletChainId)+'</span>'+ 
+    '<span class="wallet-address">'+shortWallet(walletAddress)+'</span>'+ 
+    '<button type="button" class="wallet-logout" id="disconnectWallet">Logout</button></div>';
+  const disconnect=$("#disconnectWallet");
+  if(disconnect) disconnect.onclick=disconnectWallet;
+}
+
+async function connectWallet(){
+  const provider=getWalletProvider();
+  if(!provider){
+    toast("Nenhuma carteira Web3 foi detectada neste navegador.");
+    return;
+  }
+  try{
+    const contas=await provider.request({method:"eth_requestAccounts"});
+    walletAddress=contas[0]||"";
+    walletChainId=await provider.request({method:"eth_chainId"});
+    renderWallet();
+    toast(walletChainId==="0xaa36a7"?"Carteira conectada à Sepolia.":"Carteira conectada. Troque a rede para Sepolia antes de assinar.");
+  }catch(error){
+    toast("A conexão com a carteira não foi autorizada.");
+  }
+}
+
+async function restoreWallet(){
+  const provider=getWalletProvider();
+  if(!provider||role==="cli") return;
+  try{
+    const contas=await provider.request({method:"eth_accounts"});
+    walletAddress=contas[0]||"";
+    walletChainId=walletAddress?await provider.request({method:"eth_chainId"}):"";
+    renderWallet();
+  }catch(error){ renderWallet(); }
+}
+
+function disconnectWallet(){
+  walletAddress="";
+  walletChainId="";
+  renderWallet();
+  toast("Carteira desconectada desta sessão.");
+}
+
+async function refreshWalletChain(){
+  const provider=getWalletProvider();
+  if(!provider) return "";
+  walletChainId=await provider.request({method:"eth_chainId"});
+  renderWallet();
+  return walletChainId;
+}
+
+function toast(m){
+  document.querySelectorAll(".toast").forEach(t=>t.remove());
+  const t=document.createElement("div");
+  t.className="toast";t.setAttribute("role","status");t.textContent=m;
+  document.body.appendChild(t);setTimeout(()=>t.remove(),3200);
+}
+function vtag(v){
+  const m={CONFORME:"t-ok",DIVERGENTE:"t-div",NAO_ATESTADO:"t-att","NÃO ATESTADO":"t-att",MATCHED:"t-ok",PENDING:"t-pend"};
+  return '<span class="tag '+(m[v]||"t-pend")+'">'+v+'</span>';
+}
+const seta=d=>'<svg width="20" height="12" viewBox="0 0 20 12" aria-hidden="true">'+
+  '<path d="M0 6h16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"'+
+  (d?' stroke-dasharray="2 3"':'')+'/>'+
+  (d?'':'<path d="M12 2l4 4-4 4" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>')+
+  '</svg>';
+
+function sparkline(){
+  const max=Math.max.apply(null,SERIE)*1.3;
+  const pts=SERIE.map((v,i)=>[i/(SERIE.length-1)*100,100-(v/max)*100]);
+  const path=pts.map((p,i)=>(i?"L":"M")+p[0].toFixed(2)+" "+p[1].toFixed(2)).join(" ");
+  const last=pts[pts.length-1];
+  return '<svg class="chart" viewBox="0 0 100 100" preserveAspectRatio="none" role="img" '+
+    'aria-label="Não contabilizado nas versões do lote">'+
+    '<path d="'+path+' L100 100 L0 100 Z" fill="var(--nd-soft)"/>'+
+    '<path d="'+path+'" fill="none" stroke="var(--nd)" stroke-width="1.6" '+
+    'vector-effect="non-scaling-stroke" stroke-linejoin="round" stroke-linecap="round"/>'+
+    '<circle cx="'+last[0]+'" cy="'+last[1]+'" r="2.6" fill="var(--nd)" vector-effect="non-scaling-stroke"/></svg>';
+}
+function donut(p){
+  const r=42,c=2*Math.PI*r;
+  return '<div class="donut"><svg width="104" height="104" viewBox="0 0 108 108" role="img" aria-label="'+pct(p)+' contabilizado">'+
+    '<circle cx="54" cy="54" r="'+r+'" fill="none" stroke="var(--rule)" stroke-width="9"/>'+
+    '<circle cx="54" cy="54" r="'+r+'" fill="none" stroke="var(--nd)" stroke-width="9" stroke-linecap="round" '+
+    'stroke-dasharray="'+c+'" stroke-dashoffset="'+(c*(1-p/100))+'" transform="rotate(-90 54 54)"/></svg>'+
+    '<div><div class="val">'+pct(p)+'</div><div class="sm">da massa de entrada contabilizada nas saídas e no inventário</div></div></div>';
+}
+
+function heroIdentidade(){
+  const nd=ELEMENTOS[0];
+  return '<div class="identity"><div class="eqwrap"><div class="eq">'+
+    '<div class="t"><i>'+fmt(nd.entrada)+'</i><span>entradas</span></div><div class="op">+</div>'+
+    '<div class="t"><i>'+fmt(nd.i0)+'</i><span>inventário inicial</span></div><div class="op">−</div>'+
+    '<div class="t"><i>'+fmt(nd.saida)+'</i><span>saídas</span></div><div class="op">−</div>'+
+    '<div class="t"><i>'+fmt(nd.i1)+'</i><span>inventário final</span></div><div class="op">=</div>'+
+    '<div class="t res"><i>'+fmt(nd.muf)+'</i><span>não contabilizado</span></div>'+
+    '</div></div><div class="heroline">'+
+    '<span class="big">'+fmt(nd.muf)+'<span style="font-size:18px;font-weight:400"> mg</span></span>'+
+    '<span class="cap">de neodímio sem destino declarado, '+pct(Math.abs(nd.rel))+' da entrada</span>'+
+    vtag(nd.veredito)+'</div>'+
+    '<p class="note">Tudo em miligramas de elemento, base seca a 105 °C. Óxido é apresentação: '+
+    'nenhuma massa de óxido entra na identidade de conservação.</p></div>';
+}
+function avisoArbitrado(){
+  return '<div class="quiet-warning"><span aria-hidden="true">ⓘ</span><div><b><span class="source-mark arbit">ARBITRADO</span> Parâmetros de demonstração</b>'+ 
+    '<p>Esta simulação utiliza k = 3 e σ definido por elemento. Como o veredito depende desses valores, ele herda a marca arbitrada até que a política de tolerância seja aprovada, medida e versionada.</p></div></div>';
+}
+function avisoDivergente(){
+  if(!divergentes.length) return "";
+  const d=divergentes[0];
+  return '<div class="arb bad"><b>'+divergentes.map(x=>x.e).join(", ")+' fora da banda</b>'+
+    '<p>'+d.nome+' está em '+fmt(d.muf)+' mg contra uma banda de ± '+fmt(d.banda)+' mg. Somado à '+
+    'massa total do lote, esse excesso desapareceria na folga do neodímio. O lote abre '+
+    'janela de contestação.</p></div>';
+}
+function tabelaElementos(){
+  return '<div class="panel scrollx"><table><thead><tr><th>Elemento</th>'+
+    '<th class="num">Entradas + I₀</th><th class="num">Saídas + I₁</th>'+
+    '<th class="num">Não contabilizado</th><th class="num">Banda k·σ</th><th>Veredito</th></tr></thead><tbody>'+
+    ELEMENTOS.map(x=>'<tr><td><b>'+x.e+'</b> <span class="sm">'+x.nome+'</span></td>'+
+      '<td class="num">'+fmt(x.entrada+x.i0)+'</td><td class="num">'+fmt(x.saida+x.i1)+'</td>'+
+      '<td class="num">'+sgn(x.muf)+'</td><td class="num">± '+fmt(x.banda)+'</td>'+
+      '<td>'+vtag(x.veredito)+'</td></tr>').join("")+'</tbody></table></div>';
+}
+
+const T={};
+
+/* Estado vazio padrão. Toda tela mostra isto enquanto não houver dado. */
+function vazio(titulo,texto){
+  return '<div class="panel pad" style="text-align:center;padding:48px 24px">'+
+    '<b style="display:block;font-size:15px;margin-bottom:6px">'+titulo+'</b>'+
+    '<p style="margin:0;color:var(--ink2);max-width:52ch;margin-inline:auto">'+texto+'</p></div>';
+}
+function semLote(){
+  return vazio("Nenhum lote carregado",
+    "Carregue um lote para ver o balanço, as correntes, as correlações e a prova ancorada.");
+}
+const semDado='<span class="sm">—</span>';
+const val=(v,alt)=>v===undefined||v===null||v===""?(alt===undefined?semDado:alt):v;
+
+/* ---------------- Operação ---------------- */
+
+T.lote=()=>{
+  if(!LOTE||!ELEMENTOS.length) return semLote();
+  const nd=ELEMENTOS[0];
+  const g=LOTE.correlationGroup||{};
+  const run=LOTE.workflowRun||{};
+
+  return '<div class="crumb">Operação confidencial · lote <span class="mono">'+val(LOTE.lotId)+'</span></div>'+
+  '<section class="lot-hero"><div class="panel lot-main">'+
+  '<div class="proof-stack" aria-hidden="true"><i></i><i></i><i></i><span>#</span></div>'+
+  '<div class="lot-kicker"><span class="tag t-nd">GRUPO PRIVADO REVALIDADO</span> Balanço de massa'+
+  (LOTE.version?' · versão '+LOTE.version:'')+'</div>'+
+  '<div class="lot-title"><div><h1>'+val(LOTE.lotId)+'</h1>'+
+  '<p class="lot-sub">Balanço do lote entre t₀ e t₁. Entradas de origens '+
+  'distintas, saídas e inventários foram normalizados e recalculados a partir das evidências verificadas.</p></div>'+
+  '<button class="btn dl">Baixar relatório</button></div>'+
+  '<div class="lot-meta"><span>Responsável <b>'+val(LOTE.responsibleActor)+'</b></span>'+
+  '<span>Janela documental <b>'+val(LOTE.documentWindow)+'</b></span>'+
+  '<span>Cálculo <b class="mono">'+val(LOTE.calculationVersion)+'</b></span>'+
+  '<span>Resultado <b class="mono">'+val(LOTE.resultId)+'</b></span></div>'+
+  '</div><aside class="panel verdict-card"><div><span class="eyebrow">Resultado atual</span>'+
+  '<div class="verdict"><span class="status-dot"></span>'+VEREDITO+'</div>'+
+  '<p class="reason">'+(divergentes.length
+    ? divergentes.length+' de '+ELEMENTOS.length+' elementos está fora da tolerância: '+
+      divergentes.map(x=>x.nome).join(', ')+'. O lote permanece disponível para análise e contestação.'
+    : 'Todos os '+ELEMENTOS.length+' elementos estão dentro da tolerância declarada.')+'</p></div>'+
+  '<div class="foot"><span>Atualizado após nova evidência</span><b>'+val(LOTE.anchoredAt)+'</b></div></aside></section>'+
+
+  '<section class="metric-grid" aria-label="Resumo do balanço">'+
+  '<div class="panel metric"><span class="label">Massa elemental de '+nd.e+' disponível</span>'+
+  '<span class="value">'+kg3(nd.entrada+nd.i0)+'<span class="unit">kg de '+nd.e+'</span></span>'+
+  '<div class="hint">Σ entradas + I₀ · compromisso em mg inteiro</div></div>'+
+  '<div class="panel metric"><span class="label">Massa elemental de '+nd.e+' contabilizada</span>'+
+  '<span class="value">'+kg3(nd.saida+nd.i1)+'<span class="unit">kg de '+nd.e+'</span></span>'+
+  '<div class="hint">Σ saídas + I₁ · compromisso em mg inteiro</div></div>'+
+  '<div class="panel metric"><span class="label">'+nd.e+' não contabilizado</span>'+
+  '<span class="value">'+kg3(nd.muf)+'<span class="unit">kg de '+nd.e+'</span></span>'+
+  '<div class="hint">'+fmt(nd.muf)+' mg · '+pct(Math.abs(nd.rel))+' da entrada</div></div>'+
+  '<div class="panel metric'+(divergentes.length?' alert':'')+'"><span class="label">Elementos em revisão</span>'+
+  '<span class="value">'+divergentes.length+'<span class="unit">de '+ELEMENTOS.length+'</span></span>'+
+  '<div class="hint">'+(divergentes.length
+    ? divergentes.map(x=>x.nome).join(', ')+' excede a tolerância declarada'
+    : 'Nenhum elemento fora da tolerância')+'</div></div></section>'+
+
+  '<section class="assurance-strip" aria-label="Arquitetura de confiança">'+
+  '<div class="assurance-copy"><span>COMO A PROVA NASCE</span><b>Privado onde importa. Público onde comprova.</b></div>'+
+  '<div class="assurance-flow"><div><i>01</i><span><b>Documento original</b><small>Arquivo preservado no cofre privado</small></span></div><em>→</em>'+
+  '<div><i>02</i><span><b>Validação confidencial</b><small>Integridade, correlação e cálculo no CRE/TEE</small></span></div><em>→</em>'+
+  '<div><i>03</i><span><b>Prova versionada</b><small>Hashes e estados ancorados sem expor o negócio</small></span></div></div></section>'+
+
+  '<section class="correlation-layout"><div class="panel correlation-card">'+
+  '<div class="section-title"><div><span class="section-eyebrow">GRAFO CONFIDENCIAL</span>'+
+  '<h2>Grupo privado <span class="mono">'+val(g.correlationGroupId)+'</span></h2>'+
+  '<p>O identificador localiza candidatos; cada relação abaixo foi conferida novamente nesta execução.</p></div>'+
+  (g.edgeCount?'<span class="tag t-ok">'+g.edgeCount+' RELAÇÕES REVALIDADAS</span>':'')+'</div>'+
+  '<div class="correlation-kpis"><span><b>'+val(g.evidenceCount,0)+'</b> evidências</span>'+
+  '<span><b>'+val(g.actorCount,0)+'</b> atores</span>'+
+  '<span><b>'+val(g.physicalFlowCount,0)+'</b> correntes físicas</span>'+
+  '<span><b class="mono">'+val(g.correlationPolicyVersion)+'</b> política</span></div>'+
+  (g.nodes&&g.nodes.length
+    ? '<div class="panel scrollx" style="margin-top:14px"><table><thead><tr><th>Nó</th><th>Função</th>'+
+      '<th>Participante</th><th>Evidência</th><th>Estado</th></tr></thead><tbody>'+
+      g.nodes.map((n,i)=>'<tr><td class="mono">'+String(i+1).padStart(2,"0")+'</td>'+
+        '<td>'+val(n.funcao)+'</td><td>'+val(n.participante)+'</td>'+
+        '<td class="mono" style="font-size:12.5px">'+val(n.evidencia)+'</td>'+
+        '<td>'+vtag(val(n.estado,"PENDING"))+'</td></tr>').join("")+
+      '</tbody></table></div>'
+    : vazio("Grafo ainda não montado",
+        "Assim que houver evidências correlacionadas neste lote, os nós aparecem aqui."))+
+  (g.edges&&g.edges.length
+    ? '<h3 style="margin-top:20px">Arestas verificadas</h3><div class="panel scrollx"><table><thead><tr><th>relationId</th><th>De</th><th>Para</th><th>Tipo</th><th>transferId</th><th>Verificada em</th></tr></thead><tbody>'+
+      g.edges.map(e=>'<tr><td class="mono">'+val(e.relationId)+'</td><td class="mono">'+val(e.fromEvidenceId)+'</td><td class="mono">'+val(e.toEvidenceId)+'</td><td>'+val(e.relationType)+'</td><td class="mono">'+val(e.transferId)+'</td><td>'+val(e.verifiedAt)+'</td></tr>').join('')+
+      '</tbody></table></div>'
+    : vazio("Nenhuma aresta validada","As relações verificadas aparecem aqui com sua regra, transferência e última verificação."))+
+  '</div>'+
+  '<aside class="panel verification-card"><div class="run-head"><div><span>EXECUÇÃO CRE/TEE</span>'+
+  '<h2>'+val(run.title,"Sem execução registrada")+'</h2></div><i></i></div>'+
+  '<div class="run-id"><span>workflowRunId</span><b class="mono">'+val(run.workflowRunId)+'</b><small>'+val(run.executedAt)+'</small></div>'+
+  '<div class="verification-score"><b>'+val(run.confirmedEvidence,0)+'/'+val(run.totalEvidence,0)+'</b><span>evidências confirmadas</span></div>'+
+  '<div class="progress"><span style="width:'+(run.totalEvidence?Math.round((run.confirmedEvidence/run.totalEvidence)*100):0)+'%"></span></div>'+
+  '<div class="verification-list"><div><span>Integridade dos hashes</span><b>'+val(run.hashStatus)+'</b></div>'+
+  '<div><span>Relações rechecadas</span><b>'+val(run.revalidatedEdges)+'</b></div>'+
+  '<div><span>Política de correlação</span><b class="mono">'+val(g.correlationPolicyVersion)+'</b></div>'+
+  '<div><span>Versão do cálculo</span><b class="mono">'+val(LOTE.calculationVersion)+'</b></div></div>'+
+  '<div class="trust-note"><b>O grupo não é fonte de confiança</b><p>O identificador apenas acelera '+
+  'a descoberta. O CRE/TEE reabre os dados e valida cada aresta antes do cálculo.</p></div></aside></section>'+
+
+  '<section class="panel balance-card"><div class="section-title"><div>'+
+  '<span class="section-eyebrow">IDENTIDADE DE CONSERVAÇÃO</span>'+
+  '<h2>Balanço elemental · '+nd.nome+'</h2>'+
+  '<p>Unidade canônica: massa do elemento em miligramas inteiros. Óxido é apresentação e não entra '+
+  'na identidade.</p></div>'+vtag(nd.veredito)+'</div>'+
+  '<div class="balance-line"><div class="balance-item"><span>Σ entradas + I₀</span><b>'+fmt(nd.entrada+nd.i0)+' mg</b></div>'+
+  '<div class="balance-op">−</div><div class="balance-item"><span>Σ saídas + I₁</span><b>'+fmt(nd.saida+nd.i1)+' mg</b></div>'+
+  '<div class="balance-op">=</div><div class="balance-item balance-result"><span>MUF · não contabilizado</span>'+
+  '<b>'+fmt(nd.muf)+' mg</b></div></div>'+
+  '<div class="calc-trace"><div><i>00</i><span><b>Coerência de base</b><small>massa e teor compatíveis</small></span></div><em>→</em>'+
+  '<div><i>01</i><span><b>Normalização</b><small>base seca a 105 °C</small></span></div><em>→</em>'+
+  '<div><i>02</i><span><b>Conversão elementar</b><small>óxido para elemento</small></span></div><em>→</em>'+
+  '<div><i>03</i><span><b>Inteiro canônico</b><small>arredondamento único</small></span></div><em>→</em>'+
+  '<div><i>04</i><span><b>Decisão</b><small>|MUF| ≤ k·σ</small></span></div></div></section>'+
+
+  '<details class="panel product-details"><summary><div>Detalhamento por elemento'+
+  '<span>'+ELEMENTOS.map(x=>x.nome).join(', ')+'</span></div></summary>'+
+  '<div class="details-body">'+tabelaElementos()+avisoDivergente()+avisoArbitrado()+'</div></details>'+
+
+  '<details class="panel product-details"><summary><div>Correntes e bases de cálculo'+
+  '<span>Entradas, produto, rejeito e efluente usados nesta versão</span></div></summary>'+
+  '<div class="details-body">'+
+  (LOTE.physicalFlows&&LOTE.physicalFlows.length
+    ? '<div class="panel scrollx"><table><thead><tr><th>Corrente</th><th>Tipo</th><th>Base</th>'+
+      '<th class="num">Massa seca</th><th class="num">Elemento contido</th><th>Origem do valor</th></tr></thead><tbody>'+
+      LOTE.physicalFlows.map(c=>'<tr><td>'+val(c.nome)+'</td><td>'+val(c.tipo)+'</td>'+
+        '<td class="mono">'+val(c.base)+'</td><td class="num">'+val(c.massaSeca)+'</td>'+
+        '<td class="num">'+val(c.contido)+'</td><td>'+val(c.origem)+'</td></tr>').join("")+
+      '</tbody></table></div>'
+    : vazio("Nenhuma corrente declarada","As correntes físicas aparecem aqui quando as evidências correspondentes forem correlacionadas."))+
+  '</div></details>'+
+
+  '<details class="panel product-details"><summary><div>Prova blockchain e histórico'+
+  '<span>Resultado atual, versões anteriores e transação de ancoragem</span></div></summary>'+
+  '<div class="details-body">'+
+  (LOTE.versions&&LOTE.versions.length
+    ? '<div class="version-chain">'+LOTE.versions.map((v,i)=>
+        '<div'+(i===LOTE.versions.length-1?' class="current"':'')+'><i>'+val(v.label)+'</i>'+
+        '<span><b>'+val(v.status)+'</b><small class="mono">'+val(v.resultId)+
+        (i===LOTE.versions.length-1?' · ATUAL':'')+'</small></span></div>').join('<em>→</em>')+
+      '</div>'
+    : '')+
+  '<div class="panel pad"><dl class="kv">'+
+  '<dt>resultId atual</dt><dd class="mono">'+val(LOTE.resultId)+'</dd>'+
+  '<dt>resultHash atual</dt><dd class="mono">'+val(LOTE.resultHash)+'</dd>'+
+  '<dt>previousResultId</dt><dd class="mono">'+val(LOTE.previousResultId)+'</dd>'+
+  '<dt>Versão do cálculo</dt><dd class="mono">'+val(LOTE.calculationVersion)+'</dd>'+
+  '<dt>Ancorado em</dt><dd>'+val(LOTE.anchoredAt)+'</dd>'+
+  '<dt>Transação</dt><dd class="hash">'+val(LOTE.transactionHash)+'</dd></dl>'+
+  '<p class="note">O resultado atual foi adicionado ao histórico. A versão anterior continua '+
+  'disponível e não pode ser sobrescrita. O resultHash compromete o manifesto privado com '+
+  'evidenceIds ordenados, arestas, versões das regras, recorte do ator e privateNonce. Nenhum '+
+  'desses dados privados é publicado na transação.</p></div></div></details>';
+};
+
+T.evidencias=()=>{
+  const g=(LOTE&&LOTE.correlationGroup)||{};
+  const q=(LOTE&&LOTE.queue)||{};
+  return '<div class="crumb">Lote <span class="mono">'+(LOTE?val(LOTE.lotId):semDado)+'</span></div>'+
+  '<h1>Fila e correlação privada</h1><p class="sub">Cada documento entra como PENDING. O CRE/TEE '+
+  'confirma o hash, extrai novamente os dados do documento e valida as relações antes de marcar MATCHED.</p>'+
+  '<div class="stats" aria-label="Fila determinística">'+
+  '<div><span class="n mono">EvidenceSubmitted</span><span class="l">Gatilho principal</span></div>'+
+  '<div><span class="n">'+val(q.pendingCount,0)+'</span><span class="l">PENDING na fila</span></div>'+
+  '<div><span class="n">'+val(q.retryCount,0)+'</span><span class="l">Retries programados</span></div>'+
+  '<div><span class="n">'+val(q.lastRecoveryScan)+'</span><span class="l">Última varredura de recuperação</span></div></div>'+
+  '<p class="note">Processamento orientado por evento, fila determinística e varredura programada como fallback. '+
+  'Nenhuma evidência depende de escolha aleatória.</p>'+
+  (g.correlationGroupId?'<div class="correlation-banner"><div><span>correlationGroupId CANDIDATO</span><b class="mono">'+g.correlationGroupId+'</b></div>'+
+   '<p><strong>Descoberta acelerada, confiança recalculada.</strong> O grupo orienta a varredura; '+
+   'origem, destino, datas, referências e relações são conferidos novamente pelo CRE/TEE.</p>'+
+   '<div class="banner-stat"><b>'+val(g.edgeCount,0)+'</b><span>arestas revalidadas<br>nesta execução</span></div></div>':'')+
+  (EVIDENCIAS.length
+    ? '<div class="panel scrollx"><table><thead><tr><th>Evidência</th><th>Participante</th>'+
+      '<th>Documento</th><th>Função no cálculo</th><th>transferId</th><th>correlationGroupId</th><th>Estado</th></tr></thead><tbody>'+
+      EVIDENCIAS.map(e=>'<tr><td class="mono" style="font-size:12.5px">'+val(e.id)+'<div class="sm">'+val(e.enviada)+'</div></td>'+
+        '<td>'+val(e.ator)+'<div class="sm">'+val(e.papel)+'</div></td>'+
+        '<td>'+val(e.doc)+'<div class="sm mono">'+val(e.ref)+'</div></td><td>'+val(e.calculationRole)+'</td>'+
+        '<td class="mono" style="font-size:12px">'+val(e.transferId)+'</td>'+
+        '<td class="mono" style="font-size:12px">'+val(e.correlationGroupId)+'</td><td>'+vtag(val(e.status,"PENDING"))+'</td></tr>').join("")+
+      '</tbody></table></div>'
+    : vazio("Nenhuma evidência registrada",
+        "Quando um participante enviar um documento, ele aparece aqui como pendente até a correlação ser validada."))+
+  (g.edges&&g.edges.length
+    ? '<h2>Arestas verificadas</h2><div class="panel scrollx"><table><thead><tr><th>relationId</th><th>Evidência A</th><th>Evidência B</th><th>Relação</th><th>transferId</th><th>Política</th><th>Verificada em</th></tr></thead><tbody>'+
+      g.edges.map(e=>'<tr><td class="mono">'+val(e.relationId)+'</td><td class="mono">'+val(e.fromEvidenceId)+'</td><td class="mono">'+val(e.toEvidenceId)+'</td><td>'+val(e.relationType)+'</td><td class="mono">'+val(e.transferId)+'</td><td class="mono">'+val(g.correlationPolicyVersion)+'</td><td>'+val(e.verifiedAt)+'</td></tr>').join('')+
+      '</tbody></table></div>'
+    : '')+
+  '<p class="note">Evidência pendente há mais de 365 dias deixa de ser correlacionável. Não é '+
+  'reprovação do material: é encerramento por prazo. Grupo, transferências e arestas permanecem '+
+  'no Supabase/TEE e não concedem acesso nem são publicados on-chain. O contrato recebe um '+
+  'evidenceId por relatório de correlação, evitando revelar um conjunto no mesmo calldata.</p>';
+};
+
+T.documento=()=>{
+  if(!DOCUMENTO) return '<h1>Documento e verificação</h1>'+
+    '<p class="sub">O documento original ao lado do que o sistema extraiu dele e das regras aplicadas.</p>'+
+    vazio("Nenhum documento selecionado",
+      "Abra uma evidência na lista para ver o arquivo original, os campos extraídos e o resultado das regras.");
+  const d=DOCUMENTO;
+  const campos=d.campos||[];
+  const extraido=d.extraido||[];
+  const regras=d.regras||[];
+  return '<div class="crumb">Evidência <span class="mono">'+val(d.evidenceId)+'</span> · '+val(d.emissor)+'</div>'+
+  '<div class="headrow"><div class="grow"><h1>Documento e verificação</h1>'+
+  '<p class="sub">O documento original ao lado do que o sistema extraiu dele e das regras aplicadas.</p></div>'+
+  '<div class="actions"><button class="btn ghost dl">Baixar original</button></div></div>'+
+  '<div class="split32"><div class="docview"><div class="sheet">'+
+  '<h4>'+val(d.emissor)+'</h4><h5>'+val(d.titulo)+'</h5><dl>'+
+  campos.map(c=>'<dt>'+val(c[0])+'</dt><dd>'+val(c[1])+'</dd>').join("")+'</dl>'+
+  (d.rodape?'<div class="ft">'+d.rodape+'</div>':'')+'</div></div><div class="stack">'+
+  '<div class="panel pad"><h3>Extraído do documento</h3><dl class="kv">'+
+  extraido.map(c=>'<dt>'+val(c[0])+'</dt><dd>'+val(c[1])+'</dd>').join("")+'</dl></div>'+
+  '<div class="panel pad hash-proof"><div class="hash-proof-head"><div><span>PROVA PÚBLICA</span>'+
+  '<h3>Impressão digital do documento</h3></div><b class="mono">evidenceHash</b></div>'+
+  '<p class="hash" style="margin:0">'+val(d.evidenceHash)+'</p>'+
+  '<p class="note">Este hash comprova os bytes exatos do arquivo, não o resultado do balanço. '+
+  'Baixe o original e recalcule. Se divergir, o documento apresentado não é o que foi registrado.</p></div>'+
+  '<div class="panel"><div class="pad" style="padding-bottom:0"><h3>Regras verificadas</h3></div>'+
+  (regras.length
+    ? '<table><tbody>'+regras.map(r=>'<tr><td>'+val(r[0])+'</td><td style="text-align:right">'+
+        (r[1]==="ok"?'<span class="tag t-ok">OK</span>':'<span class="tag t-att">Ressalva</span>')+
+        '</td></tr>').join("")+'</tbody></table>'
+    : '<div class="pad"><p class="sm" style="margin:0">Nenhuma regra avaliada para este documento.</p></div>')+
+  '</div></div></div>';
+};
+
+T.atores=()=>
+  '<h1>Atores da cadeia</h1><p class="sub">Cada empresa tem uma identidade lógica e uma ou mais '+
+  'carteiras autorizadas. Trocar a chave não muda a identidade nem apaga o histórico já ancorado.</p>'+
+  (ATORES.length
+    ? '<div class="panel scrollx"><table><thead><tr><th>Empresa</th><th>Papel</th><th>Praça</th>'+
+      '<th>Identidade</th><th class="num">Carteiras</th><th class="num">Evidências</th><th>Desde</th></tr></thead><tbody>'+
+      ATORES.map(a=>'<tr><td style="font-weight:500">'+val(a.nome)+'</td><td>'+val(a.papel)+'</td>'+
+        '<td>'+val(a.praca)+'</td><td class="mono" style="font-size:12.5px">'+val(a.id)+'</td>'+
+        '<td class="num">'+val(a.carteiras,0)+'</td><td class="num">'+val(a.evid,0)+'</td>'+
+        '<td>'+val(a.desde)+'</td></tr>').join("")+'</tbody></table></div>'
+    : vazio("Nenhum ator cadastrado",
+        "Use “Cadastrar ator” para registrar a primeira empresa e associar a carteira autorizada."))+
+  '<p class="note">Documento de registro da empresa não aparece aqui nem para os participantes. '+
+  'Um ator reconhece o outro por nome, praça e carteira.</p>';
+
+T.cadastro=()=>
+  '<div class="crumb">Atores da cadeia · novo participante</div><h1>Cadastrar ator</h1>'+
+  '<p class="sub">O cadastro grava uma transação: identidade e carteira vão para a blockchain. '+
+  'Razão social e contato ficam apenas aqui.</p><div class="split">'+
+  '<div class="panel pad"><h3>Identificação</h3>'+
+  '<div class="field"><label for="rs">Razão social</label>'+ 
+  '<input id="rs" placeholder="Nome empresarial completo"></div>'+ 
+  '<div class="field"><label for="actorId">Identificador único da empresa</label>'+ 
+  '<div style="display:flex;gap:8px"><input id="actorId" class="mono" readonly style="flex:1" value="'+novoActorId()+'">'+ 
+  '<button type="button" class="btn ghost sm" id="gerarActorId">Gerar</button></div>'+ 
+  '<p class="sm">Identificador opaco para referência no sistema; não é token transferível nem ativo blockchain.</p></div>'+ 
+  '<div class="f2"><div class="field"><label for="pr">Praça de operação</label>'+
+  '<input id="pr" placeholder="Cidade, UF"></div>'+
+  '<div class="field"><label for="pa">País</label><input id="pa" placeholder="País"></div></div>'+
+  '<div class="f2"><div class="field"><label for="rp">Responsável</label>'+
+  '<input id="rp" placeholder="Nome do responsável"></div>'+
+  '<div class="field"><label for="em">E-mail</label>'+
+  '<input id="em" type="email" placeholder="contato@empresa.com"></div></div>'+
+  '<div class="field"><label for="wl">Carteira autorizada</label>'+
+  '<input id="wl" class="mono" placeholder="0x…"></div>'+
+  '<p class="note">A carteira assina o envio de evidências. Outras podem ser autorizadas depois, '+
+  'sem trocar a identidade.</p></div><div class="stack">'+
+  '<div class="panel pad"><h3>Papel na cadeia</h3><div class="chips" id="papeis">'+
+  ["Minerador","Transportadora","Laboratório","Purificador","Reciclador","Fabricante"]
+    .map(x=>'<button type="button" class="chip" aria-pressed="false">'+x+'</button>').join("")+
+  '</div><p class="note">Um cadastro por papel. A mesma empresa pode ser laboratório numa operação '+
+  'e fornecedora noutra, e são identidades separadas.</p></div>'+
+  '<div class="panel pad"><h3>O que este ator poderá ver</h3><dl class="kv">'+
+  '<dt>As próprias evidências</dt><dd><span class="tag t-ok">Sim</span></dd>'+
+  '<dt>A etapa seguinte da cadeia</dt><dd><span class="tag t-ok">Sim</span></dd>'+
+  '<dt>O veredito dos lotes que alimentou</dt><dd><span class="tag t-ok">Sim</span></dd>'+
+  '<dt>O que acontece depois do destinatário</dt><dd><span class="tag t-pend">Não</span></dd>'+
+  '<dt>Documentos de terceiros</dt><dd><span class="tag t-pend">Não</span></dd>'+
+  '<dt>Massas e teores de outras correntes</dt><dd><span class="tag t-pend">Não</span></dd></dl></div>'+
+  '<div class="actions"><button class="btn" id="salvarAtor">Cadastrar e assinar</button>'+ 
+  '<button class="btn ghost">Cancelar</button></div></div></div>'+ 
+  '<section class="panel pad actor-switcher"><h3>Navegar como ator</h3>'+ 
+  '<p class="sm">Selecione um participante para visualizar sua experiência no MVP. Os dados abaixo são fictícios.</p>'+ 
+  '<div class="f2"><div class="field"><label for="atorSelecionado">Ator da demonstração</label>'+ 
+  '<select id="atorSelecionado"><option value="">Nenhum ator cadastrado ainda</option>'+ 
+  ATORES.map(a=>'<option value="'+val(a.id)+'"'+(ATOR_ATIVO===a.id?' selected':'')+'>'+val(a.nome)+' · '+val(a.papel)+'</option>').join('')+ 
+  '</select></div><div id="atorSelecionadoInfo" class="note">'+ 
+  (ATOR_ATIVO?'Perfil ativo selecionado.':'Cadastre um ator para habilitar a navegação.')+'</div></div></section>';
+
+/* ---------------- Participante ---------------- */
+
+T.enviar=()=>
+  '<div class="crumb">Envio de evidência'+(LOTE?' · lote <span class="mono">'+val(LOTE.lotId)+'</span>':'')+'</div>'+
+  '<h1>Enviar evidência</h1><p class="sub">Envie apenas o documento que é seu. Ele recebe um hash '+
+  'no momento do envio e entra como PENDING. Qualquer alteração posterior muda o hash; se o arquivo '+
+  'privado for removido, a âncora continua on-chain e a ausência fica detectável.</p><div class="split"><div class="stack">'+
+  '<div class="panel pad"><h3>Documento</h3>'+
+  '<label class="drop" for="arquivo"><b>Selecione ou solte o arquivo</b>PDF assinado, até 20 MB</label>'+
+  '<input id="arquivo" type="file" accept="application/pdf" style="display:none">'+
+  '<div id="arquivoInfo"></div><p class="note">O evidenceHash é calculado sobre os bytes originais '+
+  'deste arquivo antes da submissão on-chain.</p></div></div>'+
+  '<div class="stack"><div class="panel pad"><h3>Informações auxiliares da submissão</h3>'+
+  '<p class="sm">Estes campos ajudam a organizar a fila, mas não são considerados prova. O CRE/TEE '+
+  'extrai e valida novamente os valores diretamente do documento ancorado.</p>'+
+  '<div class="field"><label for="td">Tipo de documento</label><select id="td">'+
+  '<option value="">Selecione…</option>'+
+  '<option>Declaração de origem e quantidade</option><option>Nota fiscal de saída</option>'+
+  '<option>Laudo de análise elementar</option><option>Conhecimento de transporte</option>'+
+  '<option>Registro de transformação</option></select></div>'+
+  '<div class="f2"><div class="field"><label for="dr">Referência</label>'+
+  '<input id="dr" class="mono" placeholder="Número do documento"></div>'+
+  '<div class="field"><label for="lt">Lote</label>'+
+  '<input id="lt" class="mono" placeholder="Identificador do lote"></div></div>'+
+  '<div class="f2"><div class="field"><label for="mb">Massa bruta</label>'+
+  '<input id="mb" class="mono" placeholder="0,000 kg"></div>'+
+  '<div class="field"><label for="bs">Base declarada</label><select id="bs" class="mono">'+
+  '<option value="">Selecione…</option><option>AS_RECEIVED</option><option>DRY_105C</option>'+
+  '<option>CALCINED</option><option>LIQUIDO_TOTAL</option></select></div></div>'+
+  '<div class="f2"><div class="field"><label for="um">Umidade livre</label>'+
+  '<input id="um" class="mono" placeholder="0,00 %"></div>'+
+  '<div class="field"><label for="ts">Temperatura de secagem</label>'+
+  '<input id="ts" class="mono" placeholder="105 °C"></div></div>'+
+  '<div class="field"><label for="dst">Destinatário</label>'+
+  '<input id="dst" placeholder="Empresa destinatária"></div>'+
+  '<p class="note"><b>Não atestado:</b> nenhum valor digitado nesta área entra na correlação ou no '+
+  'balanço sem ser confirmado no documento e revalidado pelo CRE/TEE.</p></div>'+
+  '<div class="actions"><button class="btn" id="enviarEv">Assinar e enviar</button></div></div></div>';
+
+T.entrega=()=>{
+  const transferId=LOTE?val(LOTE.assignedTransferId):semDado;
+  return '<div class="crumb">Cadeia de custódia'+(LOTE?' · lote <span class="mono">'+val(LOTE.lotId)+'</span>':'')+'</div>'+
+  '<h1>Registrar transporte</h1><p class="sub">Confirme o que foi coletado e o que foi entregue. '+
+  'A evidência da transportadora comprova custódia e possíveis diferenças, mas não cria uma nova '+
+  'corrente de massa no balanço.</p><div class="split"><div class="stack">'+
+  '<div class="panel pad"><h3>Transferência atribuída</h3><dl class="kv">'+
+  '<dt>transferId</dt><dd class="mono">'+transferId+'</dd>'+
+  '<dt>Origem</dt><dd>'+val(LOTE&&LOTE.transferOrigin)+'</dd>'+
+  '<dt>Destino</dt><dd>'+val(LOTE&&LOTE.transferDestination)+'</dd></dl></div>'+
+  '<div class="panel pad"><h3>Documento de transporte</h3>'+
+  '<label class="drop" for="arquivoTransporte"><b>Selecione ou solte o arquivo</b>Conhecimento de transporte ou comprovante de entrega</label>'+
+  '<input id="arquivoTransporte" type="file" accept="application/pdf" style="display:none">'+
+  '<div id="arquivoTransporteInfo"></div></div></div>'+
+  '<div class="stack"><div class="panel pad"><h3>Coleta e entrega</h3>'+
+  '<div class="f2"><div class="field"><label for="coletaEm">Coletado em</label><input id="coletaEm" type="datetime-local"></div>'+
+  '<div class="field"><label for="entregaEm">Entregue em</label><input id="entregaEm" type="datetime-local"></div></div>'+
+  '<div class="f2"><div class="field"><label for="massaColetada">Massa coletada</label><input id="massaColetada" class="mono" placeholder="0,000 kg"></div>'+
+  '<div class="field"><label for="massaEntregue">Massa entregue</label><input id="massaEntregue" class="mono" placeholder="0,000 kg"></div></div>'+
+  '<div class="filerow" id="custodyDifference"><b>Diferença de custódia</b><span>Informe as duas massas</span></div>'+
+  '<div class="field"><label for="ocorrencia">Ocorrência de custódia</label><select id="ocorrencia">'+
+  '<option>Sem ocorrência</option><option>Avaria</option><option>Perda parcial</option><option>Derramamento</option><option>Umidade</option><option>Recusa no recebimento</option></select></div>'+
+  '<div class="field"><label for="justificativa">Justificativa ou observação</label><input id="justificativa" placeholder="Descreva a diferença ou a confirmação da entrega"></div>'+
+  '<p class="note">Massa coletada e entregue corroboram a mesma corrente física. A diferença é '+
+  'classificada pela política de custódia e nunca é somada como uma segunda entrada.</p></div>'+
+  '<div class="actions"><button class="btn" id="enviarTransporte">Assinar e registrar entrega</button></div></div></div>';
+};
+
+T.minhas=()=>
+  '<h1>Minhas evidências</h1><p class="sub">Seu histórico completo. Você baixa qualquer documento '+
+  'que enviou. Qualquer alteração quebra a correspondência com o hash; uma remoção não apaga a '+
+  'âncora nem o histórico on-chain.</p>'+
+  (MINHAS.length
+    ? '<div class="panel scrollx"><table><thead><tr><th>Evidência</th><th>Documento</th>'+
+      '<th>Enviada</th><th>Estado</th><th>Hash ancorado</th><th class="num">Original</th></tr></thead><tbody>'+
+      MINHAS.map(e=>'<tr><td class="mono" style="font-size:12.5px">'+val(e.id)+'</td>'+
+        '<td>'+val(e.doc)+'<div class="sm mono">'+val(e.ref)+'</div></td><td>'+val(e.enviada)+'</td>'+
+        '<td>'+vtag(val(e.status,"PENDING"))+'</td>'+
+        '<td class="hash" style="max-width:180px">'+val(e.hash)+'</td>'+
+        '<td class="num"><button class="btn ghost sm dl">Baixar</button></td></tr>').join("")+
+      '</tbody></table></div>'
+  : vazio("Você ainda não enviou evidências",
+        role==="transp"
+          ? "Use “Registrar transporte” para enviar o documento de custódia. Ele aparece aqui após a ancoragem do hash."
+          : "Use “Enviar evidência” para registrar o primeiro documento. Ele aparece aqui logo após a ancoragem do hash."))+
+  '<p class="note">Documentos de outros participantes não aparecem aqui. Do conjunto, o que chega '+
+  'até você é o veredito do lote.</p>';
+
+T.cadeia=()=>
+  '<h1>Minha cadeia</h1><p class="sub">Você enxerga a operação até o destinatário do seu material. '+
+  'O que ele faz depois — para quem vende, qual laboratório contrata — não aparece aqui.</p>'+
+  (CADEIA.length
+    ? '<div class="chain">'+CADEIA.map((n,i)=>
+        '<div class="node'+(n.self?' self':'')+'"><b>'+val(n.nome)+'</b>'+
+        '<span class="r">'+val(n.papel)+(n.self?' · você':'')+'</span></div>'+
+        (i<CADEIA.length-1?'<div class="link">'+seta(false)+'</div>':''))
+        .join("")+
+      '<div class="link">'+seta(true)+'</div>'+
+      '<div class="horizon"><b>Fim da sua visibilidade</b>O que o destinatário faz com o material '+
+      'depois disso não é exibido para você.</div></div>'
+    : vazio("Cadeia ainda não formada",
+        "Assim que sua evidência for correlacionada com a contraparte, os participantes visíveis aparecem aqui."))+
+  '<h2>Evidências desta cadeia</h2>'+
+  (CADEIA_EVIDENCIAS.length
+    ? '<div class="panel scrollx"><table><thead><tr><th>Participante</th><th>Documento</th>'+
+      '<th>Enviada</th><th>Estado</th></tr></thead><tbody>'+
+      CADEIA_EVIDENCIAS.map(e=>'<tr><td>'+val(e.participante)+
+        (e.self?' <span class="sm">você</span>':'')+'</td><td>'+val(e.doc)+'</td>'+
+        '<td>'+val(e.enviada)+'</td><td>'+vtag(val(e.status,"PENDING"))+'</td></tr>').join("")+
+      '</tbody></table></div>'
+    : '')+
+  '<p class="note">A transportadora confirma a custódia, não a composição. É a testemunha de que '+
+  'o material saiu de um lugar e chegou a outro.</p>';
+
+T.transferencia=()=>{
+  const c=(LOTE&&LOTE.custody)||{};
+  return '<div class="crumb">Transferência atribuída <span class="mono">'+val(LOTE&&LOTE.assignedTransferId)+'</span></div>'+
+  '<h1>Minha transferência</h1><p class="sub">Você visualiza somente a coleta, a entrega e as '+
+  'ocorrências sob sua responsabilidade. O grafo completo e o identificador do grupo privado não são enviados para esta tela.</p>'+
+  '<div class="stats"><div><span class="n">'+val(c.pickedUpMass)+'</span><span class="l">Massa coletada</span></div>'+
+  '<div><span class="n">'+val(c.deliveredMass)+'</span><span class="l">Massa entregue</span></div>'+
+  '<div><span class="n">'+val(c.difference)+'</span><span class="l">Diferença de custódia</span></div>'+
+  '<div><span class="n">'+val(c.status)+'</span><span class="l">Estado da entrega</span></div></div>'+
+  '<div class="split" style="margin-top:14px"><div class="panel pad"><h3>Rota autorizada</h3><dl class="kv">'+
+  '<dt>Origem</dt><dd>'+val(LOTE&&LOTE.transferOrigin)+'</dd><dt>Destino</dt><dd>'+val(LOTE&&LOTE.transferDestination)+'</dd>'+
+  '<dt>Coletado em</dt><dd>'+val(c.pickedUpAt)+'</dd><dt>Entregue em</dt><dd>'+val(c.deliveredAt)+'</dd></dl></div>'+
+  '<div class="panel pad"><h3>Ocorrência</h3><dl class="kv"><dt>Classificação</dt><dd>'+val(c.incidentType)+'</dd>'+
+  '<dt>Justificativa</dt><dd>'+val(c.justification)+'</dd><dt>Evidência</dt><dd class="mono">'+val(c.evidenceId)+'</dd></dl></div></div>'+
+  '<p class="note">As massas da transportadora corroboram a corrente do remetente e do destinatário. '+
+  'Elas não são somadas novamente no balanço.</p>';
+};
+
+T.resultado=()=>{
+  if(!LOTE||!ELEMENTOS.length) return '<h1>Resultado do lote</h1>'+
+    '<p class="sub">O veredito do lote em que o seu material entrou.</p>'+
+    vazio("Nenhum resultado disponível",
+      "Quando o balanço do lote for calculado e ancorado, seu comprovante aparece aqui.");
+  const minha=LOTE.myContribution;
+  return '<div class="crumb">Lote <span class="mono">'+val(LOTE.lotId)+'</span></div>'+
+  '<div class="headrow"><div class="grow"><h1>Resultado do lote</h1>'+
+  '<p class="sub">O veredito do lote em que o seu material entrou. As massas e os teores das '+
+  'outras correntes permanecem com quem as declarou.</p></div><div>'+vtag(VEREDITO)+'</div></div>'+
+  avisoArbitrado()+avisoDivergente()+
+  '<h2>Sua contribuição</h2>'+
+  (minha
+    ? '<div class="panel scrollx"><table><thead><tr><th>Corrente</th><th>Base</th>'+
+      '<th class="num">Massa seca</th><th class="num">Elemento contido</th><th>Evidência</th></tr></thead>'+
+      '<tbody><tr><td>'+val(minha.corrente)+'</td><td class="mono">'+val(minha.base)+'</td>'+
+      '<td class="num">'+val(minha.massaSeca)+'</td><td class="num">'+val(minha.contido)+'</td>'+
+      '<td class="mono" style="font-size:12.5px">'+val(minha.evidencia)+'</td></tr></tbody></table></div>'
+    : vazio("Nenhuma contribuição sua neste lote",
+        "Suas correntes aparecem aqui quando as evidências que você enviou forem correlacionadas."))+
+  '<p class="note">Só a sua corrente aparece detalhada. As outras entradas, o produto, o rejeito e '+
+  'o efluente entram no cálculo sem que os valores cheguem até você.</p>'+
+  '<h2>Seu comprovante</h2><div class="panel pad"><dl class="kv">'+
+  '<dt>resultId</dt><dd class="mono">'+val(LOTE.myResultId)+'</dd>'+
+  '<dt>resultHash</dt><dd class="mono">'+val(LOTE.myResultHash)+'</dd>'+
+  '<dt>previousResultId</dt><dd class="mono">'+val(LOTE.myPreviousResultId)+'</dd>'+
+  '<dt>Ancorado em</dt><dd>'+val(LOTE.anchoredAt)+'</dd></dl>'+
+  '<p class="note">Este hash é só seu. Ele deriva do resultado somado aos seus dados, então difere '+
+  'do que os demais participantes receberam pelo mesmo lote.</p>'+
+  '<div class="actions"><button class="btn ghost dl">Baixar relatório</button>'+
+  '<button class="btn ghost dl">Baixar comprovante</button></div></div>';
+};
+
+T.convidar=()=>
+  '<h1>Convidar cliente</h1><p class="sub">O convite vale para um resultado específico. Quem '+
+  'recebe não enxerga seus outros lotes, suas evidências nem os demais participantes.</p>'+
+  '<div class="split"><div class="panel pad">'+
+  '<div class="field"><label for="cr">Resultado a compartilhar</label>'+
+  '<select id="cr" class="mono"><option value="">Selecione um resultado ancorado…</option>'+
+  (LOTE&&LOTE.myResultHash?'<option>'+val(LOTE.lotId)+' · '+LOTE.myResultHash+'</option>':'')+
+  '</select></div>'+
+  '<div class="field"><label for="ce">E-mail do convidado</label>'+
+  '<input id="ce" type="email" placeholder="contato@cliente.com"></div>'+
+  '<div class="field"><label for="cv">Validade do acesso</label><select id="cv">'+
+  '<option>90 dias</option><option>180 dias</option><option>Sem prazo</option></select></div>'+
+  '<div class="actions"><button class="btn" id="enviarConvite">Enviar convite</button></div></div>'+
+  '<div class="panel pad"><h3>O que o convidado passa a ver</h3><dl class="kv">'+
+  '<dt>Veredito do lote</dt><dd><span class="tag t-ok">Sim</span></dd>'+
+  '<dt>Conservação por elemento</dt><dd><span class="tag t-ok">Sim</span></dd>'+
+  '<dt>Relatório em PDF</dt><dd><span class="tag t-ok">Sim</span></dd>'+
+  '<dt>Seus outros lotes</dt><dd><span class="tag t-pend">Não</span></dd>'+
+  '<dt>Documentos e evidências</dt><dd><span class="tag t-pend">Não</span></dd>'+
+  '<dt>Massas por corrente</dt><dd><span class="tag t-pend">Não</span></dd>'+
+  '<dt>Enviar qualquer coisa</dt><dd><span class="tag t-pend">Não</span></dd></dl></div></div>';
+
+/* ---------------- Cliente ---------------- */
+
+T.dashboard=()=>{
+  if(!LOTE||!ELEMENTOS.length) return '<h1>Balanço verificado</h1>'+
+    vazio("Nenhum resultado compartilhado com você",
+      "Quando uma empresa compartilhar um resultado ancorado, ele aparece aqui com o relatório e o comprovante.");
+  const provenance=LOTE.clientProvenance||[];
+  return '<div class="crumb">Compartilhado por '+val(LOTE.sharingCompany)+' · acesso por convite</div>'+
+  '<div class="headrow"><div class="grow"><h1>Balanço verificado</h1>'+
+  '<p class="sub">Resultado autorizado do lote '+val(LOTE.lotId)+', com janela documental '+
+  val(LOTE.documentWindow)+'. Confira se o relatório é o mesmo que foi ancorado.</p></div>'+
+  '<div>'+vtag(VEREDITO)+'</div></div>'+
+  '<div class="stats">'+
+  '<div><span class="n">'+vtag(VEREDITO)+'</span><span class="l">Veredito do lote</span></div>'+
+  '<div><span class="n">'+conformes+' / '+ELEMENTOS.length+'</span><span class="l">Elementos dentro da banda</span></div>'+
+  '<div><span class="n">'+val(LOTE.matchedEvidenceCount,0)+'</span><span class="l">Evidências verificadas</span></div>'+
+  '<div><span class="n">'+String(val(LOTE.anchoredAt,"")).split(" ")[0]+'</span><span class="l">Ancorado em</span></div></div>'+
+  '<h2>Proveniência verificada</h2>'+
+  (provenance.length
+    ? '<div class="panel scrollx"><table><thead><tr><th>Etapa</th><th>Identidade exibida</th><th>Estado</th><th>Verificada em</th></tr></thead><tbody>'+
+      provenance.map(p=>'<tr><td>'+val(p.stage)+'</td><td>'+val(p.identity,"Identidade protegida")+'</td><td>'+vtag(val(p.status,"MATCHED"))+'</td><td>'+val(p.verifiedAt)+'</td></tr>').join('')+
+      '</tbody></table></div>'
+    : vazio("Proveniência protegida","As etapas autorizadas aparecem aqui sem revelar documentos, relações comerciais ou o grupo completo."))+
+  '<p class="note">Esta tela não recebe o identificador do grupo privado, transferências completas nem documentos de terceiros. '+
+  'Em produção, a API e o RLS do Supabase enviam somente o resultado compartilhado.</p>'+
+  '<div class="split chart-grid" style="margin-top:14px">'+
+  '<section class="panel pad chart-card"><h3>Não contabilizado por versão</h3>'+
+  '<p class="chart-sub">Evolução da parcela sem destino declarado</p>'+
+  (SERIE.length
+    ? '<div class="chart-wrap"><canvas id="trendChart" aria-label="Evolução do não contabilizado por versão do lote"></canvas></div>'+
+      '<div style="display:flex;justify-content:space-between;margin-top:8px" class="sm">'+
+      '<span>'+SERIE.length+' versões do lote</span><span>'+pct(Math.abs(ELEMENTOS[0].rel))+' agora</span></div>'
+    : '<p class="sm" style="margin:12px 0 0">Sem histórico anterior para este lote.</p>')+
+  '</section>'+
+  '<section class="panel pad chart-card"><h3>Conservação por elemento</h3>'+
+  '<p class="chart-sub">Entrada disponível versus massa contabilizada</p>'+
+  '<div class="chart-wrap"><canvas id="elementChart" aria-label="Comparativo da conservação por elemento"></canvas></div>'+
+  '</section></div>'+
+  avisoArbitrado()+
+  '<h2>Conservação por elemento</h2>'+tabelaElementos()+avisoDivergente()+
+  '<h2>Conferir por conta própria</h2><div class="panel pad"><dl class="kv">'+
+  '<dt>resultId</dt><dd class="mono">'+val(LOTE.clientResultId)+'</dd>'+
+  '<dt>resultHash</dt><dd class="mono">'+val(LOTE.clientResultHash)+'</dd>'+
+  '<dt>previousResultId</dt><dd class="mono">'+val(LOTE.clientPreviousResultId)+'</dd>'+
+  '<dt>Transação</dt><dd class="hash">'+val(LOTE.clientTransactionHash)+'</dd>'+
+  '<dt>Origem</dt><dd>'+val(LOTE.sharingCompany)+' · '+val(LOTE.matchedEvidenceCount,0)+
+  ' evidências correlacionadas</dd></dl>'+
+  '<p class="note">Baixe o relatório, recalcule o hash e compare com o que está na transação. '+
+  'Se divergir, o documento foi alterado depois da ancoragem.</p>'+
+  '<div class="actions"><button class="btn dl">Baixar relatório</button>'+
+  '<button class="btn ghost dl">Baixar comprovante</button></div></div>'+
+  '<div class="panel pad" style="margin-top:14px"><h3>O que este resultado não afirma</h3>'+
+  '<p style="margin:0;color:var(--ink2);max-width:64ch">Que o material saiu inequivocamente de uma '+
+  'mina específica, nem que as declarações dos participantes são verdadeiras no mundo físico. Ele '+
+  'afirma que documentos independentes se correspondem, que a massa de cada elemento se conserva '+
+  'dentro da banda declarada, e que nada disso mudou desde a ancoragem.</p></div>';
+};
+
+function render(){
+  const sessao=SESSION[role];
+  $("#session").innerHTML='<span class="session-avatar">'+sessao.iniciais+'</span>'+ 
+    '<span class="session-copy"><b>'+sessao.nome+'</b><span>'+sessao.acesso+'</span></span>';
+  renderWallet();
+  const roleSelector=$("#roleSelector");
+  if(roleSelector){
+    roleSelector.value=role;
+    roleSelector.onchange=function(){
+      const next=this.value;
+      window.location.href=window.location.pathname+(next==="op"?"":"?role="+encodeURIComponent(next));
+    };
+  }
+  $("#nav").innerHTML=NAVS[role].map(n=>
+    '<button data-page="'+n[0]+'"'+(n[0]===page?' aria-current="page"':'')+'>'+n[1]+'</button>').join("");
+  $("#nav").querySelectorAll("button").forEach(b=>
+    b.onclick=function(){page=b.dataset.page;render();});
+  $("#view").innerHTML=T[page]?T[page]():"";
+  window.scrollTo({top:0,behavior:"instant"});
+  renderCharts();
+
+  const ps=$("#papeis");
+  if(ps) ps.querySelectorAll(".chip").forEach(c=>
+    c.onclick=function(){ps.querySelectorAll(".chip").forEach(x=>
+      x.setAttribute("aria-pressed",String(x===c)));});
+
+  const bind=function(sel,msg){const el=$(sel);if(el)el.onclick=function(e){e.preventDefault();toast(msg);};};
+  const bindOnchain=function(sel,msg){const el=$(sel);if(el)el.onclick=function(e){
+    e.preventDefault();
+    if(!walletAddress){toast("Conecte uma carteira autorizada antes de continuar.");return;}
+    if(walletChainId!=="0xaa36a7"){toast("Troque a carteira para a rede Sepolia antes de assinar.");return;}
+    toast(msg);
+  };};
+  const salvarAtor=$("#salvarAtor");
+  if(salvarAtor) salvarAtor.onclick=async function(e){
+    e.preventDefault();
+    if(!walletAddress){toast("Conecte uma carteira autorizada antes de continuar.");return;}
+    const chainAtual=await refreshWalletChain();
+    if(chainAtual!=="0xaa36a7"){toast("Troque a carteira para a rede Sepolia antes de assinar.");return;}
+    const nome=$("#rs")?.value.trim(), papel=$("#papeis .chip[aria-pressed=\"true\"]")?.textContent.trim();
+    if(!nome||!papel){toast("Informe a razão social e selecione um papel.");return;}
+    const novo={id:$("#actorId")?.value||novoActorId(),nome,papel,praca:$("#pr")?.value||"—",carteiras:1,evid:0,desde:new Date().toLocaleDateString("pt-BR")};
+    if(ATORES.some(a=>a.id===novo.id)){toast("Identificador já usado. Gere outro antes de cadastrar.");return;}
+    salvarAtor.disabled=true; salvarAtor.textContent="Assinando…";
+    const actorType={"Minerador":"MINER","Transportadora":"CARRIER","Laboratório":"LABORATORY","Purificador":"REFINER","Reciclador":"RECYCLER","Fabricante":"MANUFACTURER"}[papel]||"OTHER";
+    try{
+      if(!window.ethers) throw new Error("Biblioteca Web3 não carregou");
+      const provider=new ethers.BrowserProvider(getWalletProvider());
+      const signer=await provider.getSigner();
+      const abi=["function registerActor(bytes32 actorId, address controller) external"];
+      const contract=new ethers.Contract(EXPLORERCHEM_CONTRACT_ADDRESS,abi,signer);
+      const tx=await contract.registerActor(novo.id,walletAddress);
+      const receipt=await tx.wait();
+      const {data:row,error}=await supabaseClient.from("explorerchem_actors").insert({
+        actor_id:novo.id, display_name:nome, actor_type:actorType, country_code:($("#pa")?.value||"BR").slice(0,2).toUpperCase(),
+        active:true, onchain_registered_at:new Date().toISOString(), onchain_registration_tx:receipt.hash
+      }).select("id,actor_id,display_name,actor_type").single();
+      if(error) throw new Error("Blockchain confirmada, mas o Supabase recusou o cadastro: "+error.message);
+      novo.dbId=row.id; ATORES.push(novo); ATOR_ATIVO=novo.id; persistirAtoresLocais();
+      toast("Ator cadastrado na blockchain e no Supabase.");
+      setTimeout(()=>render(),450);
+    }catch(error){
+      console.error(error); toast(error.message||"Não foi possível concluir o cadastro.");
+      salvarAtor.disabled=false; salvarAtor.textContent="Cadastrar e assinar";
+    }
+  };
+  const gerarActorId=$("#gerarActorId");
+  if(gerarActorId) gerarActorId.onclick=function(){
+    let id;
+    do { id=novoActorId(); } while(ATORES.some(a=>a.id===id));
+    const campo=$("#actorId"); if(campo) campo.value=id;
+  };
+  const atorSelecionado=$("#atorSelecionado");
+  if(atorSelecionado) atorSelecionado.onchange=function(){ATOR_ATIVO=this.value||null;toast(ATOR_ATIVO?"Perfil do ator selecionado para navegação.":"Nenhum ator selecionado.");};
+  bindOnchain("#enviarEv","Evidência enviada. Hash gravado, estado pendente.");
+  bindOnchain("#enviarTransporte","Entrega registrada. EvidenceHash ancorado como PENDING.");
+  bind("#enviarConvite","Convite enviado para este resultado.");
+  const bindFile=function(inputSel,infoSel){const input=$(inputSel),info=$(infoSel);if(input&&info)input.onchange=function(){
+    const file=input.files&&input.files[0];
+    info.innerHTML=file?'<div class="filerow"><b>'+file.name+'</b><span>'+Math.ceil(file.size/1024)+' KB · pronto para hash</span></div>':'';
+  };};
+  bindFile("#arquivo","#arquivoInfo");
+  bindFile("#arquivoTransporte","#arquivoTransporteInfo");
+  const collected=$("#massaColetada"),delivered=$("#massaEntregue"),difference=$("#custodyDifference");
+  const parseMass=v=>{const clean=v.replace(/\s*kg/gi,"").replace(/\./g,"").replace(",",".");return Number(clean);};
+  const updateDifference=()=>{if(!collected||!delivered||!difference)return;const a=parseMass(collected.value),b=parseMass(delivered.value);difference.innerHTML=Number.isFinite(a)&&Number.isFinite(b)?'<b>Diferença de custódia</b><span>'+Math.max(0,a-b).toLocaleString("pt-BR",{minimumFractionDigits:3,maximumFractionDigits:3})+' kg</span>':'<b>Diferença de custódia</b><span>Informe as duas massas</span>';};
+  if(collected&&delivered){collected.oninput=updateDifference;delivered.oninput=updateDifference;}
+  const abrirEvidencia=$("#abrirEvidenciaTransporte");
+  if(abrirEvidencia) abrirEvidencia.onclick=function(){page="evidencias";render();};
+  document.querySelectorAll(".dl").forEach(b=>
+    b.onclick=function(){toast("Arquivo gerado. Recalcule o hash e compare com a transação.");});
+}
+
+$("#home").onclick=function(){page=NAVS[role][0][0];render();};
+
+render();
+restoreWallet();
+carregarAtores();
+const walletProvider=getWalletProvider();
+if(walletProvider&&typeof walletProvider.on==="function"){
+  walletProvider.on("accountsChanged",contas=>{walletAddress=contas[0]||"";if(!walletAddress)walletChainId="";renderWallet();});
+  walletProvider.on("chainChanged",chainId=>{walletChainId=chainId;renderWallet();});
+}
+</script>
+</body>
+</html>
 
