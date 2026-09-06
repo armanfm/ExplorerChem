@@ -1352,7 +1352,7 @@ T.laudo=()=>
   '<h1>Enviar laudo</h1><p class="sub">Envie o laudo analítico da amostra. O documento recebe um hash no momento do envio e fica disponível para a correlação do lote.</p><div class="split"><div class="stack">'+
   '<div class="panel pad"><h3>Arquivo do laudo</h3>'+ 
   '<label class="drop" for="arquivoLaudo"><b>Selecione ou solte o arquivo</b>Laudo assinado em PDF, até 20 MB</label>'+ 
-  '<input id="arquivoLaudo" type="file" accept="application/pdf" style="display:none">'+ 
+  '<input id="arquivoLaudo" type="file" accept=".json,application/json,application/pdf" style="display:none">'+ 
   '<div id="arquivoLaudoInfo"></div><p class="note">O evidenceHash é calculado sobre os bytes originais do laudo antes da submissão on-chain.</p></div></div>'+ 
   '<div class="stack"><div class="panel pad"><h3>Informações da análise</h3>'+ 
   '<div class="field"><label for="amostraLab">Identificação da amostra</label><input id="amostraLab" placeholder="Código da amostra"></div>'+ 
