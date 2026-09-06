@@ -480,6 +480,7 @@ testarSupabase();
    =================================================================== */
 
 let LOTE=null;
+let PERIODO=null;
 let ELEMENTOS=[];
 let ATORES=[];
 let ATOR_ATIVO=null;
@@ -581,6 +582,10 @@ function carregar(d){
   d=d||{};
   if(d.role!==role) throw new Error("Escopo de dados incompatível com o perfil autenticado.");
   if("lote" in d) LOTE=d.lote;
+  if("periodo" in d){
+    PERIODO=d.periodo;
+    if(!("lote" in d)) LOTE=d.periodo;
+  }
   if("elementos" in d) ELEMENTOS=d.elementos||[];
   if("serie" in d) SERIE=d.serie||[];
   if(role==="op"){
@@ -605,15 +610,15 @@ const kg3=n=>(n/1000000).toLocaleString("pt-BR",{minimumFractionDigits:3,maximum
 
 /* Navegação atualizada (inclui laboratório) */
 const NAVS={
-  op:[["lote","Visão do lote"],["evidencias","Evidências"],
+  op:[["lote","Balanço do período"],["evidencias","Evidências"],
       ["documento","Documento e verificação"],["atores","Atores da cadeia"],
       ["cadastro","Cadastrar ator"]],
   forn:[["enviar","Enviar evidência"],["minhas","Minhas evidências"],
-        ["cadeia","Minha cadeia"],["resultado","Resultado do lote"]],
+        ["cadeia","Minha cadeia"],["resultado","Resultado do período"]],
   transp:[["entrega","Registrar transporte"],["minhas","Minhas evidências"],
           ["transferencia","Minha transferência"]],
   lab:[["lab","Análise"],["laudo","Enviar laudo"],["minhas","Meus laudos"],
-       ["cadeia","Minha cadeia"],["resultado","Resultado do lote"]],
+       ["cadeia","Minha cadeia"],["resultado","Resultado do período"]],
   cli:[["dashboard","Dashboard"]]};
 
 let SESSION={
@@ -754,7 +759,7 @@ function sparkline(){
   const path=pts.map((p,i)=>(i?"L":"M")+p[0].toFixed(2)+" "+p[1].toFixed(2)).join(" ");
   const last=pts[pts.length-1];
   return '<svg class="chart" viewBox="0 0 100 100" preserveAspectRatio="none" role="img" '+
-    'aria-label="Não contabilizado nas versões do lote">'+
+    'aria-label="Não contabilizado nas versões do período">'+
     '<path d="'+path+' L100 100 L0 100 Z" fill="var(--nd-soft)"/>'+
     '<path d="'+path+'" fill="none" stroke="var(--nd)" stroke-width="1.6" '+
     'vector-effect="non-scaling-stroke" stroke-linejoin="round" stroke-linecap="round"/>'+
@@ -813,38 +818,45 @@ function vazio(titulo,texto){
     '<b style="display:block;font-size:15px;margin-bottom:6px">'+titulo+'</b>'+
     '<p style="margin:0;color:var(--ink2);max-width:52ch;margin-inline:auto">'+texto+'</p></div>';
 }
-function semLote(){
-  return vazio("Nenhum lote carregado",
-    "Carregue um lote para ver o balanço, as correntes, as correlações e a prova ancorada.");
+function semPeriodo(){
+  return vazio("Nenhum período processado",
+    "Quando o CRE/TEE concluir um período de reconciliação, o balanço, as correntes e a prova ancorada aparecerão aqui.");
 }
 const semDado='<span class="sm">—</span>';
 const val=(v,alt)=>v===undefined||v===null||v===""?(alt===undefined?semDado:alt):v;
 
 /* ========== TELAS ========== */
 T.lote=()=>{
-  if(!LOTE||!ELEMENTOS.length) return semLote();
+  if(!LOTE||!ELEMENTOS.length) return semPeriodo();
   const nd=ELEMENTOS[0];
   const g=LOTE.correlationGroup||{};
   const run=LOTE.workflowRun||{};
+  const periodId=LOTE.periodId||LOTE.reconciliationPeriodId||LOTE.lotId;
+  const periodWindow=LOTE.periodWindow||LOTE.documentWindow;
+  const periodNode=LOTE.nodeActor||LOTE.responsibleActor;
+  const includedLots=Array.isArray(LOTE.includedLotIds)
+    ? LOTE.includedLotIds.join(", ")
+    : (LOTE.includedLots||LOTE.lotId);
 
-  return '<div class="crumb">Operação confidencial · lote <span class="mono">'+val(LOTE.lotId)+'</span></div>'+
+  return '<div class="crumb">Período de reconciliação · <span class="mono">'+val(periodId)+'</span></div>'+
   '<section class="lot-hero"><div class="panel lot-main">'+
   '<div class="proof-stack" aria-hidden="true"><i></i><i></i><i></i><span>#</span></div>'+
   '<div class="lot-kicker"><span class="tag t-nd">GRUPO PRIVADO REVALIDADO</span> Balanço de massa'+
   (LOTE.version?' · versão '+LOTE.version:'')+'</div>'+
-  '<div class="lot-title"><div><h1>'+val(LOTE.lotId)+'</h1>'+
-  '<p class="lot-sub">Balanço do lote entre t₀ e t₁. Entradas de origens '+
+  '<div class="lot-title"><div><h1>'+val(periodId)+'</h1>'+
+  '<p class="lot-sub">Balanço do período entre t₀ e t₁. Lotes de origens '+
   'distintas, saídas e inventários foram normalizados e recalculados a partir das evidências verificadas.</p></div>'+
   '<button class="btn dl">Baixar relatório</button></div>'+
-  '<div class="lot-meta"><span>Responsável <b>'+val(LOTE.responsibleActor)+'</b></span>'+
-  '<span>Janela documental <b>'+val(LOTE.documentWindow)+'</b></span>'+
+  '<div class="lot-meta"><span>Nó de processamento <b>'+val(periodNode)+'</b></span>'+
+  '<span>Período <b>'+val(periodWindow)+'</b></span>'+
+  '<span>Lotes incluídos <b class="mono">'+val(includedLots)+'</b></span>'+
   '<span>Cálculo <b class="mono">'+val(LOTE.calculationVersion)+'</b></span>'+
   '<span>Resultado <b class="mono">'+val(LOTE.resultId)+'</b></span></div>'+
   '</div><aside class="panel verdict-card"><div><span class="eyebrow">Resultado atual</span>'+
   '<div class="verdict"><span class="status-dot"></span>'+VEREDITO+'</div>'+
   '<p class="reason">'+(divergentes.length
     ? divergentes.length+' de '+ELEMENTOS.length+' elementos está fora da tolerância: '+
-      divergentes.map(x=>x.nome).join(', ')+'. O lote permanece disponível para análise e contestação.'
+      divergentes.map(x=>x.nome).join(', ')+'. O período permanece disponível para análise e contestação.'
     : 'Todos os '+ELEMENTOS.length+' elementos estão dentro da tolerância declarada.')+'</p></div>'+
   '<div class="foot"><span>Atualizado após nova evidência</span><b>'+val(LOTE.anchoredAt)+'</b></div></aside></section>'+
 
@@ -888,7 +900,7 @@ T.lote=()=>{
         '<td>'+vtag(val(n.estado,"PENDING"))+'</td></tr>').join("")+
       '</tbody></table></div>'
     : vazio("Grafo ainda não montado",
-        "Assim que houver evidências correlacionadas neste lote, os nós aparecem aqui."))+
+        "Assim que houver evidências correlacionadas neste período, os nós aparecem aqui."))+
   (g.edges&&g.edges.length
     ? '<h3 style="margin-top:20px">Arestas verificadas</h3><div class="panel scrollx"><table><thead><tr><th>relationId</th><th>De</th><th>Para</th><th>Tipo</th><th>transferId</th><th>Verificada em</th></tr></thead><tbody>'+
       g.edges.map(e=>'<tr><td class="mono">'+val(e.relationId)+'</td><td class="mono">'+val(e.fromEvidenceId)+'</td><td class="mono">'+val(e.toEvidenceId)+'</td><td>'+val(e.relationType)+'</td><td class="mono">'+val(e.transferId)+'</td><td>'+val(e.verifiedAt)+'</td></tr>').join('')+
@@ -927,7 +939,7 @@ T.lote=()=>{
   '<div class="details-body">'+tabelaElementos()+avisoDivergente()+avisoArbitrado()+'</div></details>'+
 
   '<details class="panel product-details"><summary><div>Correntes e bases de cálculo'+
-  '<span>Entradas, produto, rejeito e efluente usados nesta versão</span></div></summary>'+
+  '<span>Entradas, produto, rejeito, efluente e inventários usados neste período</span></div></summary>'+
   '<div class="details-body">'+
   (LOTE.physicalFlows&&LOTE.physicalFlows.length
     ? '<div class="panel scrollx"><table><thead><tr><th>Corrente</th><th>Tipo</th><th>Base</th>'+
@@ -1239,14 +1251,15 @@ T.transferencia=()=>{
 };
 
 T.resultado=()=>{
-  if(!LOTE||!ELEMENTOS.length) return '<h1>Resultado do lote</h1>'+
-    '<p class="sub">O veredito do lote em que o seu material entrou.</p>'+
+  if(!LOTE||!ELEMENTOS.length) return '<h1>Resultado do período</h1>'+
+    '<p class="sub">O veredito do período de reconciliação que incluiu o seu material.</p>'+
     vazio("Nenhum resultado disponível",
-      "Quando o balanço do lote for calculado e ancorado, seu comprovante aparece aqui.");
+      "Quando o balanço do período for calculado e ancorado, seu comprovante aparece aqui.");
   const minha=LOTE.myContribution;
-  return '<div class="crumb">Lote <span class="mono">'+val(LOTE.lotId)+'</span></div>'+
-  '<div class="headrow"><div class="grow"><h1>Resultado do lote</h1>'+
-  '<p class="sub">O veredito do lote em que o seu material entrou. As massas e os teores das '+
+  const periodId=LOTE.periodId||LOTE.reconciliationPeriodId||LOTE.lotId;
+  return '<div class="crumb">Período <span class="mono">'+val(periodId)+'</span> · lote participante <span class="mono">'+val(LOTE.lotId)+'</span></div>'+
+  '<div class="headrow"><div class="grow"><h1>Resultado do período</h1>'+
+  '<p class="sub">O veredito do período que incluiu o seu lote. As massas e os teores das '+
   'outras correntes permanecem com quem as declarou.</p></div><div>'+vtag(VEREDITO)+'</div></div>'+
   avisoArbitrado()+avisoDivergente()+
   '<h2>Sua contribuição</h2>'+
@@ -1256,7 +1269,7 @@ T.resultado=()=>{
       '<tbody><tr><td>'+val(minha.corrente)+'</td><td class="mono">'+val(minha.base)+'</td>'+
       '<td class="num">'+val(minha.massaSeca)+'</td><td class="num">'+val(minha.contido)+'</td>'+
       '<td class="mono" style="font-size:12.5px">'+val(minha.evidencia)+'</td></tr></tbody></table></div>'
-    : vazio("Nenhuma contribuição sua neste lote",
+    : vazio("Nenhuma contribuição sua neste período",
         "Suas correntes aparecem aqui quando as evidências que você enviou forem correlacionadas."))+
   '<p class="note">Só a sua corrente aparece detalhada. As outras entradas, o produto, o rejeito e '+
   'o efluente entram no cálculo sem que os valores cheguem até você.</p>'+
@@ -1265,8 +1278,8 @@ T.resultado=()=>{
   '<dt>resultHash</dt><dd class="mono">'+val(LOTE.myResultHash)+'</dd>'+
   '<dt>previousResultId</dt><dd class="mono">'+val(LOTE.myPreviousResultId)+'</dd>'+
   '<dt>Ancorado em</dt><dd>'+val(LOTE.anchoredAt)+'</dd></dl>'+
-  '<p class="note">Este hash é só seu. Ele deriva do resultado somado aos seus dados, então difere '+
-  'do que os demais participantes receberam pelo mesmo lote.</p>'+
+  '<p class="note">Este hash é só seu. Ele deriva do resultado do período somado ao seu recorte de dados, então difere '+
+  'do que os demais participantes receberam pelo mesmo período.</p>'+
   '<div class="actions"><button class="btn ghost dl">Baixar relatório</button>'+
   '<button class="btn ghost dl">Baixar comprovante</button></div></div>';
 };
@@ -1276,13 +1289,18 @@ T.dashboard=()=>{
     vazio("Nenhum resultado compartilhado com você",
       "Quando uma empresa compartilhar um resultado ancorado, ele aparece aqui com o relatório e o comprovante.");
   const provenance=LOTE.clientProvenance||[];
+  const periodId=LOTE.periodId||LOTE.reconciliationPeriodId||LOTE.lotId;
+  const periodWindow=LOTE.periodWindow||LOTE.documentWindow;
+  const includedLots=Array.isArray(LOTE.includedLotIds)
+    ? LOTE.includedLotIds.join(", ")
+    : (LOTE.includedLots||LOTE.lotId);
   return '<div class="crumb">Balanço de massa · demonstração aberta</div>'+
   '<div class="headrow"><div class="grow"><h1>Balanço verificado</h1>'+
-  '<p class="sub">Resultado autorizado do lote '+val(LOTE.lotId)+', com janela documental '+
-  val(LOTE.documentWindow)+'. Confira se o relatório é o mesmo que foi ancorado.</p></div>'+
+  '<p class="sub">Resultado do período '+val(periodId)+', entre '+val(periodWindow)+
+  ', incluindo os lotes '+val(includedLots)+'. Confira se o relatório é o mesmo que foi ancorado.</p></div>'+
   '<div>'+vtag(VEREDITO)+'</div></div>'+
   '<div class="stats">'+
-  '<div><span class="n">'+vtag(VEREDITO)+'</span><span class="l">Veredito do lote</span></div>'+
+  '<div><span class="n">'+vtag(VEREDITO)+'</span><span class="l">Veredito do período</span></div>'+
   '<div><span class="n">'+conformes+' / '+ELEMENTOS.length+'</span><span class="l">Elementos dentro da banda</span></div>'+
   '<div><span class="n">'+val(LOTE.matchedEvidenceCount,0)+'</span><span class="l">Evidências verificadas</span></div>'+
   '<div><span class="n">'+String(val(LOTE.anchoredAt,"")).split(" ")[0]+'</span><span class="l">Ancorado em</span></div></div>'+
@@ -1298,10 +1316,10 @@ T.dashboard=()=>{
   '<section class="panel pad chart-card"><h3>Não contabilizado por versão</h3>'+
   '<p class="chart-sub">Evolução da parcela sem destino declarado</p>'+
   (SERIE.length
-    ? '<div class="chart-wrap"><canvas id="trendChart" aria-label="Evolução do não contabilizado por versão do lote"></canvas></div>'+
+    ? '<div class="chart-wrap"><canvas id="trendChart" aria-label="Evolução do não contabilizado por versão do período"></canvas></div>'+
       '<div style="display:flex;justify-content:space-between;margin-top:8px" class="sm">'+
-      '<span>'+SERIE.length+' versões do lote</span><span>'+pct(Math.abs(ELEMENTOS[0].rel))+' agora</span></div>'
-    : '<p class="sm" style="margin:12px 0 0">Sem histórico anterior para este lote.</p>')+
+      '<span>'+SERIE.length+' versões do período</span><span>'+pct(Math.abs(ELEMENTOS[0].rel))+' agora</span></div>'
+    : '<p class="sm" style="margin:12px 0 0">Sem histórico anterior para este período.</p>')+
   '</section>'+
   '<section class="panel pad chart-card"><h3>Conservação por elemento</h3>'+
   '<p class="chart-sub">Entrada disponível versus massa contabilizada</p>'+
