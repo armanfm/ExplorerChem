@@ -1086,7 +1086,7 @@ included in the repository.
 
 ## Demonstration
 
-Published application: [Open ExploreChem](https://armanfm.github.io/ExploreChem/)
+Published application: [Open ExploreChem](https://armanfm.github.io/ExplorerChem/)
 
 The interface presents the authorized operator, supplier, carrier, and client
 experiences. Connect a wallet on Ethereum Sepolia to test the on-chain actions.
