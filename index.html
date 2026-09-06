@@ -507,7 +507,7 @@ function escopoAtor(){
   const ator=atorAtivo();
   const roleDoAtor=ator?(PAPEL_ROLE[ator.papel]||"forn"):null;
   const telaDeAtor=(role==="forn"||role==="transp"||role==="lab");
-  return {ator,roleDoAtor,somenteLeitura:!!(ator&&telaDeAtor&&roleDoAtor!==role)};
+  return {ator,roleDoAtor,somenteLeitura:!!(telaDeAtor&&(!ator||roleDoAtor!==role))};
 }
 
 /* Função que aplica o bloqueio */
@@ -518,10 +518,12 @@ function aplicarSomenteLeitura(){
   const nomeRole={forn:"Fornecedor",transp:"Transportadora",lab:"Laboratório",op:"Operador",cli:"Cliente"};
   const aviso=document.createElement("div");
   aviso.className="quiet-warning";
-  aviso.innerHTML='<span aria-hidden="true">🔒</span><div>'+
-    '<b>Somente leitura · '+esc.ator.nome+' ('+esc.ator.papel+')</b>'+
-    '<p>Este perfil escreve apenas na visão '+nomeRole[esc.roleDoAtor]+'. Na visão '+nomeRole[role]+
-    ' a tela fica disponível para acompanhamento: nenhum campo é editável e nenhum upload é autorizado.</p></div>';
+  aviso.innerHTML=esc.ator
+    ? '<span aria-hidden="true">🔒</span><div><b>Somente leitura · '+esc.ator.nome+' ('+esc.ator.papel+')</b>'+
+      '<p>Este perfil escreve apenas na visão '+nomeRole[esc.roleDoAtor]+'. Na visão '+nomeRole[role]+
+      ' a tela fica disponível para acompanhamento: nenhum campo é editável e nenhum upload é autorizado.</p></div>'
+    : '<span aria-hidden="true">🔒</span><div><b>Somente leitura · Operador</b>'+ 
+      '<p>O Operador cadastra atores e acompanha o processamento, mas não edita campos nem envia arquivos na visão '+nomeRole[role]+'.</p></div>';
   const ancora=view.querySelector(".split,.stats,.panel,.chain");
   ancora?view.insertBefore(aviso,ancora):view.prepend(aviso);
 
@@ -1086,10 +1088,10 @@ T.cadastro=()=>
   '<section class="panel pad actor-switcher"><h3>Navegar como ator</h3>'+
   '<p class="sm">Selecione um participante para visualizar sua experiência no MVP. Os dados abaixo são fictícios.</p>'+
   '<div class="f2"><div class="field"><label for="atorSelecionado">Ator da demonstração</label>'+
-  '<select id="atorSelecionado"><option value="">Nenhum ator cadastrado ainda</option>'+
+  '<select id="atorSelecionado"><option value="">Modo Operador · nenhum ator selecionado</option>'+ 
   ATORES.map(a=>'<option value="'+val(a.id)+'"'+(ATOR_ATIVO===a.id?' selected':'')+'>'+val(a.nome)+' · '+val(a.papel)+'</option>').join('')+
   '</select></div><div id="atorSelecionadoInfo" class="note">'+
-  (ATOR_ATIVO?'Perfil ativo selecionado.':'Cadastre um ator para habilitar a navegação.')+'</div></div></section>';
+  (ATOR_ATIVO?'Perfil ativo selecionado.':(ATORES.length?'Modo Operador ativo. Selecione um ator apenas para testar o perfil dele.':'Cadastre um ator para habilitar a navegação.'))+'</div></div></section>';
 
 T.laudo=()=>
   '<div class="crumb">Análise laboratorial'+(LOTE?' · lote <span class="mono">'+val(LOTE.lotId)+'</span>':'')+'</div>'+ 
@@ -1450,10 +1452,10 @@ function render(){
         active:true, onchain_registered_at:new Date().toISOString(), onchain_registration_tx:receipt.hash
       }).select("id,actor_id,display_name,actor_type").single();
       if(error) throw new Error("Blockchain confirmada, mas o Supabase recusou o cadastro: "+error.message);
-      novo.dbId=row.id; ATORES.push(novo); ATOR_ATIVO=novo.id;
+      novo.dbId=row.id; ATORES.push(novo); ATOR_ATIVO=null;
       persistirAtoresLocais();
       persistirAtorAtivo();
-      toast("Ator cadastrado na blockchain e no Supabase.");
+      toast("Ator cadastrado. Selecione-o em “Navegar como ator” para testar seu perfil.");
       setTimeout(()=>render(),450);
     }catch(error){
       console.error(error); toast(error.message||"Não foi possível concluir o cadastro.");
