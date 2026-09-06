@@ -457,6 +457,10 @@ input.mono,select.mono{font-family:"IBM Plex Mono",monospace;font-size:12.5px}
 const SUPABASE_URL = "https://mnmflnqmohgsxgavwenn.supabase.co";
 const SUPABASE_PUBLISHABLE_KEY = "sb_publishable_va4nLJ-Uzw2KzYzdOel-hQ_Toeddk-1";
 const EXPLORERCHEM_CONTRACT_ADDRESS = "0xAfbE9a85bc94A7C895AE33e22B268049A7ea59F2";
+const EVIDENCE_BUCKET = "explorechem-evidence";
+const REPORT_BUCKET = "explorechem-reports";
+const SEPOLIA_CHAIN_ID_DECIMAL = 11155111;
+const MAX_EVIDENCE_BYTES = 20 * 1024 * 1024;
 const supabaseClient = supabase.createClient(
   SUPABASE_URL,
   SUPABASE_PUBLISHABLE_KEY
@@ -490,6 +494,167 @@ let CADEIA=[];
 let CADEIA_EVIDENCIAS=[];
 let DOCUMENTO=null;
 let SERIE=[];
+let EVIDENCIAS_REMOTAS=[];
+let RELATORIOS_REMOTOS=[];
+
+function persistirEvidenciasLocais(){
+  try{localStorage.setItem("explorechem_demo_evidences",JSON.stringify(EVIDENCIAS_REMOTAS));}catch(e){}
+}
+function carregarEvidenciasLocais(){
+  try{
+    const saved=JSON.parse(localStorage.getItem("explorechem_demo_evidences")||"[]");
+    if(Array.isArray(saved)) EVIDENCIAS_REMOTAS=saved;
+  }catch(e){}
+}
+function escaparHtml(value){
+  return String(value??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[c]));
+}
+function bytes32(value,label){
+  const text=String(value||"");
+  if(/^0x[0-9a-fA-F]{64}$/.test(text)) return text;
+  throw new Error((label||"Identificador")+" precisa ter 32 bytes em hexadecimal.");
+}
+function novoBytes32(){
+  if(window.crypto&&typeof window.crypto.getRandomValues==="function"){
+    const bytes=new Uint8Array(32); window.crypto.getRandomValues(bytes);
+    return "0x"+Array.from(bytes).map(b=>b.toString(16).padStart(2,"0")).join("");
+  }
+  if(window.ethers&&typeof ethers.randomBytes==="function") return ethers.hexlify(ethers.randomBytes(32));
+  throw new Error("O navegador não conseguiu gerar um evidenceId seguro.");
+}
+async function sha256Arquivo(file){
+  const buffer=await file.arrayBuffer();
+  if(window.crypto&&window.crypto.subtle){
+    const digest=await window.crypto.subtle.digest("SHA-256",buffer);
+    return "0x"+Array.from(new Uint8Array(digest)).map(b=>b.toString(16).padStart(2,"0")).join("");
+  }
+  if(window.ethers&&typeof ethers.sha256==="function") return ethers.sha256(new Uint8Array(buffer));
+  throw new Error("Este navegador não disponibilizou SHA-256 para o arquivo.");
+}
+function arquivoDaTela(){
+  const selector=role==="lab"?"#arquivoLaudo":(role==="transp"?"#arquivoTransporte":"#arquivo");
+  const input=$(selector);
+  return input&&input.files&&input.files[0]?input.files[0]:null;
+}
+function configDaEvidencia(){
+  if(role==="lab") return {documentType:"LAB_REPORT",calculationRole:"COMPOSITION_ONLY",label:"laudo laboratorial"};
+  if(role==="transp") return {documentType:"TRANSPORT_DOCUMENT",calculationRole:"CUSTODY_ONLY",label:"documento de transporte"};
+  const tipo=$("#td")?.value||"";
+  const documentType={
+    "Declaração de origem e quantidade":"ORIGIN_DECLARATION",
+    "Nota fiscal de saída":"INVOICE",
+    "Laudo de análise elementar":"LAB_REPORT",
+    "Conhecimento de transporte":"TRANSPORT_DOCUMENT",
+    "Registro de transformação":"TRANSFORMATION_RECORD"
+  }[tipo]||"OTHER";
+  const calculationRole=documentType==="LAB_REPORT"?"COMPOSITION_ONLY":
+    documentType==="TRANSPORT_DOCUMENT"?"CUSTODY_ONLY":"PHYSICAL_INPUT";
+  return {documentType,calculationRole,label:"evidência"};
+}
+function evidenciaLocalParaTela(item){
+  return {
+    id:item.evidenceId||item.id,
+    evidenceId:item.evidenceId||item.id,
+    actorId:item.actorId,
+    actorDbId:item.actorDbId,
+    actorName:item.actorName,
+    doc:item.originalFilename||item.doc||"Documento",
+    ref:item.displayCode||item.ref||"—",
+    enviada:item.submittedAt?new Date(item.submittedAt).toLocaleString("pt-BR"):(item.enviada||"—"),
+    status:item.state||item.status||"PENDING",
+    hash:item.evidenceHash||item.hash||"—",
+    storageBucket:item.storageBucket,
+    storagePath:item.storagePath,
+    txHash:item.txHash||item.submissionTxHash,
+    documentType:item.documentType,
+    calculationRole:item.calculationRole
+  };
+}
+function minhasEvidencias(){
+  const actor=atorAtivo();
+  const remote=EVIDENCIAS_REMOTAS
+    .filter(e=>!actor||(e.actorDbId&&e.actorDbId===actor.dbId)||(e.actorId&&e.actorId===actor.id))
+    .map(evidenciaLocalParaTela);
+  const known=new Set(remote.map(e=>e.id));
+  return remote.concat((MINHAS||[]).filter(e=>!known.has(e.id)));
+}
+function evidenciasExibidas(){
+  const remote=EVIDENCIAS_REMOTAS.map(e=>({
+    id:e.evidenceId,ator:e.actorName||"Participante",papel:e.actorType||"—",
+    doc:e.originalFilename||"Documento",ref:e.displayCode||"—",
+    enviada:e.submittedAt?new Date(e.submittedAt).toLocaleString("pt-BR"):"—",
+    calculationRole:e.calculationRole||"NOT_CLASSIFIED",transferId:"—",
+    correlationGroupId:"—",status:e.state||"PENDING"
+  }));
+  const known=new Set(remote.map(e=>e.id));
+  return remote.concat((EVIDENCIAS||[]).filter(e=>!known.has(e.id)));
+}
+async function usuarioSupabaseAtual(){
+  try{
+    const {data,error}=await supabaseClient.auth.getUser();
+    if(!error&&data&&data.user) return data.user.id;
+  }catch(e){}
+  return null;
+}
+async function urlAssinada(bucket,path){
+  if(!bucket||!path) throw new Error("O documento ainda não possui um caminho de armazenamento.");
+  const {data,error}=await supabaseClient.storage.from(bucket).createSignedUrl(path,3600);
+  if(error) throw new Error("Não foi possível preparar o download: "+error.message);
+  if(!data?.signedUrl) throw new Error("O armazenamento não retornou uma URL de download.");
+  return data.signedUrl;
+}
+async function abrirDocumento(item){
+  try{
+    const url=await urlAssinada(item.storageBucket||EVIDENCE_BUCKET,item.storagePath);
+    window.open(url,"_blank","noopener,noreferrer");
+  }catch(error){console.error(error);toast(error.message||"Não foi possível abrir o documento.");}
+}
+function baixarSnapshotBalanco(){
+  const snapshot={
+    tipo:"ExploreChem balance snapshot",
+    geradoEm:new Date().toISOString(),
+    periodo:LOTE?.periodId||LOTE?.reconciliationPeriodId||LOTE?.lotId||null,
+    veredito:VEREDITO,
+    resultId:LOTE?.clientResultId||LOTE?.resultId||null,
+    resultHash:LOTE?.clientResultHash||LOTE?.resultHash||null,
+    transactionHash:LOTE?.clientTransactionHash||LOTE?.transactionHash||null,
+    elementos:ELEMENTOS.map(x=>({element:x.e,availableMg:x.entrada+x.i0,accountedMg:x.saida+x.i1,mufMg:x.muf,bandMg:x.banda,status:x.veredito})),
+    observacao:"Snapshot para conferência local. O relatório oficial e o resultHash são os arquivos/valores ancorados pelo CRE/TEE."
+  };
+  const blob=new Blob([JSON.stringify(snapshot,null,2)],{type:"application/json;charset=utf-8"});
+  const url=URL.createObjectURL(blob); const a=document.createElement("a");
+  a.href=url; a.download="explorechem-balanco-snapshot.json"; a.click();
+  setTimeout(()=>URL.revokeObjectURL(url),1000);
+}
+async function carregarDocumentosRemotos(){
+  carregarEvidenciasLocais();
+  try{
+    const {data,error}=await supabaseClient.from("explorerchem_evidences")
+      .select("id,evidence_id,display_code,actor_db_id,document_type,calculation_role,state,evidence_hash,storage_bucket,storage_path,original_filename,submission_tx_hash,created_at")
+      .order("created_at",{ascending:false}).limit(100);
+    if(!error&&Array.isArray(data)){
+      const remotos=data.map(e=>({
+        dbId:e.id,evidenceId:e.evidence_id,displayCode:e.display_code,actorDbId:e.actor_db_id,
+        actorId:ATORES.find(a=>a.dbId===e.actor_db_id)?.id,actorName:ATORES.find(a=>a.dbId===e.actor_db_id)?.nome,
+        actorType:ATORES.find(a=>a.dbId===e.actor_db_id)?.papel,
+        documentType:e.document_type,calculationRole:e.calculation_role,state:e.state,evidenceHash:e.evidence_hash,
+        storageBucket:e.storage_bucket,storagePath:e.storage_path,originalFilename:e.original_filename,
+        submissionTxHash:e.submission_tx_hash,submittedAt:e.created_at
+      }));
+      const byId=new Map(remotos.map(e=>[e.evidenceId,e]));
+      EVIDENCIAS_REMOTAS.forEach(e=>{if(!byId.has(e.evidenceId))byId.set(e.evidenceId,e);});
+      EVIDENCIAS_REMOTAS=Array.from(byId.values()); persistirEvidenciasLocais();
+    } else if(error) console.warn("Não foi possível carregar evidências do Supabase:",error.message);
+  }catch(error){console.warn("Falha ao carregar evidências:",error.message);}
+  try{
+    const {data,error}=await supabaseClient.from("explorerchem_report_files")
+      .select("id,result_db_id,storage_bucket,storage_path,filename,mime_type,file_hash,size_bytes,created_at")
+      .order("created_at",{ascending:false}).limit(20);
+    if(!error&&Array.isArray(data)) RELATORIOS_REMOTOS=data;
+    else if(error) console.warn("Não foi possível carregar relatórios:",error.message);
+  }catch(error){console.warn("Falha ao carregar relatórios:",error.message);}
+  if(document.readyState!=="loading") render();
+}
 
 const actorTypeLabel={MINER:"Minerador",CARRIER:"Transportadora",LABORATORY:"Laboratório",PROCESSOR:"Processador",REFINER:"Purificador",RECYCLER:"Reciclador",MANUFACTURER:"Fabricante",OTHER:"Outro"};
 function persistirAtoresLocais(){try{localStorage.setItem("explorechem_demo_actors",JSON.stringify(ATORES));}catch(e){}}
@@ -737,6 +902,82 @@ async function refreshWalletChain(){
   return walletChainId;
 }
 
+async function enviarEvidenciaReal(button){
+  const esc=escopoAtor();
+  if(esc.somenteLeitura){toast("Perfil somente leitura nesta visão.");return;}
+  if(!esc.ator){toast("Selecione um ator antes de enviar a evidência.");return;}
+  if(!esc.ator.dbId){toast("Este ator ainda não tem registro do Supabase. Recarregue a página e selecione o ator salvo.");return;}
+  if(!walletAddress){toast("Conecte a carteira autorizada deste ator antes de continuar.");return;}
+  const chainAtual=await refreshWalletChain();
+  if(chainAtual!=="0xaa36a7"){toast("Troque a carteira para a rede Sepolia antes de assinar.");return;}
+  const file=arquivoDaTela();
+  if(!file){toast("Selecione o PDF original antes de enviar.");return;}
+  if(file.size>MAX_EVIDENCE_BYTES){toast("O PDF ultrapassa o limite de 20 MB.");return;}
+  if(file.type&&file.type!=="application/pdf"&&!/\.pdf$/i.test(file.name)){toast("Envie um arquivo PDF.");return;}
+  const userId=await usuarioSupabaseAtual();
+  if(!userId){
+    toast("O banco exige uma sessão autenticada do Supabase para registrar a evidência. A carteira sozinha não substitui esse usuário.");
+    return;
+  }
+  if(!button)return;
+  const originalText=button.textContent;
+  const config=configDaEvidencia();
+  const evidenceId=novoBytes32();
+  const actorId=bytes32(esc.ator.id,"actorId");
+  const storagePath=esc.ator.id+"/"+evidenceId.slice(2)+".pdf";
+  button.disabled=true; button.textContent="Calculando hash…";
+  try{
+    const evidenceHash=await sha256Arquivo(file);
+    button.textContent="Enviando arquivo…";
+    const upload=await supabaseClient.storage.from(EVIDENCE_BUCKET).upload(storagePath,file,{
+      cacheControl:"3600",contentType:"application/pdf",upsert:false
+    });
+    if(upload.error) throw new Error("Storage recusou o PDF: "+upload.error.message);
+
+    button.textContent="Assinando na blockchain…";
+    const provider=new ethers.BrowserProvider(getWalletProvider());
+    const signer=await provider.getSigner();
+    const contract=new ethers.Contract(EXPLORERCHEM_CONTRACT_ADDRESS,[
+      "function submitEvidence(bytes32 evidenceId, bytes32 actorId, bytes32 evidenceHash) external"
+    ],signer);
+    const tx=await contract.submitEvidence(evidenceId,actorId,evidenceHash);
+    const receipt=await tx.wait();
+    const txHash=tx.hash||receipt?.hash||"";
+
+    button.textContent="Registrando metadados…";
+    const payload={
+      evidence_id:evidenceId,display_code:"EV-"+Date.now()+"-"+evidenceId.slice(2,10).toUpperCase(),
+      actor_db_id:esc.ator.dbId,submitted_by_user_id:userId,submitted_wallet:walletAddress,
+      document_type:config.documentType,calculation_role:config.calculationRole,state:"PENDING",
+      evidence_hash:evidenceHash,hash_algorithm:"SHA-256",storage_bucket:EVIDENCE_BUCKET,
+      storage_path:storagePath,original_filename:file.name,mime_type:"application/pdf",size_bytes:file.size,
+      extractor_version:"frontend-raw-file-v1",chain_id:SEPOLIA_CHAIN_ID_DECIMAL,
+      submission_tx_hash:txHash,chain_created_at:new Date().toISOString()
+    };
+    const {error:metadataError}=await supabaseClient.from("explorerchem_evidences").insert(payload);
+    const localItem={
+      dbId:null,evidenceId,displayCode:payload.display_code,actorDbId:esc.ator.dbId,actorId:esc.ator.id,
+      actorName:esc.ator.nome,actorType:esc.ator.papel,documentType:config.documentType,calculationRole:config.calculationRole,
+      state:"PENDING",evidenceHash,storageBucket:EVIDENCE_BUCKET,storagePath,originalFilename:file.name,
+      submissionTxHash:txHash,submittedAt:payload.chain_created_at
+    };
+    EVIDENCIAS_REMOTAS=[localItem,...EVIDENCIAS_REMOTAS.filter(e=>e.evidenceId!==evidenceId)];
+    persistirEvidenciasLocais();
+    if(metadataError){
+      console.error("Blockchain/Storage concluídos, mas os metadados falharam:",metadataError);
+      toast("PDF e blockchain concluídos, mas o Supabase recusou os metadados: "+metadataError.message);
+    }else{
+      toast("Evidência enviada como PENDING. Hash e transação registrados.");
+    }
+    render();
+  }catch(error){
+    console.error(error);
+    toast(error.message||"Não foi possível enviar a evidência.");
+  }finally{
+    button.disabled=false; button.textContent=originalText;
+  }
+}
+
 function toast(m){
   document.querySelectorAll(".toast").forEach(t=>t.remove());
   const t=document.createElement("div");
@@ -977,6 +1218,7 @@ T.lote=()=>{
 T.evidencias=()=>{
   const g=(LOTE&&LOTE.correlationGroup)||{};
   const q=(LOTE&&LOTE.queue)||{};
+  const filas=evidenciasExibidas();
   return '<div class="crumb">Lote <span class="mono">'+(LOTE?val(LOTE.lotId):semDado)+'</span></div>'+
   '<h1>Fila e correlação privada</h1><p class="sub">Cada documento entra como PENDING. O CRE/TEE '+
   'confirma o hash, extrai novamente os dados do documento e valida as relações antes de marcar MATCHED.</p>'+
@@ -991,10 +1233,10 @@ T.evidencias=()=>{
    '<p><strong>Descoberta acelerada, confiança recalculada.</strong> O grupo orienta a varredura; '+
    'origem, destino, datas, referências e relações são conferidos novamente pelo CRE/TEE.</p>'+
    '<div class="banner-stat"><b>'+val(g.edgeCount,0)+'</b><span>arestas revalidadas<br>nesta execução</span></div></div>':'')+
-  (EVIDENCIAS.length
+  (filas.length
     ? '<div class="panel scrollx"><table><thead><tr><th>Evidência</th><th>Participante</th>'+
       '<th>Documento</th><th>Função no cálculo</th><th>transferId</th><th>correlationGroupId</th><th>Estado</th></tr></thead><tbody>'+
-      EVIDENCIAS.map(e=>'<tr><td class="mono" style="font-size:12.5px">'+val(e.id)+'<div class="sm">'+val(e.enviada)+'</div></td>'+
+      filas.map(e=>'<tr><td class="mono" style="font-size:12.5px">'+val(e.id)+'<div class="sm">'+val(e.enviada)+'</div></td>'+
         '<td>'+val(e.ator)+'<div class="sm">'+val(e.papel)+'</div></td>'+
         '<td>'+val(e.doc)+'<div class="sm mono">'+val(e.ref)+'</div></td><td>'+val(e.calculationRole)+'</td>'+
         '<td class="mono" style="font-size:12px">'+val(e.transferId)+'</td>'+
@@ -1190,14 +1432,14 @@ T.minhas=()=>
   '<h1>Minhas evidências</h1><p class="sub">Seu histórico completo. Você baixa qualquer documento '+
   'que enviou. Qualquer alteração quebra a correspondência com o hash; uma remoção não apaga a '+
   'âncora nem o histórico on-chain.</p>'+
-  (MINHAS.length
+  (minhasEvidencias().length
     ? '<div class="panel scrollx"><table><thead><tr><th>Evidência</th><th>Documento</th>'+
       '<th>Enviada</th><th>Estado</th><th>Hash ancorado</th><th class="num">Original</th></tr></thead><tbody>'+
-      MINHAS.map(e=>'<tr><td class="mono" style="font-size:12.5px">'+val(e.id)+'</td>'+
+      minhasEvidencias().map(e=>'<tr><td class="mono" style="font-size:12.5px">'+val(e.id)+'</td>'+
         '<td>'+val(e.doc)+'<div class="sm mono">'+val(e.ref)+'</div></td><td>'+val(e.enviada)+'</td>'+
         '<td>'+vtag(val(e.status,"PENDING"))+'</td>'+
         '<td class="hash" style="max-width:180px">'+val(e.hash)+'</td>'+
-        '<td class="num"><button class="btn ghost sm dl">Baixar</button></td></tr>').join("")+
+        '<td class="num"><button class="btn ghost sm" data-download-evidence="'+escaparHtml(e.id)+'">Baixar</button></td></tr>').join("")+
       '</tbody></table></div>'
   : vazio("Você ainda não enviou evidências",
         role==="transp"
@@ -1284,10 +1526,38 @@ T.resultado=()=>{
   '<button class="btn ghost dl">Baixar comprovante</button></div></div>';
 };
 
+function relatorioClienteAtual(){
+  const resultDbId=LOTE?.clientResultDbId||LOTE?.resultDbId||LOTE?.balanceResultDbId;
+  return RELATORIOS_REMOTOS.find(r=>!resultDbId||r.result_db_id===resultDbId)||
+    RELATORIOS_REMOTOS[0]||LOTE?.reportFile||null;
+}
+function documentosClienteHtml(){
+  const docs=EVIDENCIAS_REMOTAS.slice().sort((a,b)=>
+    String(b.submittedAt||"").localeCompare(String(a.submittedAt||"")));
+  const report=relatorioClienteAtual();
+  const reportAction=report
+    ? '<button class="btn ghost" data-download-report="'+escaparHtml(report.id||report.storagePath)+'">Baixar relatório oficial</button>'
+    : '<button class="btn ghost" data-download-snapshot="balance">Baixar snapshot do balanço</button>';
+  return '<section class="panel pad" style="margin-top:14px"><div class="section-title"><div>'+
+    '<span class="section-eyebrow">DOCUMENTOS PARA CONFERÊNCIA</span><h2>Arquivos usados na prova</h2>'+
+    '<p>O PDF original permite recalcular o evidenceHash. O relatório do balanço é um arquivo separado do PDF de cada participante.</p></div>'+
+    '<div class="actions">'+reportAction+'</div></div>'+
+    (docs.length
+      ? '<div class="panel scrollx"><table><thead><tr><th>Participante</th><th>Documento</th><th>Estado</th><th>evidenceHash</th><th class="num">Download</th></tr></thead><tbody>'+
+        docs.map(e=>'<tr><td>'+escaparHtml(e.actorName||"Participante")+'</td><td>'+escaparHtml(e.originalFilename||"Documento")+
+          '<div class="sm mono">'+escaparHtml(e.displayCode||e.evidenceId||"")+'</div></td><td>'+
+          vtag(e.state||"PENDING")+'</td><td class="hash" style="max-width:220px">'+escaparHtml(e.evidenceHash||"")+
+          '</td><td class="num"><button class="btn ghost sm" data-download-evidence="'+escaparHtml(e.evidenceId)+'">Baixar PDF</button></td></tr>').join("")+
+        '</tbody></table></div>'
+      : '<div class="filerow"><b>Nenhum documento disponível ainda</b><span>Após o envio de uma evidência, ela aparecerá aqui quando o registro estiver autorizado.</span></div>')+
+    '<p class="note">O cliente continua somente leitura: pode conferir o balanço, o resultHash e os documentos disponibilizados, mas não altera evidências nem envia arquivos.</p></section>';
+}
+
 T.dashboard=()=>{
   if(!LOTE||!ELEMENTOS.length) return '<h1>Balanço verificado</h1>'+
     vazio("Nenhum resultado compartilhado com você",
-      "Quando uma empresa compartilhar um resultado ancorado, ele aparece aqui com o relatório e o comprovante.");
+      "Quando uma empresa compartilhar um resultado ancorado, ele aparece aqui com o relatório e o comprovante.")+
+    documentosClienteHtml();
   const provenance=LOTE.clientProvenance||[];
   const periodId=LOTE.periodId||LOTE.reconciliationPeriodId||LOTE.lotId;
   const periodWindow=LOTE.periodWindow||LOTE.documentWindow;
@@ -1336,8 +1606,9 @@ T.dashboard=()=>{
   ' evidências correlacionadas</dd></dl>'+
   '<p class="note">Baixe o relatório, recalcule o hash e compare com o que está na transação. '+
   'Se divergir, o documento foi alterado depois da ancoragem.</p>'+
-  '<div class="actions"><button class="btn dl">Baixar relatório</button>'+
+  '<div class="actions"><button class="btn dl" data-download-report="default">Baixar relatório</button>'+
   '<button class="btn ghost dl">Baixar comprovante</button></div></div>'+
+  documentosClienteHtml()+
   '<div class="panel pad" style="margin-top:14px"><h3>O que este resultado não afirma</h3>'+
   '<p style="margin:0;color:var(--ink2);max-width:64ch">Que o material saiu inequivocamente de uma '+
   'mina específica, nem que as declarações dos participantes são verdadeiras no mundo físico. Ele '+
@@ -1436,12 +1707,8 @@ function render(){
   aplicarSomenteLeitura();
 
   const bind=function(sel,msg){const el=$(sel);if(el)el.onclick=function(e){e.preventDefault();toast(msg);};};
-  const bindOnchain=function(sel,msg){const el=$(sel);if(el)el.onclick=function(e){
-    e.preventDefault();
-    if(escopoAtor().somenteLeitura){toast("Perfil somente leitura nesta visão.");return;}
-    if(!walletAddress){toast("Conecte uma carteira autorizada antes de continuar.");return;}
-    if(walletChainId!=="0xaa36a7"){toast("Troque a carteira para a rede Sepolia antes de assinar.");return;}
-    toast(msg);
+  const bindOnchain=function(sel){const el=$(sel);if(el)el.onclick=function(e){
+    e.preventDefault(); enviarEvidenciaReal(el);
   };};
 
   const salvarAtor=$("#salvarAtor");
@@ -1493,13 +1760,18 @@ function render(){
     render();
   };
 
-  bindOnchain("#enviarEv","Evidência enviada. Hash gravado, estado pendente.");
-  bindOnchain("#enviarTransporte","Entrega registrada. EvidenceHash ancorado como PENDING.");
-  bindOnchain("#enviarLaudo","Laudo enviado. Hash gravado, estado pendente.");
+  bindOnchain("#enviarEv");
+  bindOnchain("#enviarTransporte");
+  bindOnchain("#enviarLaudo");
 
-  const bindFile=function(inputSel,infoSel){const input=$(inputSel),info=$(infoSel);if(input&&info)input.onchange=function(){
+  const bindFile=function(inputSel,infoSel){const input=$(inputSel),info=$(infoSel);if(input&&info)input.onchange=async function(){
     const file=input.files&&input.files[0];
-    info.innerHTML=file?'<div class="filerow"><b>'+file.name+'</b><span>'+Math.ceil(file.size/1024)+' KB · pronto para hash</span></div>':'';
+    if(!file){info.innerHTML="";return;}
+    info.innerHTML='<div class="filerow"><b>'+escaparHtml(file.name)+'</b><span>'+Math.ceil(file.size/1024)+' KB · calculando SHA-256…</span></div>';
+    try{
+      const hash=await sha256Arquivo(file);
+      if(input.files&&input.files[0]===file) info.innerHTML='<div class="filerow"><b>'+escaparHtml(file.name)+'</b><span>'+Math.ceil(file.size/1024)+' KB · SHA-256 <span class="mono">'+hash.slice(0,18)+'…</span></span></div>';
+    }catch(error){info.innerHTML='<div class="filerow"><b>'+escaparHtml(file.name)+'</b><span>Hash será calculado no envio</span></div>';}
   };};
   bindFile("#arquivo","#arquivoInfo");
   bindFile("#arquivoTransporte","#arquivoTransporteInfo");
@@ -1522,8 +1794,26 @@ function render(){
     toast("Exibindo laudos pendentes (simulação).");
   };
 
-  document.querySelectorAll(".dl").forEach(b=>
-    b.onclick=function(){toast("Arquivo gerado. Recalcule o hash e compare com a transação.");});
+  document.querySelectorAll("[data-download-evidence]").forEach(b=>b.onclick=async function(e){
+    e.preventDefault();
+    const id=this.dataset.downloadEvidence;
+    const item=EVIDENCIAS_REMOTAS.find(x=>x.evidenceId===id||x.id===id);
+    if(!item){toast("Documento não encontrado nesta sessão.");return;}
+    await abrirDocumento(item);
+  });
+  document.querySelectorAll("[data-download-report]").forEach(b=>b.onclick=async function(e){
+    e.preventDefault();
+    const report=relatorioClienteAtual();
+    if(!report){toast("O relatório oficial ainda não foi disponibilizado pelo CRE/TEE.");return;}
+    await abrirDocumento({storageBucket:report.storageBucket||report.storage_bucket||REPORT_BUCKET,storagePath:report.storagePath||report.storage_path});
+  });
+  document.querySelectorAll("[data-download-snapshot]").forEach(b=>b.onclick=function(e){
+    e.preventDefault(); baixarSnapshotBalanco();
+  });
+  document.querySelectorAll(".dl").forEach(b=>{
+    if(b.dataset.downloadEvidence||b.dataset.downloadReport||b.dataset.downloadSnapshot)return;
+    b.onclick=function(){toast("Arquivo gerado. Recalcule o hash e compare com a transação.");};
+  });
 }
 
 $("#home").onclick=function(){page=NAVS[role][0][0];render();};
@@ -1531,7 +1821,7 @@ $("#home").onclick=function(){page=NAVS[role][0][0];render();};
 carregarAtorAtivo();
 render();
 restoreWallet();
-carregarAtores();
+carregarAtores().then(()=>carregarDocumentosRemotos());
 
 const walletProvider=getWalletProvider();
 if(walletProvider&&typeof walletProvider.on==="function"){
