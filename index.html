@@ -536,6 +536,66 @@ function arquivoDaTela(){
   const input=$(selector);
   return input&&input.files&&input.files[0]?input.files[0]:null;
 }
+function isJsonFile(file){
+  return !!file && (/\.json$/i.test(file.name)||file.type==="application/json");
+}
+function isPdfFile(file){
+  return !!file && (file.type==="application/pdf"||/\.pdf$/i.test(file.name));
+}
+function setFieldValue(selector,value){
+  const el=$(selector);
+  if(el&&value!==undefined&&value!==null) el.value=String(value);
+}
+function isoToDatetimeLocal(value){
+  if(!value)return "";
+  const d=new Date(value);
+  if(Number.isNaN(d.getTime()))return String(value).slice(0,16);
+  const pad=n=>String(n).padStart(2,"0");
+  return d.getFullYear()+"-"+pad(d.getMonth()+1)+"-"+pad(d.getDate())+"T"+pad(d.getHours())+":"+pad(d.getMinutes());
+}
+function preencherCamposDoJson(data){
+  const sub=data.submission||{};
+  if(role==="transp"){
+    const t=data.transport||data.custody||{};
+    setFieldValue("#coletaEm",isoToDatetimeLocal(t.collectedAt));
+    setFieldValue("#entregaEm",isoToDatetimeLocal(t.deliveredAt));
+    setFieldValue("#massaColetada",t.massCollectedKg);
+    setFieldValue("#massaEntregue",t.massDeliveredKg);
+    setFieldValue("#ocorrencia",t.occurrence);
+    setFieldValue("#justificativa",t.justification);
+    const collected=$("#massaColetada"),delivered=$("#massaEntregue");
+    if(collected)collected.dispatchEvent(new Event("input",{bubbles:true}));
+    if(delivered)delivered.dispatchEvent(new Event("input",{bubbles:true}));
+    return;
+  }
+  if(role==="lab"){
+    const a=data.analysis||{},sample=data.sample||{};
+    setFieldValue("#amostraLab",a.sampleCode||sample.sampleId);
+    setFieldValue("#ltLab",a.lot||data.lotId);
+    setFieldValue("#metodoLab",a.method||sample.analysisMethod);
+    const result=a.resultStatus||a.result||"";
+    setFieldValue("#resultadoLab",result==="APROVADO"?"Conforme":result==="REPROVADO"?"Não conforme":result);
+    setFieldValue("#analistaLab",a.technicalResponsible);
+    return;
+  }
+  setFieldValue("#td",sub.documentType);
+  setFieldValue("#dr",sub.reference||data.documentRef);
+  setFieldValue("#lt",sub.lot||data.lotId);
+  setFieldValue("#mb",sub.grossMassKg);
+  setFieldValue("#bs",sub.declaredBasis||data.massBalance?.massBasis);
+  setFieldValue("#um",sub.freeMoisturePct??data.massBalance?.moisturePct);
+  setFieldValue("#ts",sub.dryingTemperatureC??data.massBalance?.dryingTemperatureC);
+  setFieldValue("#dst",sub.destination||data.destinationActor);
+}
+async function lerJsonDoArquivo(file){
+  if(!isJsonFile(file))return null;
+  let data;
+  try{data=JSON.parse(await file.text());}
+  catch(error){throw new Error("O arquivo JSON não é válido.");}
+  if(!data||typeof data!=="object"||Array.isArray(data))throw new Error("O JSON precisa conter um objeto de evidência.");
+  preencherCamposDoJson(data);
+  return data;
+}
 function configDaEvidencia(){
   if(role==="lab") return {documentType:"LAB_REPORT",calculationRole:"COMPOSITION_ONLY",label:"laudo laboratorial"};
   if(role==="transp") return {documentType:"TRANSPORT_DOCUMENT",calculationRole:"CUSTODY_ONLY",label:"documento de transporte"};
@@ -911,9 +971,11 @@ async function enviarEvidenciaReal(button){
   const chainAtual=await refreshWalletChain();
   if(chainAtual!=="0xaa36a7"){toast("Troque a carteira para a rede Sepolia antes de assinar.");return;}
   const file=arquivoDaTela();
-  if(!file){toast("Selecione o PDF original antes de enviar.");return;}
-  if(file.size>MAX_EVIDENCE_BYTES){toast("O PDF ultrapassa o limite de 20 MB.");return;}
-  if(file.type&&file.type!=="application/pdf"&&!/\.pdf$/i.test(file.name)){toast("Envie um arquivo PDF.");return;}
+  if(!file){toast("Selecione o arquivo JSON ou PDF original antes de enviar.");return;}
+  if(file.size>MAX_EVIDENCE_BYTES){toast("O arquivo ultrapassa o limite de 20 MB.");return;}
+  const json=isJsonFile(file), pdf=isPdfFile(file);
+  if(!json&&!pdf){toast("Envie um arquivo JSON ou PDF.");return;}
+  if(json){try{await lerJsonDoArquivo(file);}catch(error){toast(error.message);return;}}
   const userId=await usuarioSupabaseAtual();
   if(!userId){
     toast("O banco exige uma sessão autenticada do Supabase para registrar a evidência. A carteira sozinha não substitui esse usuário.");
@@ -924,15 +986,17 @@ async function enviarEvidenciaReal(button){
   const config=configDaEvidencia();
   const evidenceId=novoBytes32();
   const actorId=bytes32(esc.ator.id,"actorId");
-  const storagePath=esc.ator.id+"/"+evidenceId.slice(2)+".pdf";
+  const mimeType=json?"application/json":"application/pdf";
+  const extension=json?"json":"pdf";
+  const storagePath=esc.ator.id+"/"+evidenceId.slice(2)+"."+extension;
   button.disabled=true; button.textContent="Calculando hash…";
   try{
     const evidenceHash=await sha256Arquivo(file);
     button.textContent="Enviando arquivo…";
     const upload=await supabaseClient.storage.from(EVIDENCE_BUCKET).upload(storagePath,file,{
-      cacheControl:"3600",contentType:"application/pdf",upsert:false
+      cacheControl:"3600",contentType:mimeType,upsert:false
     });
-    if(upload.error) throw new Error("Storage recusou o PDF: "+upload.error.message);
+    if(upload.error) throw new Error("Storage recusou o arquivo: "+upload.error.message);
 
     button.textContent="Assinando na blockchain…";
     const provider=new ethers.BrowserProvider(getWalletProvider());
@@ -950,7 +1014,7 @@ async function enviarEvidenciaReal(button){
       actor_db_id:esc.ator.dbId,submitted_by_user_id:userId,submitted_wallet:walletAddress,
       document_type:config.documentType,calculation_role:config.calculationRole,state:"PENDING",
       evidence_hash:evidenceHash,hash_algorithm:"SHA-256",storage_bucket:EVIDENCE_BUCKET,
-      storage_path:storagePath,original_filename:file.name,mime_type:"application/pdf",size_bytes:file.size,
+      storage_path:storagePath,original_filename:file.name,mime_type:mimeType,size_bytes:file.size,
       extractor_version:"frontend-raw-file-v1",chain_id:SEPOLIA_CHAIN_ID_DECIMAL,
       submission_tx_hash:txHash,chain_created_at:new Date().toISOString()
     };
@@ -1351,7 +1415,7 @@ T.laudo=()=>
   '<div class="crumb">Análise laboratorial'+(LOTE?' · lote <span class="mono">'+val(LOTE.lotId)+'</span>':'')+'</div>'+ 
   '<h1>Enviar laudo</h1><p class="sub">Envie o laudo analítico da amostra. O documento recebe um hash no momento do envio e fica disponível para a correlação do lote.</p><div class="split"><div class="stack">'+
   '<div class="panel pad"><h3>Arquivo do laudo</h3>'+ 
-  '<label class="drop" for="arquivoLaudo"><b>Selecione ou solte o arquivo</b>Laudo assinado em PDF, até 20 MB</label>'+ 
+  '<label class="drop" for="arquivoLaudo"><b>Selecione ou solte o arquivo</b>Laudo assinado em PDF ou JSON, até 20 MB</label>'+ 
   '<input id="arquivoLaudo" type="file" accept=".json,application/json,application/pdf" style="display:none">'+ 
   '<div id="arquivoLaudoInfo"></div><p class="note">O evidenceHash é calculado sobre os bytes originais do laudo antes da submissão on-chain.</p></div></div>'+ 
   '<div class="stack"><div class="panel pad"><h3>Informações da análise</h3>'+ 
@@ -1369,7 +1433,7 @@ T.enviar=()=>
   'no momento do envio e entra como PENDING. Qualquer alteração posterior muda o hash; se o arquivo '+
   'privado for removido, a âncora continua on-chain e a ausência fica detectável.</p><div class="split"><div class="stack">'+
   '<div class="panel pad"><h3>Documento</h3>'+
-  '<label class="drop" for="arquivo"><b>Selecione ou solte o arquivo</b>PDF assinado, até 20 MB</label>'+
+  '<label class="drop" for="arquivo"><b>Selecione ou solte o arquivo</b>PDF ou JSON, até 20 MB</label>'+ 
   '<input id="arquivo" type="file" accept=".json,application/json,application/pdf" style="display:none">'+
   '<div id="arquivoInfo"></div><p class="note">O evidenceHash é calculado sobre os bytes originais '+
   'deste arquivo antes da submissão on-chain.</p></div></div>'+
@@ -1411,7 +1475,7 @@ T.entrega=()=>{
   '<dt>Origem</dt><dd>'+val(LOTE&&LOTE.transferOrigin)+'</dd>'+
   '<dt>Destino</dt><dd>'+val(LOTE&&LOTE.transferDestination)+'</dd></dl></div>'+
   '<div class="panel pad"><h3>Documento de transporte</h3>'+
-  '<label class="drop" for="arquivoTransporte"><b>Selecione ou solte o arquivo</b>Conhecimento de transporte ou comprovante de entrega</label>'+
+  '<label class="drop" for="arquivoTransporte"><b>Selecione ou solte o arquivo</b>Conhecimento de transporte em PDF ou JSON</label>'+ 
   '<input id="arquivoTransporte" type="file" accept=".json,application/json,application/pdf" style="display:none">'+
   '<div id="arquivoTransporteInfo"></div></div></div>'+
   '<div class="stack"><div class="panel pad"><h3>Coleta e entrega</h3>'+
@@ -1769,6 +1833,7 @@ function render(){
     if(!file){info.innerHTML="";return;}
     info.innerHTML='<div class="filerow"><b>'+escaparHtml(file.name)+'</b><span>'+Math.ceil(file.size/1024)+' KB · calculando SHA-256…</span></div>';
     try{
+      if(isJsonFile(file)) await lerJsonDoArquivo(file);
       const hash=await sha256Arquivo(file);
       if(input.files&&input.files[0]===file) info.innerHTML='<div class="filerow"><b>'+escaparHtml(file.name)+'</b><span>'+Math.ceil(file.size/1024)+' KB · SHA-256 <span class="mono">'+hash.slice(0,18)+'…</span></span></div>';
     }catch(error){info.innerHTML='<div class="filerow"><b>'+escaparHtml(file.name)+'</b><span>Hash será calculado no envio</span></div>';}
