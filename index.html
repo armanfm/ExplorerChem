@@ -66,6 +66,13 @@ button{font:inherit;color:inherit;cursor:pointer;border:0;background:none}
 .wallet-address{font-family:"IBM Plex Mono",monospace;font-size:12px;font-weight:500}
 .wallet-warning .wallet-network:before{background:var(--att)}
 .readonly-state{font-size:12.5px;color:var(--mute);padding:8px 11px;border:1px solid var(--rule);border-radius:9px}
+.edit-lock{display:flex;align-items:flex-start;gap:11px;margin:0 0 18px;padding:13px 15px;border:1px solid var(--rule2);border-left:3px solid var(--att);border-radius:10px;background:var(--att-soft);color:var(--ink2)}
+.edit-lock .lock-icon{font-size:18px;line-height:1.2;color:var(--att)}
+.edit-lock b{display:block;color:var(--ink);font-size:13px;margin-bottom:2px}
+.edit-lock p{margin:0;font-size:12.5px}
+#view[data-readonly="true"] input:disabled,#view[data-readonly="true"] select:disabled,#view[data-readonly="true"] textarea:disabled{opacity:.62;cursor:not-allowed;background:var(--sunk)}
+#view[data-readonly="true"] .drop[aria-disabled="true"]{opacity:.58;cursor:not-allowed;filter:grayscale(.25)}
+#view[data-readonly="true"] button:not(.dl):disabled{opacity:.48;cursor:not-allowed}
 
 .shell{display:flex;min-height:calc(100vh - 68px)}
 .rail{width:236px;flex:none;border-right:1px solid var(--rule);padding:24px 12px;background:var(--panel)}
@@ -757,6 +764,90 @@ const NAVS={
   transp:[["entrega","Registrar transporte"],["minhas","Minhas evidências"],
           ["transferencia","Minha transferência"]],
   cli:[["dashboard","Dashboard"]]};
+
+/* No modo de demonstração todos os perfis podem navegar pelas telas.
+   A edição fica limitada à etapa pertencente ao perfil ativo. */
+const TODAS_AS_ABAS=[
+  ["lote","Visão do lote"],
+  ["dashboard","Dashboard"],
+  ["evidencias","Evidências"],
+  ["enviar","Enviar evidência"],
+  ["entrega","Registrar transporte"],
+  ["minhas","Minhas evidências"],
+  ["cadeia","Minha cadeia"],
+  ["transferencia","Minha transferência"],
+  ["documento","Documento e verificação"],
+  ["atores","Atores da cadeia"],
+  ["resultado","Resultado do lote"],
+  ["convidar","Convidar cliente"],
+  ["cadastro","Cadastrar ator"]
+];
+
+const PAGINA_EDITAVEL_POR_ATOR={
+  MINER:"enviar",
+  CARRIER:"entrega",
+  LABORATORY:"enviar",
+  PROCESSOR:"enviar",
+  REFINER:"enviar",
+  RECYCLER:"enviar",
+  MANUFACTURER:"enviar",
+  OTHER:"enviar"
+};
+
+function atorAtivo(){
+  return ATOR_ATIVO?ATORES.find(a=>a.id===ATOR_ATIVO)||null:null;
+}
+function paginaPermitidaParaEdicao(){
+  const ator=atorAtivo();
+  if(ator){
+    const actorType=Object.keys(actorTypeLabel).find(k=>actorTypeLabel[k]===ator.papel)||"OTHER";
+    return PAGINA_EDITAVEL_POR_ATOR[actorType]||"enviar";
+  }
+  if(role==="op") return "cadastro";
+  if(role==="transp") return "entrega";
+  if(role==="forn") return "enviar";
+  return null;
+}
+function abasDisponiveis(){
+  return role==="cli"?NAVS.cli:TODAS_AS_ABAS;
+}
+function nomeDaPagina(id){
+  return TODAS_AS_ABAS.find(n=>n[0]===id)?.[1]||id;
+}
+function nomeDoPerfil(){
+  const ator=atorAtivo();
+  if(ator) return ator.papel;
+  return SESSION[role]?.acesso||"Perfil";
+}
+function aplicarTravaDeEdicao(){
+  const view=$("#view");
+  if(!view) return;
+  const paginaPermitida=paginaPermitidaParaEdicao();
+  const editavel=paginaPermitida===page;
+  view.dataset.readonly=String(!editavel);
+
+  if(!editavel){
+    const aviso=document.createElement("div");
+    aviso.className="edit-lock";
+    aviso.setAttribute("role","status");
+    aviso.innerHTML='<span class="lock-icon" aria-hidden="true">🔒</span><div><b>Visualização somente leitura</b><p>'+
+      'O perfil <strong>'+nomeDoPerfil()+'</strong> pode navegar nesta tela, mas só pode editar <strong>'+
+      nomeDaPagina(paginaPermitida||"nenhuma tela")+'</strong>.</p></div>';
+    view.prepend(aviso);
+
+    view.querySelectorAll("input,select,textarea").forEach(el=>{
+      /* O seletor de ator continua ativo para trocar o participante da demonstração. */
+      if(el.id!=="atorSelecionado") el.disabled=true;
+    });
+    view.querySelectorAll("button").forEach(btn=>{
+      if(!btn.classList.contains("dl")) btn.disabled=true;
+    });
+    view.querySelectorAll("label.drop").forEach(label=>{
+      label.setAttribute("aria-disabled","true");
+      label.removeAttribute("for");
+    });
+  }
+}
 /* Sessão autenticada. Preencha com os dados reais do login. */
 let SESSION={
   op:{iniciais:"—",nome:"Não autenticado",acesso:"Operação"},
@@ -1483,7 +1574,12 @@ T.dashboard=()=>{
 };
 
 function render(){
-  const sessao=SESSION[role];
+  const ator=atorAtivo();
+  const sessao=ator?{
+    iniciais:(ator.nome||"Ator").split(/\s+/).slice(0,2).map(p=>p[0]).join("").toUpperCase(),
+    nome:ator.nome,
+    acesso:ator.papel
+  }:SESSION[role];
   $("#session").innerHTML='<span class="session-avatar">'+sessao.iniciais+'</span>'+ 
     '<span class="session-copy"><b>'+sessao.nome+'</b><span>'+sessao.acesso+'</span></span>';
   renderWallet();
@@ -1495,11 +1591,12 @@ function render(){
       window.location.href=window.location.pathname+(next==="op"?"":"?role="+encodeURIComponent(next));
     };
   }
-  $("#nav").innerHTML=NAVS[role].map(n=>
+  $("#nav").innerHTML=abasDisponiveis().map(n=>
     '<button data-page="'+n[0]+'"'+(n[0]===page?' aria-current="page"':'')+'>'+n[1]+'</button>').join("");
   $("#nav").querySelectorAll("button").forEach(b=>
     b.onclick=function(){page=b.dataset.page;render();});
   $("#view").innerHTML=T[page]?T[page]():"";
+  aplicarTravaDeEdicao();
   window.scrollTo({top:0,behavior:"instant"});
   renderCharts();
 
@@ -1555,7 +1652,11 @@ function render(){
     const campo=$("#actorId"); if(campo) campo.value=id;
   };
   const atorSelecionado=$("#atorSelecionado");
-  if(atorSelecionado) atorSelecionado.onchange=function(){ATOR_ATIVO=this.value||null;toast(ATOR_ATIVO?"Perfil do ator selecionado para navegação.":"Nenhum ator selecionado.");};
+  if(atorSelecionado) atorSelecionado.onchange=function(){
+    ATOR_ATIVO=this.value||null;
+    toast(ATOR_ATIVO?"Perfil do ator selecionado. Todas as abas continuam disponíveis; a edição fica restrita à função do perfil.":"Nenhum ator selecionado.");
+    render();
+  };
   bindOnchain("#enviarEv","Evidência enviada. Hash gravado, estado pendente.");
   bindOnchain("#enviarTransporte","Entrega registrada. EvidenceHash ancorado como PENDING.");
   bind("#enviarConvite","Convite enviado para este resultado.");
