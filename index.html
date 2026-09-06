@@ -649,12 +649,27 @@ function evidenciasExibidas(){
   const known=new Set(remote.map(e=>e.id));
   return remote.concat((EVIDENCIAS||[]).filter(e=>!known.has(e.id)));
 }
+/*
+ * MVP demo session: the connected wallet is used for the blockchain
+ * signature, while Supabase receives an anonymous Auth session so RLS can
+ * attribute the evidence row to a real auth.users id. This is intentionally
+ * a demo-only convenience; production must replace it with real sign-in.
+ */
+async function garantirSessaoSupabaseDemo(){
+  const atual=await supabaseClient.auth.getSession();
+  let user=atual?.data?.session?.user||null;
+  if(!user){
+    const signed=await supabaseClient.auth.signInAnonymously();
+    if(signed.error) throw new Error("Supabase não criou a sessão demo: "+signed.error.message);
+    user=signed.data?.user||null;
+  }
+  if(!user?.id) throw new Error("Supabase não retornou um usuário autenticado.");
+  const claim=await supabaseClient.rpc("explorerchem_demo_claim_actors");
+  if(claim.error) throw new Error("Não foi possível preparar as permissões demo: "+claim.error.message);
+  return user.id;
+}
 async function usuarioSupabaseAtual(){
-  try{
-    const {data,error}=await supabaseClient.auth.getUser();
-    if(!error&&data&&data.user) return data.user.id;
-  }catch(e){}
-  return null;
+  return garantirSessaoSupabaseDemo();
 }
 async function urlAssinada(bucket,path){
   if(!bucket||!path) throw new Error("O documento ainda não possui um caminho de armazenamento.");
@@ -976,7 +991,13 @@ async function enviarEvidenciaReal(button){
   const json=isJsonFile(file), pdf=isPdfFile(file);
   if(!json&&!pdf){toast("Envie um arquivo JSON ou PDF.");return;}
   if(json){try{await lerJsonDoArquivo(file);}catch(error){toast(error.message);return;}}
-  const userId=await usuarioSupabaseAtual();
+  let userId;
+  try{userId=await usuarioSupabaseAtual();}
+  catch(error){
+    console.error(error);
+    toast(error.message||"Não foi possível criar a sessão demo do Supabase.");
+    return;
+  }
   if(!userId){
     toast("O banco exige uma sessão autenticada do Supabase para registrar a evidência. A carteira sozinha não substitui esse usuário.");
     return;
