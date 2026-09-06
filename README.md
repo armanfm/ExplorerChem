@@ -1,1183 +1,1662 @@
-# ExploreChem
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ExploreChem — Verificação de cadeias materiais</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=Manrope:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+:root{
+  --ink:#172026; --ink2:#4A555E; --mute:#74808A;
+  --paper:#F4F6F7; --panel:#FFFFFF; --sunk:#F7F8F8; --tint:#F1EFF8;
+  --rule:#E3E8EA; --rule2:#CBD3D7;
+  --nd:#5D4B8C; --nd2:#735FAC; --nd-soft:#EEEAF7;
+  --copper:#9A5A24; --copper-soft:#F6EDE5;
+  --ok:#2C6E49; --ok-soft:#E4EFE8;
+  --div:#A33A2A; --div-soft:#F7E6E2;
+  --att:#87681F; --att-soft:#F6EEDC;
+  --pend:#5B646B; --pend-soft:#ECEEEF;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --ink:#EDEDEA; --ink2:#B0B6BB; --mute:#899096;
+    --paper:#131619; --panel:#1A1E22; --sunk:#15181B; --tint:#211D30;
+    --rule:#2C3237; --rule2:#3B4249;
+    --nd:#A996D6; --nd2:#8E7CC4; --nd-soft:#252036;
+    --ok:#68B78C; --ok-soft:#16261D; --div:#DE8877; --div-soft:#2A1815;
+    --att:#D2AC5C; --att-soft:#241D0F; --pend:#9AA2A8; --pend-soft:#1E2226;
+  }
+}
+*{box-sizing:border-box}
+html,body{margin:0;padding:0}
+body{background:var(--paper);color:var(--ink);
+  font-family:"IBM Plex Sans",system-ui,-apple-system,sans-serif;
+  font-size:15px;line-height:1.55;-webkit-font-smoothing:antialiased}
+.mono{font-family:"IBM Plex Mono",ui-monospace,Menlo,monospace;font-variant-ligatures:none}
+button{font:inherit;color:inherit;cursor:pointer;border:0;background:none}
+:focus-visible{outline:2px solid var(--nd);outline-offset:2px}
 
-Confidential traceability infrastructure for rare-earth supply chains, combining private documents, verifiable graph correlation, chain-of-custody evidence, lot-based mass balance, and minimal blockchain anchoring.
+.top{display:flex;align-items:center;gap:16px;padding:0 24px;min-height:68px;
+  border-bottom:1px solid var(--rule);background:var(--panel);
+  position:sticky;top:0;z-index:20;flex-wrap:wrap}
+.brand{display:flex;align-items:center;gap:10px;font-weight:600;font-size:16px;
+  letter-spacing:-.02em;padding:6px 8px;border-radius:8px}
+.brand:hover{background:var(--sunk)}
+.brand svg{display:block;flex:none}
+.session{display:flex;align-items:center;gap:10px;padding:5px 7px 5px 5px}
+.session-avatar{width:34px;height:34px;border-radius:10px;background:var(--nd-soft);color:var(--nd);
+  display:grid;place-items:center;font-size:12px;font-weight:600}
+.session-copy{display:flex;flex-direction:column;line-height:1.3}.session-copy b{font-size:13px;font-weight:500}
+.session-copy span{font-size:12px;color:var(--mute)}
+.wallet-area{margin-left:auto;display:flex;align-items:center}
+.actor-context{display:flex;flex-direction:column;line-height:1.15;max-width:210px;padding:6px 10px;border:1px solid var(--rule2);border-radius:9px;background:var(--nd-soft);color:var(--ink2);font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.actor-context b{font-size:10px;color:var(--nd);text-transform:uppercase;letter-spacing:.06em}
+.role-switch{display:flex;align-items:center;gap:7px;margin-left:auto}
+.role-switch label{margin:0;color:var(--mute);font-size:11px}
+.role-switch select{width:auto;padding:6px 8px;font-size:12px;border-radius:7px}
+.wallet-connect{display:flex;align-items:center;gap:8px;padding:8px 12px;border:1px solid var(--rule2);
+  border-radius:9px;background:var(--panel);font-size:13px;font-weight:500}
+.wallet-connect:hover{border-color:var(--nd);background:var(--nd-soft);color:var(--nd)}
+.wallet-state{display:flex;align-items:center;gap:9px;padding:7px 11px;border:1px solid var(--rule);
+  border-radius:9px;background:var(--sunk)}
+.wallet-logout{padding:5px 8px;border:1px solid var(--rule2);border-radius:7px;font-size:11px;color:var(--ink2)}
+.wallet-logout:hover{border-color:var(--nd);background:var(--nd-soft);color:var(--nd)}
+.wallet-network{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--ink2)}
+.wallet-network:before{content:"";width:7px;height:7px;border-radius:50%;background:var(--ok)}
+.wallet-address{font-family:"IBM Plex Mono",monospace;font-size:12px;font-weight:500}
+.wallet-warning .wallet-network:before{background:var(--att)}
+.readonly-state{font-size:12.5px;color:var(--mute);padding:8px 11px;border:1px solid var(--rule);border-radius:9px}
 
-> ExploreChem is being developed for ETHOnline 2026. Company names, lot identifiers, document references, quantities, and results shown in the demonstration are fictional.
+.shell{display:flex;min-height:calc(100vh - 68px)}
+.rail{width:236px;flex:none;border-right:1px solid var(--rule);padding:24px 12px;background:var(--panel)}
+.rail nav{display:flex;flex-direction:column}
+.rail nav button{text-align:left;padding:10px 12px;color:var(--ink2);
+  font-size:14px;border-radius:8px;margin:1px 0;border-left:0}
+.rail nav button:hover{background:var(--sunk);color:var(--ink)}
+.rail nav button[aria-current="page"]{color:var(--ink);font-weight:500;
+  border-left-color:transparent;background:var(--nd-soft)}
 
-## Overview
-
-ExploreChem allows independent organizations to prove the continuity and consistency of a material supply chain without publishing commercial documents, relationships, quantities, or chemical composition on-chain.
-
-```text
-private document
-→ evidenceHash anchored on-chain
-→ confidential correlation inside CRE/TEE
-→ private graph revalidated
-→ lot-based mass balance
-→ versioned resultHash anchored on-chain
-```
-
-The system separates responsibilities:
-
-- **ExploreChem:** product experience, company registration, permissions, private metadata, and history;
-- **Chainlink CRE + TEE:** document integrity checks, deterministic extraction, graph correlation, and confidential calculation;
-- **Blockchain:** minimal identity, authorship, integrity, state, and result commitments;
-- **DPP:** the evolving Digital Product Passport associated with a product or material lot;
-- **Invited client:** access to an authorized dashboard and downloadable reports, without evidence upload privileges.
-
-> The blockchain is not ExploreChem's corporate database. It stores only what is required to prove submission, integrity, state, and result history.
-
----
-
-## 1. Problem
-
-Rare-earth supply chains involve miners, carriers, laboratories, processors, recyclers, manufacturers, and buyers. Each participant produces documents, but those documents are normally stored in isolated systems and may contain commercially sensitive information.
-
-Publishing complete records on a public blockchain would expose relationships that companies may not be allowed or willing to disclose. Keeping everything only in a conventional database would make the result easier for a database administrator to alter without leaving a public trace.
-
-ExploreChem combines private processing with public cryptographic commitments:
-
-- documents and operational data remain private;
-- hashes prove which document version was submitted;
-- independent documents are correlated inside a protected environment;
-- mass balance is calculated by lot and chemical element;
-- each authorized participant receives its own publicly anchored, privately salted result commitment;
-- previous result versions remain available instead of being overwritten.
-
----
-
-## 2. Goals
-
-The MVP is designed to:
-
-- identify the actor and wallet responsible for each evidence submission;
-- confirm that a retrieved document is byte-for-byte identical to the anchored document;
-- correlate documents submitted by different supply-chain actors;
-- represent verified transfers, analyses, transformations, returns, and recycling relationships;
-- preserve the commercial graph outside the public blockchain;
-- prevent the same physical mass from being counted more than once;
-- calculate a mass balance for a specific lot;
-- append new result versions without deleting previous ones;
-- restrict each participant to an authorized view of the chain;
-- provide invited clients with read-only dashboards and downloads.
-
-The MVP does not claim that cryptography alone proves that a physical event happened. It proves document integrity and rule-based consistency. Material truth still depends on authorized issuers, audits, sensors, official sources, and external enforcement.
-
----
-
-## 3. Digital Product Passport
-
-The **DPP — Digital Product Passport** is associated with a product or material lot. It is not the company's registration record.
-
-An actor is registered once and may contribute evidence to several DPPs:
-
-```text
-registered actor
-→ submits evidence for different lots
-→ evidence contributes to the corresponding DPPs
-→ each DPP evolves through append-only result versions
-```
-
-The complete DPP remains off-chain. The blockchain stores only opaque identifiers, document commitments, minimal states, and result commitments.
-
----
-
-## 4. Participants and visibility
-
-ExploreChem may receive evidence from:
-
-- mining companies;
-- laboratories;
-- carriers;
-- processors and refiners;
-- recyclers;
-- manufacturers;
-- other authorized supply-chain participants.
-
-`actorType` is private operational data and does not need to be published on-chain.
-
-### ExploreChem administrator
-
-- registers organizations and actors;
-- associates authorized wallets;
-- assigns roles and permissions;
-- monitors evidence, correlation runs, DPPs, and mass-balance results.
-
-### Actor or supplier
-
-- uploads its own documents;
-- associates submissions with the appropriate lot;
-- monitors its own evidence processing;
-- sees its own evidence, direct counterparties, and authorized result;
-- does not automatically see earlier or later participants in the supply chain.
-
-### Carrier
-
-- records pickup, received mass, delivered mass, delivery time, and incidents;
-- confirms custody between sender and recipient;
-- does not create a second physical mass flow merely by transporting the material;
-- sees only transfers assigned to it.
-
-### Lot operator
-
-- monitors authorized correlated evidence;
-- reviews inputs, outputs, inventories, losses, and yield;
-- generates a verifiable mass-balance report;
-- accesses the private graph only within its operational scope.
-
-### Invited client
-
-- receives access from the company responsible for a specific result;
-- sees only the authorized dashboard and provenance summary;
-- downloads the report and integrity proof;
-- cannot upload, modify, or delete evidence;
-- cannot access other lots or the complete private graph.
-
-### Visibility horizon
-
-| Profile | Visible scope |
-|---|---|
-| CRE/TEE | Private graph required for correlation and calculation |
-| Company or actor | Own evidence, direct relationships, and authorized results |
-| Carrier | Assigned pickup, delivery, and incident information |
-| Invited client | Specifically shared dashboard and downloads |
-| Public blockchain observer | Opaque actor/evidence/result IDs, wallets, hashes, states, revision links, calldata, events and block times |
-
-The private correlation identifier never grants access. Authorization is enforced independently by application and database policies.
-
----
-
-## 5. Actor identity
-
-The company registration is created in ExploreChem, while the blockchain stores only a minimal logical identity.
-
-```text
-company opens ExploreChem
-→ administrative wallet is connected
-→ company profile is created off-chain
-→ actorId is assigned
-→ authorized wallets are associated with actorId
-```
-
-Private company data may include:
-
-- legal name;
-- tax identifier;
-- `actorType`;
-- facilities and operating locations;
-- responsible personnel;
-- administrative information;
-- internal access rules.
-
-Minimal on-chain identity:
-
-```solidity
-struct ActorIdentity {
-    bytes32 actorId;
-    address controller;
-    uint64 createdAt;
+main{flex:1;min-width:0;padding:34px clamp(24px,3.5vw,56px) 80px;max-width:none}
+main>*{max-width:1440px;margin-left:auto;margin-right:auto}
+@media(max-width:820px){
+  .shell{flex-direction:column}
+  .rail{width:auto;border-right:0;border-bottom:1px solid var(--rule);padding:12px 0}
+  .rail nav{flex-direction:row;overflow-x:auto}
+  .rail nav button{white-space:nowrap;border-left:0;border-bottom:2px solid transparent}
+  .rail nav button[aria-current="page"]{border-left:0;border-bottom-color:var(--nd)}
+  main{padding:20px 16px 60px}
 }
 
-mapping(bytes32 actorId => mapping(address wallet => bool authorized))
-    public authorizedWallets;
-```
+.crumb{font-size:12px;color:var(--mute);margin-bottom:6px}
+h1{font-size:30px;font-weight:600;line-height:1.18;letter-spacing:-.03em;margin:0 0 7px}
+h2{font-size:18px;font-weight:600;letter-spacing:-.015em;margin:34px 0 12px}
+h3{font-size:14px;font-weight:600;margin:0 0 10px}
+.sub{color:var(--ink2);margin:0 0 18px;max-width:66ch}
+.headrow{display:flex;align-items:flex-start;gap:16px;flex-wrap:wrap;margin-bottom:18px}
+.headrow .grow{flex:1;min-width:240px}
+.headrow .sub{margin-bottom:0}
 
-`actorId` is a stable logical identity. An organization can add or replace wallets without changing its historical identifier.
+.panel{background:var(--panel);border:1px solid var(--rule);border-radius:12px;
+  box-shadow:0 1px 2px rgba(20,32,40,.025)}
+.pad{padding:20px 22px}
+.split{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+.split32{display:grid;grid-template-columns:1.3fr 1fr;gap:14px}
+@media(max-width:880px){.split,.split32{grid-template-columns:1fr}}
+.stack>*+*{margin-top:14px}
 
-Actor registration does not use evidence states such as `PENDING`, `MATCHED`, `FAILED`, or `REVOKED`. Wallet authorization is managed directly by the identity registry.
+table{width:100%;border-collapse:collapse}
+th{text-align:left;font-size:11.5px;font-weight:500;color:var(--mute);
+  padding:9px 14px;border-bottom:1px solid var(--rule);white-space:nowrap}
+td{padding:10px 14px;border-bottom:1px solid var(--rule);vertical-align:middle}
+tbody tr:last-child td{border-bottom:0}
+td.num,th.num{text-align:right}
+td.num{font-family:"IBM Plex Mono",monospace;font-size:13px;white-space:nowrap}
+.scrollx{overflow-x:auto}
+.sm{font-size:11.5px;color:var(--mute)}
 
-`registerActor` is owner-only. Connecting a wallet or choosing a role in the UI
-does not register an actor on-chain. A wallet proves control of a key, not a
-verified company identity or mining authorization. The demonstration uses
-fictional organizations; real-world identity checks and customer onboarding
-are production requirements, not claimed as completed by this MVP.
+.tag{display:inline-flex;align-items:center;padding:3px 9px;border-radius:999px;font-size:11.5px;
+  font-family:"IBM Plex Mono",monospace;white-space:nowrap}
+.t-ok{background:var(--ok-soft);color:var(--ok)}
+.t-div{background:var(--div-soft);color:var(--div)}
+.t-att{background:var(--att-soft);color:var(--att)}
+.t-pend{background:var(--pend-soft);color:var(--pend)}
+.t-nd{background:var(--nd-soft);color:var(--nd)}
+.hash{font-family:"IBM Plex Mono",monospace;font-size:12px;color:var(--ink2);word-break:break-all}
 
----
+.identity{background:var(--panel);border:1px solid var(--rule);border-radius:3px;padding:22px 20px}
+.eqwrap{overflow-x:auto;padding-bottom:4px}
+.eq{display:flex;align-items:flex-end;gap:2px;white-space:nowrap;font-family:"IBM Plex Mono",monospace}
+.eq .t{display:flex;flex-direction:column;align-items:center;padding:0 6px}
+.eq .t i{font-style:normal;font-size:19px;font-weight:500;letter-spacing:-.02em}
+.eq .t span{font-family:"IBM Plex Sans",sans-serif;font-size:11.5px;color:var(--mute);margin-top:2px}
+.eq .op{color:var(--mute);font-size:16px;padding-bottom:19px}
+.eq .t.res i{color:var(--nd);font-weight:600}
+.heroline{display:flex;align-items:center;gap:14px;flex-wrap:wrap;
+  margin-top:18px;padding-top:16px;border-top:1px solid var(--rule)}
+.heroline .big{font-family:"IBM Plex Mono",monospace;font-size:30px;font-weight:600;
+  letter-spacing:-.02em;color:var(--nd);line-height:1}
+.heroline .cap{color:var(--ink2);font-size:13px;max-width:34ch}
 
-## 6. Evidence submission
+.note{border-left:2px solid var(--rule2);padding:1px 0 1px 12px;
+  color:var(--ink2);font-size:13px;margin:12px 0 0}
 
-When an actor uploads a document, ExploreChem:
+.arb{border:1px solid var(--att);border-left-width:3px;border-radius:3px;
+  background:var(--att-soft);padding:12px 14px;margin-top:14px}
+.arb b{color:var(--att);font-size:13px}
+.arb p{margin:4px 0 0;color:var(--ink2);font-size:13px}
+.arb.bad{border-color:var(--div);background:var(--div-soft)}
+.arb.bad b{color:var(--div)}
 
-1. preserves the original file in private storage;
-2. calculates `evidenceHash` from the exact original bytes;
-3. extracts operational metadata;
-4. stores the document, metadata, and extractor version off-chain;
-5. generates an opaque `evidenceId`;
-6. requests an authorized wallet to submit the minimal evidence on-chain;
-7. emits `EvidenceSubmitted`, the primary trigger for correlation.
-
-Evidence may include:
-
-- invoice or commercial document;
-- origin and quantity declaration;
-- laboratory report;
-- transport document;
-- proof of delivery;
-- refining or purification report;
-- transformation record;
-- manufacturing or recycling record.
-
-### Demo actor navigation
-
-The MVP includes an actor selector below the registration form. After an actor is registered, the operator can select that actor to navigate through the system using the actor's role and visibility scope.
-
-This demonstration mechanism avoids requiring a separate login and wallet for every fictional participant. The connected wallet signs the registration transaction, while each actor receives its own unique and persistent `actorId`.
-
-The `actorId` is a randomly generated opaque identifier stored as `actor_id` in Supabase and registered as `actorId` on-chain. It is unique, but it is not a transferable token, stablecoin, NFT, credential, or access key.
-
-The actor selector is intended only for the MVP demonstration. In production, it will be replaced by verified identity, authenticated accounts, wallet authorization, and backend/RLS access policies.
-
-In production, this selector will be replaced by verified identity, authenticated accounts, wallet authorization, and backend/RLS access policies.
----
-
-## 7. On-chain data
-
-Each document submission records only:
-
-```text
-evidenceId
-actorId
-submittedBy
-evidenceHash
-status
-createdAt
-matchedAt
-```
-
-Conceptual structure implemented by the contract:
-
-```solidity
-enum EvidenceStatus {
-    NONE,
-    PENDING,
-    MATCHED
+.stats{display:grid;grid-template-columns:repeat(4,1fr);gap:12px}
+.stats div{padding:18px 18px;border:1px solid var(--rule);border-radius:12px;background:var(--panel)}
+.stats div:last-child{border-right:0}
+.stats .n{display:block;font-family:"IBM Plex Mono",monospace;font-size:22px;
+  font-weight:500;letter-spacing:-.02em;margin-bottom:2px}
+.stats .l{font-size:13px;color:var(--mute)}
+@media(max-width:760px){
+  .stats{grid-template-columns:1fr 1fr}
+  .stats div:nth-child(2){border-right:0}
+  .stats div:nth-child(-n+2){border-bottom:1px solid var(--rule)}
 }
 
-struct Evidence {
-    bytes32 evidenceId;
-    bytes32 actorId;
-    address submittedBy;
-    bytes32 evidenceHash;
-    EvidenceStatus status;
-    uint64 createdAt;
-    uint64 matchedAt;
+.chain{display:flex;align-items:stretch;overflow-x:auto;padding:2px 0}
+.node{flex:none;min-width:168px;background:var(--panel);border:1px solid var(--rule);
+  border-radius:3px;padding:13px 15px}
+.node b{display:block;font-size:13px;font-weight:500;margin-bottom:2px}
+.node .r{font-size:11.5px;color:var(--mute)}
+.node.self{border-color:var(--nd);background:var(--nd-soft)}
+.node.self .r{color:var(--nd)}
+.link{flex:none;width:42px;display:flex;align-items:center;justify-content:center;color:var(--rule2)}
+.horizon{flex:none;min-width:192px;border:1px dashed var(--rule2);border-radius:3px;
+  padding:13px 15px;background:var(--sunk);color:var(--mute);font-size:12px;line-height:1.45}
+.horizon b{display:block;color:var(--ink2);font-weight:500;font-size:12.5px;margin-bottom:3px}
+
+.chart{width:100%;height:140px;display:block}
+.donut{display:flex;align-items:center;gap:16px}
+.donut .val{font-family:"IBM Plex Mono",monospace;font-size:21px;font-weight:600;letter-spacing:-.02em}
+
+label{display:block;font-size:12px;color:var(--mute);margin-bottom:4px}
+input,select{width:100%;padding:7px 9px;border:1px solid var(--rule2);border-radius:3px;
+  background:var(--panel);color:var(--ink);font:inherit;font-size:13.5px}
+input:focus,select:focus{border-color:var(--nd);outline:2px solid var(--nd-soft);outline-offset:0}
+input.mono,select.mono{font-family:"IBM Plex Mono",monospace;font-size:12.5px}
+.field{margin-bottom:12px}
+.f2{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+@media(max-width:640px){.f2{grid-template-columns:1fr}}
+.chips{display:flex;flex-wrap:wrap;gap:7px}
+.chip{border:1px solid var(--rule2);border-radius:3px;padding:6px 11px;font-size:13px;color:var(--ink2)}
+.chip[aria-pressed="true"]{border-color:var(--nd);background:var(--nd-soft);color:var(--nd);font-weight:500}
+.btn{background:var(--ink);color:var(--panel);padding:8px 15px;border-radius:3px;
+  font-size:13.5px;font-weight:500}
+.btn:hover{opacity:.87}
+.btn.ghost{background:transparent;color:var(--ink);border:1px solid var(--rule2);font-weight:400}
+.btn.ghost:hover{background:var(--sunk);opacity:1}
+.btn.sm{padding:4px 10px;font-size:12.5px}
+.actions{display:flex;gap:9px;flex-wrap:wrap;margin-top:6px}
+.drop{border:1px dashed var(--rule2);border-radius:3px;padding:26px 18px;
+  text-align:center;background:var(--sunk);color:var(--mute)}
+.drop b{display:block;color:var(--ink);font-weight:500;margin-bottom:3px}
+.filerow{display:flex;align-items:center;gap:10px;margin-top:12px;padding:10px 12px;
+  border:1px solid var(--rule);border-radius:3px}
+.filerow .nm{flex:1;min-width:0;font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+
+.kv{display:grid;grid-template-columns:minmax(125px,auto) 1fr;gap:7px 16px;font-size:13px;margin:0}
+.kv dt{color:var(--mute);font-size:12px}
+.kv dd{margin:0}
+
+.docview{background:var(--sunk);border:1px solid var(--rule);border-radius:3px;padding:20px}
+.sheet{background:#fff;color:#15181B;border:1px solid #E2E2DD;border-radius:2px;
+  padding:22px 24px;font-size:12.5px;line-height:1.55;max-width:440px;margin:0 auto}
+.sheet h4{margin:0 0 2px;font-size:12.5px;color:#5D4B8C;font-weight:600}
+.sheet h5{margin:8px 0 10px;font-size:15px;font-weight:600}
+.sheet dl{display:grid;grid-template-columns:auto 1fr;gap:4px 14px;margin:0;font-size:12px}
+.sheet dt{color:#767E85}
+.sheet dd{margin:0}
+.sheet .ft{margin-top:14px;padding-top:10px;border-top:1px solid #E2E2DD;font-size:11px;color:#767E85}
+
+.toast{position:fixed;left:50%;bottom:26px;transform:translateX(-50%);
+  background:var(--ink);color:var(--paper);padding:10px 16px;border-radius:3px;
+  font-size:13.5px;z-index:60;box-shadow:0 2px 14px rgba(0,0,0,.18)}
+@media (prefers-reduced-motion:no-preference){
+  .toast{animation:rise .18s ease-out}
+  @keyframes rise{from{opacity:0;transform:translate(-50%,8px)}}
 }
-```
 
-`NONE` is the Solidity zero value used to distinguish a missing mapping entry. A valid new evidence record starts as `PENDING`.
+/* Product dashboard */
+.lot-hero{display:grid;grid-template-columns:minmax(0,1.55fr) minmax(300px,.8fr);gap:16px;margin-bottom:16px}
+.lot-main{padding:26px 28px;background:linear-gradient(135deg,#fff 0%,#fbfafc 100%)}
+.lot-kicker{display:flex;align-items:center;gap:9px;color:var(--nd);font-size:13px;font-weight:600;margin-bottom:12px}
+.lot-title{display:flex;align-items:flex-start;justify-content:space-between;gap:16px}
+.lot-title h1{font-size:31px;margin:0}
+.lot-sub{color:var(--ink2);margin:8px 0 0;max-width:72ch}
+.lot-meta{display:flex;flex-wrap:wrap;gap:8px 18px;margin-top:22px;padding-top:18px;border-top:1px solid var(--rule)}
+.lot-meta span{font-size:13px;color:var(--mute)}
+.lot-meta b{color:var(--ink);font-weight:500}
+.verdict-card{padding:24px;background:#251F35;border-color:#251F35;color:#fff;display:flex;flex-direction:column;justify-content:space-between;min-height:210px}
+.verdict-card .eyebrow{font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:#C9BEDF}
+.verdict-card .verdict{font-size:27px;font-weight:600;letter-spacing:-.025em;margin:8px 0}
+.verdict-card .reason{color:#DDD7E8;font-size:14px;line-height:1.5}
+.verdict-card .foot{display:flex;align-items:center;justify-content:space-between;gap:12px;padding-top:18px;margin-top:18px;border-top:1px solid rgba(255,255,255,.16);font-size:13px;color:#C9BEDF}
+.status-dot{display:inline-block;width:8px;height:8px;border-radius:50%;background:#E38B76;margin-right:7px;box-shadow:0 0 0 4px rgba(227,139,118,.15)}
+.metric-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;margin:16px 0}
+.metric{padding:18px 20px}
+.metric .label{display:block;color:var(--mute);font-size:13px;margin-bottom:10px}
+.metric .value{font-family:"IBM Plex Mono",monospace;font-size:23px;font-weight:600;letter-spacing:-.035em}
+.metric .unit{font-size:13px;color:var(--mute);margin-left:4px;font-family:"IBM Plex Sans",sans-serif;font-weight:400}
+.metric .hint{font-size:12.5px;color:var(--ink2);margin-top:7px}
+.metric.alert{border-color:#EAC3BA;background:#FFF9F7}.metric.alert .value{color:var(--div)}
+.product-grid{display:grid;grid-template-columns:minmax(0,1.5fr) minmax(330px,.75fr);gap:16px;margin-top:16px}
+.section-title{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;margin-bottom:18px}
+.section-title h2{margin:0;font-size:17px}.section-title p{margin:3px 0 0;color:var(--mute);font-size:13px}
+.custody{padding:22px 24px;overflow:hidden}
+.custody-path{display:grid;grid-template-columns:repeat(5,minmax(115px,1fr));gap:0;align-items:start;overflow-x:auto;padding:8px 2px 4px}
+.custody-step{position:relative;min-width:130px;padding-right:18px}
+.custody-step:not(:last-child):after{content:"";position:absolute;top:14px;left:30px;right:0;height:1px;background:var(--rule2)}
+.custody-step .dot{position:relative;z-index:1;width:29px;height:29px;border-radius:9px;background:var(--panel);border:1px solid var(--rule2);display:grid;place-items:center;color:var(--nd);font-size:12px;font-weight:600;margin-bottom:11px}
+.custody-step.done .dot{background:var(--nd);border-color:var(--nd);color:#fff}
+.custody-step.pending .dot{border-style:dashed;color:var(--mute)}
+.custody-step b{display:block;font-size:13px;line-height:1.35;font-weight:500;padding-right:8px}
+.custody-step small{display:block;color:var(--mute);font-size:12px;line-height:1.4;margin-top:3px;padding-right:8px}
+.evidence-card{padding:22px 24px}
+.evidence-score{display:flex;align-items:flex-end;gap:7px;margin:8px 0 14px}
+.evidence-score b{font-family:"IBM Plex Mono",monospace;font-size:34px;line-height:1;letter-spacing:-.04em}
+.evidence-score span{color:var(--mute);font-size:13px;padding-bottom:3px}
+.progress{height:8px;border-radius:99px;background:var(--rule);overflow:hidden}.progress span{display:block;height:100%;width:86%;background:var(--nd);border-radius:inherit}
+.evidence-list{display:grid;gap:10px;margin-top:17px}.evidence-list div{display:flex;justify-content:space-between;gap:12px;font-size:13px}.evidence-list span{color:var(--mute)}
+.balance-card{padding:22px 24px;margin-top:16px}
+.balance-line{display:grid;grid-template-columns:repeat(5,minmax(120px,1fr));align-items:center;gap:10px;padding:8px 0 2px;overflow-x:auto}
+.balance-item{min-width:120px}.balance-item span{display:block;color:var(--mute);font-size:12.5px;margin-bottom:5px}.balance-item b{font-family:"IBM Plex Mono",monospace;font-size:18px}.balance-op{color:var(--mute);font-size:20px;text-align:center}
+.balance-result{padding:13px 15px;border-radius:9px;background:var(--div-soft);color:var(--div)}
+.detail-summary{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-top:22px}
+.detail-summary h2{margin:0}.detail-summary .sm{font-size:13px}
+.quiet-warning{display:flex;gap:11px;align-items:flex-start;padding:14px 16px;margin-top:14px;border:1px solid #E7D5A8;background:#FFFBF1;border-radius:10px;color:#66521F;font-size:13px}
+.quiet-warning b{display:block;margin-bottom:2px}.quiet-warning p{margin:0;color:#75643B}
+.incident-proof{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-top:10px}
+.incident-proof .mono{font-size:12px;color:#66521F}
+.text-action{padding:0;color:var(--nd);font-size:13px;font-weight:500}.text-action:hover{text-decoration:underline}
+.product-details{margin-top:14px;overflow:hidden}
+.product-details summary{list-style:none;display:flex;align-items:center;justify-content:space-between;gap:18px;
+  padding:18px 22px;cursor:pointer;font-weight:500;background:var(--panel)}
+.product-details summary::-webkit-details-marker{display:none}
+.product-details summary:after{content:"+";font-family:"IBM Plex Mono",monospace;color:var(--nd);font-size:20px;font-weight:400}
+.product-details[open] summary:after{content:"−"}
+.product-details summary span{display:block;font-size:12.5px;color:var(--mute);font-weight:400;margin-top:2px}
+.product-details .details-body{padding:0 22px 22px;border-top:1px solid var(--rule)}
+.product-details .details-body>.panel{box-shadow:none}
+.product-details .details-body>.panel:first-child{margin-top:18px}
+@media(max-width:1120px){.lot-hero,.product-grid,.correlation-layout{grid-template-columns:1fr}.verdict-card{min-height:0}.metric-grid{grid-template-columns:1fr 1fr}}
+@media(max-width:700px){.metric-grid{grid-template-columns:1fr}.lot-main,.verdict-card,.custody,.evidence-card,.balance-card{padding:20px}.lot-title{display:block}.lot-title .btn{margin-top:16px}.custody-path{min-width:720px}.balance-line{min-width:760px}.session-copy,.wallet-network{display:none}.wallet-state{padding:8px 10px}}
 
-The contract rejects submissions from wallets that are not authorized for the supplied `actorId`.
+/* ---------- ExploreChem visual refresh ---------- */
+:root{
+  --ink:#14252D;
+  --ink2:#50656D;
+  --mute:#83949A;
+  --paper:#F4F8F8;
+  --panel:#FFFFFF;
+  --sunk:#ECF3F3;
+  --tint:#E8F7F3;
+  --rule:#DCE8E8;
+  --rule2:#BFD3D3;
+  --nd:#087E83;
+  --nd2:#0EA7A0;
+  --nd-soft:#DDF4F0;
+  --copper:#B86C36;
+  --copper-soft:#F8ECE3;
+  --ok:#087A62;
+  --ok-soft:#E1F4EC;
+  --div:#B34A3A;
+  --div-soft:#FBE9E5;
+  --att:#926C1B;
+  --att-soft:#FBF2D9;
+  --pend:#68777D;
+  --pend-soft:#E8EFF0;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --ink:#EDF8F6; --ink2:#B1C6C8; --mute:#83989B;
+    --paper:#10191B; --panel:#172326; --sunk:#132022; --tint:#183536;
+    --rule:#2B4446; --rule2:#3B5A5B;
+    --nd:#5ED5C9; --nd2:#31BDB4; --nd-soft:#173E3F;
+    --copper:#E0A273; --copper-soft:#3A271C;
+    --ok:#6BD1AA; --ok-soft:#17372E; --div:#F09A8A; --div-soft:#3A201D;
+    --att:#DABB6A; --att-soft:#382E16; --pend:#A2B4B6; --pend-soft:#223133;
+  }
+}
+html{scroll-behavior:smooth}
+body{
+  font-family:"Manrope","IBM Plex Sans",system-ui,-apple-system,sans-serif;
+  background:
+    radial-gradient(circle at 96% -8%, rgba(14,167,160,.12), transparent 27rem),
+    radial-gradient(circle at 7% 28%, rgba(8,126,131,.055), transparent 24rem),
+    var(--paper);
+}
+body:before{content:"";position:fixed;inset:0;pointer-events:none;z-index:-1;background:linear-gradient(115deg,transparent 0 62%,rgba(255,255,255,.24) 100%)}
+button,input,select{font-family:inherit}
+button{transition:background .18s ease,border-color .18s ease,color .18s ease,box-shadow .18s ease,transform .18s ease}
+button:active{transform:translateY(1px)}
+.top{
+  min-height:78px;padding:0 clamp(16px,3vw,42px);gap:18px;
+  border-bottom:1px solid color-mix(in srgb,var(--rule) 84%,transparent);
+  background:color-mix(in srgb,var(--panel) 86%,transparent);
+  backdrop-filter:blur(18px);box-shadow:0 8px 30px rgba(23,69,73,.055)
+}
+.brand{gap:11px;padding:5px 9px 5px 5px;border-radius:14px;letter-spacing:0}
+.brand:hover{background:var(--tint);box-shadow:0 6px 18px rgba(8,126,131,.09)}
+.brand-mark{display:grid;place-items:center;width:38px;height:38px;border-radius:12px;background:linear-gradient(145deg,var(--nd-soft),var(--panel));box-shadow:inset 0 0 0 1px rgba(8,126,131,.12),0 5px 14px rgba(8,126,131,.10)}
+.brand-mark svg{display:block}
+.brand-copy{display:flex;flex-direction:column;line-height:1.04;text-align:left}
+.brand-copy strong{font-size:16px;font-weight:700;letter-spacing:-.035em;color:var(--ink)}
+.brand-copy strong span{color:var(--nd)}
+.brand-copy small{margin-top:5px;color:var(--mute);font-size:9px;font-weight:700;letter-spacing:.12em;text-transform:uppercase}
+.system-state{display:flex;align-items:center;gap:9px;padding-left:18px;margin-left:2px;border-left:1px solid var(--rule)}
+.system-state>span:last-child{display:flex;flex-direction:column;line-height:1.25}
+.system-state b{font-size:11px;font-weight:700;color:var(--ink2)}
+.system-state small{font-size:9.5px;color:var(--mute)}
+.live-dot{width:7px;height:7px;border-radius:50%;background:var(--ok);box-shadow:0 0 0 4px var(--ok-soft)}
+.session{gap:10px;padding:5px 8px 5px 5px}
+.session-avatar{width:36px;height:36px;border-radius:12px;background:linear-gradient(145deg,var(--nd-soft),var(--tint));color:var(--nd);box-shadow:inset 0 0 0 1px rgba(8,126,131,.12);font-weight:700}
+.session-copy b{font-weight:600}
+.wallet-connect{padding:10px 14px;border-radius:11px;background:var(--panel);box-shadow:0 4px 12px rgba(20,62,65,.04);font-weight:600}
+.wallet-connect:hover{border-color:var(--nd);background:var(--nd-soft);color:var(--nd);box-shadow:0 7px 18px rgba(8,126,131,.13)}
+.wallet-state{padding:8px 12px;border-radius:11px;background:var(--sunk);box-shadow:inset 0 0 0 1px rgba(255,255,255,.35)}
+.readonly-state{padding:9px 12px;border-radius:11px;background:var(--sunk)}
+.shell{min-height:calc(100vh - 78px)}
+.rail{width:254px;padding:28px 15px 20px;background:color-mix(in srgb,var(--panel) 76%,transparent);border-right:1px solid color-mix(in srgb,var(--rule) 80%,transparent);position:sticky;top:78px;height:calc(100vh - 78px);overflow:auto;display:flex;flex-direction:column}
+.rail nav{gap:4px}
+.rail nav button{position:relative;padding:12px 14px 12px 39px;color:var(--ink2);font-size:13.5px;border-radius:12px;margin:0;font-weight:500}
+.rail nav button:before{display:none}
+.rail nav button:after{content:"•";position:absolute;left:13px;top:50%;width:18px;height:18px;display:grid;place-items:center;transform:translateY(-50%);color:var(--mute);font-family:"IBM Plex Mono",monospace;font-size:12px;transition:color .18s ease,transform .18s ease}
+.rail nav button[data-page="lote"]:after,.rail nav button[data-page="dashboard"]:after{content:"◫"}
+.rail nav button[data-page="evidencias"]:after,.rail nav button[data-page="minhas"]:after{content:"◇"}
+.rail nav button[data-page="documento"]:after,.rail nav button[data-page="enviar"]:after,.rail nav button[data-page="entrega"]:after{content:"▤"}
+.rail nav button[data-page="atores"]:after,.rail nav button[data-page="cadeia"]:after,.rail nav button[data-page="transferencia"]:after{content:"⌘"}
+.rail nav button[data-page="cadastro"]:after,.rail nav button[data-page="convidar"]:after{content:"＋"}
+.rail nav button[data-page="resultado"]:after{content:"◎"}
+.rail nav button:hover{background:var(--sunk);color:var(--ink);padding-left:41px}
+.rail nav button:hover:after{color:var(--nd2);transform:translateY(-50%) scale(1.12)}
+.rail nav button[aria-current="page"]{color:var(--nd);font-weight:700;background:linear-gradient(90deg,var(--nd-soft),color-mix(in srgb,var(--nd-soft) 44%,transparent));box-shadow:inset 3px 0 0 var(--nd),0 6px 18px rgba(8,126,131,.08)}
+.rail nav button[aria-current="page"]:after{color:var(--nd)}
+.trust-card{margin-top:auto;padding:16px 15px;border:1px solid var(--rule);border-radius:15px;background:linear-gradient(145deg,var(--sunk),var(--tint));box-shadow:inset 0 1px 0 rgba(255,255,255,.45)}
+.trust-card>div:nth-child(2){margin-top:11px}.trust-card b{font-size:11px}.trust-card p{margin:5px 0 12px;color:var(--mute);font-size:10.5px;line-height:1.55}
+.trust-card>span{display:block;padding-top:10px;border-top:1px solid var(--rule);color:var(--nd);font-family:"IBM Plex Mono",monospace;font-size:8.7px;line-height:1.5}
+.trust-icon{width:29px;height:29px;display:grid;place-items:center;border-radius:10px;background:var(--panel);color:var(--ok);box-shadow:0 5px 14px rgba(8,126,131,.10);font-weight:700}
+main{padding:40px clamp(20px,4vw,66px) 88px}
+.crumb{font-size:11.5px;font-weight:600;letter-spacing:.055em;text-transform:uppercase;color:var(--mute);margin-bottom:10px}
+h1{font-size:34px;font-weight:700;letter-spacing:-.045em}
+h2{font-size:18px;font-weight:700;letter-spacing:-.025em}
+.sub{color:var(--ink2);line-height:1.68}
+.panel{border:1px solid color-mix(in srgb,var(--rule) 88%,transparent);border-radius:18px;box-shadow:0 12px 32px rgba(21,68,71,.065),0 2px 6px rgba(21,68,71,.035);overflow:hidden}
+.pad{padding:23px 24px}
+.panel:hover{border-color:color-mix(in srgb,var(--rule2) 80%,var(--rule))}
+th{padding:12px 16px;background:color-mix(in srgb,var(--sunk) 60%,var(--panel));font-size:10.5px;font-weight:700;letter-spacing:.06em;text-transform:uppercase}
+td{padding:13px 16px}
+tbody tr{transition:background .16s ease}
+tbody tr:hover{background:var(--tint)}
+.tag{padding:5px 10px;border-radius:999px;font-size:10.5px;font-weight:700;letter-spacing:.035em;border:1px solid transparent}
+.t-nd{box-shadow:inset 0 0 0 1px rgba(8,126,131,.11)}
+.identity{border-radius:18px;padding:24px 23px;background:linear-gradient(145deg,var(--panel),var(--tint));box-shadow:0 12px 32px rgba(21,68,71,.06)}
+.heroline .big{color:var(--nd);font-weight:700}
+.note{border-left:3px solid var(--nd2);border-radius:0 8px 8px 0;padding:6px 0 6px 13px;background:color-mix(in srgb,var(--nd-soft) 55%,transparent)}
+.arb{border-radius:12px;padding:14px 16px}
+.stats{gap:14px}
+.stats div{padding:20px;border-radius:16px;box-shadow:0 8px 24px rgba(21,68,71,.045)}
+.stats .n{font-weight:700}
+.chain{padding:3px 0 8px}
+.node{border-radius:14px;padding:15px 16px;box-shadow:0 7px 20px rgba(21,68,71,.045)}
+.node.self{border-color:var(--nd2);box-shadow:0 7px 20px rgba(8,126,131,.12)}
+.horizon{border-radius:14px}
+input,select{padding:10px 12px;border-radius:10px;background:color-mix(in srgb,var(--panel) 92%,var(--sunk));box-shadow:inset 0 1px 2px rgba(24,57,59,.04)}
+input:focus,select:focus{border-color:var(--nd);outline:3px solid var(--nd-soft)}
+.chips{gap:8px}
+.chip{border-radius:10px;padding:8px 12px;font-size:12.5px;background:var(--panel)}
+.chip:hover{border-color:var(--nd2);color:var(--nd);background:var(--tint)}
+.btn{background:linear-gradient(135deg,#173B43,#0B6F76);color:#fff;padding:10px 16px;border-radius:11px;font-size:13px;font-weight:700;box-shadow:0 7px 16px rgba(11,111,118,.18)}
+.btn:hover{opacity:1;transform:translateY(-1px);box-shadow:0 10px 20px rgba(11,111,118,.27)}
+.btn.ghost{background:var(--panel);color:var(--ink);border:1px solid var(--rule2);box-shadow:0 4px 12px rgba(21,68,71,.045)}
+.btn.ghost:hover{background:var(--tint);border-color:var(--nd2);color:var(--nd)}
+.drop{border:1px dashed var(--nd2);border-radius:14px;padding:32px 18px;background:linear-gradient(145deg,var(--tint),var(--sunk))}
+.filerow{margin-top:14px;padding:12px 14px;border-radius:11px;background:var(--sunk)}
+.docview{border-radius:16px;padding:22px;background:linear-gradient(145deg,var(--sunk),var(--tint))}
+.sheet{border-radius:10px;box-shadow:0 14px 30px rgba(21,42,44,.10)}
+.hash-proof{background:linear-gradient(135deg,var(--panel),var(--tint));position:relative}
+.hash-proof:after{content:"";position:absolute;right:-32px;bottom:-42px;width:105px;height:105px;border:1px solid rgba(8,126,131,.10);border-radius:50%;box-shadow:0 0 0 14px rgba(8,126,131,.025)}
+.hash-proof-head{display:flex;align-items:flex-start;justify-content:space-between;gap:14px;margin-bottom:14px;position:relative;z-index:1}
+.hash-proof-head span{display:block;margin-bottom:4px;color:var(--nd);font-size:9px;font-weight:700;letter-spacing:.11em}.hash-proof-head h3{margin:0}
+.hash-proof-head>b{padding:5px 8px;border:1px solid rgba(8,126,131,.16);border-radius:8px;background:var(--nd-soft);color:var(--nd);font-size:9px}
+.hash-proof .hash{position:relative;z-index:1;padding:11px 12px;border:1px solid var(--rule);border-radius:10px;background:color-mix(in srgb,var(--panel) 78%,transparent);font-size:10.8px}
+.toast{border-radius:12px;background:#15343B;padding:12px 18px;box-shadow:0 10px 28px rgba(9,50,55,.25)}
+/* Product dashboard: more expressive hero and hierarchy */
+.lot-hero{gap:18px}
+.lot-main{position:relative;padding:30px 32px;background:linear-gradient(135deg,var(--panel) 0%,var(--tint) 100%);isolation:isolate}
+.lot-main:after{content:"";position:absolute;right:-72px;bottom:-105px;width:270px;height:270px;border:1px solid rgba(8,126,131,.14);border-radius:50%;box-shadow:0 0 0 24px rgba(8,126,131,.035),0 0 0 48px rgba(8,126,131,.025);z-index:-1}
+.proof-stack{position:absolute;right:34px;top:25px;width:68px;height:64px;opacity:.7;pointer-events:none}
+.proof-stack i{position:absolute;inset:0;border:1px solid rgba(8,126,131,.20);border-radius:13px;background:color-mix(in srgb,var(--panel) 72%,transparent);box-shadow:0 8px 20px rgba(8,126,131,.05)}
+.proof-stack i:nth-child(1){transform:translate(-18px,14px) rotate(-7deg);opacity:.45}.proof-stack i:nth-child(2){transform:translate(-9px,7px) rotate(-3deg);opacity:.7}
+.proof-stack span{position:absolute;inset:0;display:grid;place-items:center;color:var(--nd);font-family:"IBM Plex Mono",monospace;font-size:25px;font-weight:600}
+.lot-kicker{color:var(--nd);font-size:12px;letter-spacing:.02em}
+.lot-title h1{font-size:35px}
+.lot-sub{max-width:68ch}
+.lot-meta{margin-top:25px;padding-top:20px}
+.lot-meta span{font-size:12px}
+.verdict-card{padding:27px;background:linear-gradient(160deg,#17343A 0%,#0C626B 100%);border-color:#0C626B;box-shadow:0 14px 32px rgba(12,98,107,.2)}
+.verdict-card .eyebrow{color:#A9E5DE;letter-spacing:.12em;font-weight:700}
+.verdict-card .verdict{font-size:29px}
+.verdict-card .foot{color:#A9D4D3}
+.metric-grid{gap:14px}
+.metric{position:relative;padding:21px 22px;border-radius:16px}
+.metric:before{content:"";position:absolute;left:0;right:0;top:0;height:3px;background:linear-gradient(90deg,var(--nd2),transparent);opacity:.72}
+.metric .label{font-size:12.5px;font-weight:600}
+.metric .value{font-weight:700}
+.metric.alert{border-color:#E8C1B7;background:linear-gradient(145deg,var(--panel),var(--div-soft))}
+.assurance-strip{display:grid;grid-template-columns:minmax(210px,.55fr) minmax(0,1.7fr);align-items:center;gap:22px;margin:16px 0;padding:18px 22px;border:1px solid color-mix(in srgb,var(--nd) 18%,var(--rule));border-radius:17px;background:linear-gradient(110deg,#153A41 0%,#0A6970 48%,#087E83 100%);color:#fff;box-shadow:0 14px 30px rgba(10,105,112,.15);overflow:hidden;position:relative}
+.assurance-strip:after{content:"";position:absolute;width:210px;height:210px;right:-90px;top:-95px;border:1px solid rgba(255,255,255,.13);border-radius:50%;box-shadow:0 0 0 23px rgba(255,255,255,.035)}
+.assurance-copy{position:relative;z-index:1}.assurance-copy span{display:block;margin-bottom:5px;color:#9EE0DA;font-size:9.5px;font-weight:700;letter-spacing:.12em}.assurance-copy b{font-size:14px;line-height:1.35}
+.assurance-flow{display:grid;grid-template-columns:1fr auto 1fr auto 1fr;align-items:center;gap:12px;position:relative;z-index:1}
+.assurance-flow>div{display:flex;align-items:flex-start;gap:9px}.assurance-flow i{flex:none;width:25px;height:25px;display:grid;place-items:center;border:1px solid rgba(255,255,255,.22);border-radius:8px;background:rgba(255,255,255,.09);color:#A8E8E1;font-family:"IBM Plex Mono",monospace;font-size:9px;font-style:normal}
+.assurance-flow span{min-width:0}.assurance-flow b{display:block;font-size:11px}.assurance-flow small{display:block;margin-top:3px;color:#B5D7D7;font-size:9.5px;line-height:1.4}.assurance-flow em{color:#70C7C3;font-style:normal}
+.correlation-layout{display:grid;grid-template-columns:minmax(0,1.55fr) minmax(300px,.62fr);gap:16px;margin-top:16px;align-items:stretch}
+.correlation-card{padding:24px 26px;overflow-x:auto}
+.section-eyebrow{display:block;margin-bottom:5px;color:var(--nd);font-size:9px;font-weight:700;letter-spacing:.13em}.correlation-card .section-title h2 .mono{color:var(--nd);font-size:.85em}
+.correlation-kpis{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:-2px 0 15px}.correlation-kpis span{padding:6px 9px;border:1px solid var(--rule);border-radius:9px;background:var(--sunk);color:var(--mute);font-size:9.5px}.correlation-kpis b{color:var(--ink);font-size:10.5px}
+.correlation-graph{position:relative;min-width:600px;height:270px;border:1px solid var(--rule);border-radius:15px;overflow:hidden;background:radial-gradient(circle at 55% 40%,rgba(14,167,160,.10),transparent 37%),linear-gradient(rgba(8,126,131,.035) 1px,transparent 1px),linear-gradient(90deg,rgba(8,126,131,.035) 1px,transparent 1px),var(--sunk);background-size:auto,24px 24px,24px 24px,auto}
+.graph-lines{position:absolute;inset:0;width:100%;height:100%}.graph-lines path{fill:none;stroke-width:2;vector-effect:non-scaling-stroke}.graph-lines .verified{stroke:var(--nd2)}.graph-lines .candidate{stroke:var(--att);stroke-dasharray:5 6}
+.cg-node{position:absolute;display:flex;align-items:center;gap:8px;padding:9px 10px 9px 8px;border:1px solid rgba(8,126,131,.24);border-radius:12px;background:color-mix(in srgb,var(--panel) 94%,transparent);box-shadow:0 8px 20px rgba(21,68,71,.10);white-space:nowrap}
+.cg-node>i{width:25px;height:25px;display:grid;place-items:center;border-radius:8px;background:linear-gradient(145deg,var(--nd2),var(--nd));color:#fff;font-family:"IBM Plex Mono",monospace;font-size:9px;font-style:normal}.cg-node>span{display:flex;flex-direction:column}.cg-node small{color:var(--nd);font-size:7.5px;font-weight:700;letter-spacing:.08em}.cg-node b{font-size:10.5px}.cg-node em{color:var(--mute);font-size:7.8px;font-style:normal}
+.cg-node.pending{border-color:var(--att);border-style:dashed;background:var(--att-soft)}.cg-node.pending>i{background:var(--att);}.cg-node.pending small{color:var(--att)}
+.n-origin{left:3%;top:16%}.n-transport{left:21%;top:57%}.n-process{left:45%;top:46%}.n-lab{left:63%;top:8%}.n-dest{right:3%;top:57%}
+.graph-legend{position:absolute;left:14px;bottom:12px;display:flex;gap:14px;color:var(--mute);font-size:8.5px}.graph-legend span{display:flex;align-items:center;gap:5px}.graph-legend i{display:block;width:18px;height:2px;background:var(--nd2)}.graph-legend i.dashed{height:0;background:none;border-top:2px dashed var(--att)}
+.graph-alert{display:flex;align-items:flex-start;gap:10px;margin-top:12px;padding:12px 14px;border:1px solid color-mix(in srgb,var(--att) 28%,var(--rule));border-radius:12px;background:linear-gradient(90deg,var(--att-soft),color-mix(in srgb,var(--panel) 70%,var(--att-soft)));font-size:11px}.graph-alert>span{color:var(--att)}.graph-alert b{font-size:11px}.graph-alert p{margin:3px 0 7px;color:var(--ink2);line-height:1.5}
+.verification-card{padding:24px;display:flex;flex-direction:column;background:linear-gradient(155deg,var(--panel),var(--tint))}
+.run-head{display:flex;align-items:flex-start;justify-content:space-between;gap:12px}.run-head span{display:block;margin-bottom:5px;color:var(--nd);font-size:9px;font-weight:700;letter-spacing:.12em}.run-head h2{margin:0;font-size:17px}.run-head>i{width:10px;height:10px;border-radius:50%;background:var(--ok);box-shadow:0 0 0 5px var(--ok-soft)}
+.run-id{display:grid;grid-template-columns:1fr auto;gap:2px 8px;margin:18px 0;padding:11px 12px;border:1px solid var(--rule);border-radius:11px;background:color-mix(in srgb,var(--panel) 75%,transparent)}.run-id span{color:var(--mute);font-size:9px}.run-id b{color:var(--nd);font-size:10px}.run-id small{grid-column:1/-1;color:var(--mute);font-size:9px}
+.verification-score{display:flex;align-items:flex-end;gap:7px;margin:2px 0 10px}.verification-score b{color:var(--nd);font-family:"IBM Plex Mono",monospace;font-size:30px;line-height:1}.verification-score span{padding-bottom:3px;color:var(--mute);font-size:10px}
+.verification-list{display:grid;gap:9px;margin:16px 0}.verification-list div{display:flex;justify-content:space-between;gap:12px;font-size:10.5px}.verification-list span{color:var(--mute)}
+.trust-note{margin-top:auto;padding:12px 13px;border-left:3px solid var(--nd);border-radius:0 10px 10px 0;background:var(--nd-soft)}.trust-note b{font-size:10.5px}.trust-note p{margin:4px 0 0;color:var(--ink2);font-size:9.5px;line-height:1.5}
+.correlation-banner{display:grid;grid-template-columns:auto 1fr auto;align-items:center;gap:18px;margin:0 0 14px;padding:15px 18px;border:1px solid color-mix(in srgb,var(--nd) 20%,var(--rule));border-radius:15px;background:linear-gradient(110deg,var(--tint),var(--panel));box-shadow:0 8px 24px rgba(21,68,71,.045)}
+.correlation-banner>div:first-child{display:flex;flex-direction:column}.correlation-banner>div:first-child span{color:var(--nd);font-size:8px;font-weight:700;letter-spacing:.11em}.correlation-banner>div:first-child b{font-size:14px}.correlation-banner p{margin:0;padding-left:18px;border-left:1px solid var(--rule);color:var(--ink2);font-size:10.5px;line-height:1.5}.correlation-banner p strong{color:var(--ink)}
+.banner-stat{display:flex;align-items:center;gap:7px;padding:8px 10px;border-radius:10px;background:var(--nd-soft);color:var(--nd)}.banner-stat b{font-family:"IBM Plex Mono",monospace;font-size:20px}.banner-stat span{font-size:8.5px;line-height:1.35}
+.custody,.evidence-card,.balance-card{padding:24px 26px}
+.custody-step .dot{border-radius:10px}
+.custody-step.done .dot{background:linear-gradient(145deg,var(--nd2),var(--nd));border-color:var(--nd)}
+.quiet-warning{border-radius:12px;background:linear-gradient(90deg,var(--att-soft),color-mix(in srgb,var(--att-soft) 35%,var(--panel)));border-color:#E7D5A8}
+.source-mark{display:inline-flex;align-items:center;padding:3px 6px;margin-right:5px;border-radius:6px;font-family:"IBM Plex Mono",monospace;font-size:7.5px;letter-spacing:.06em;vertical-align:1px}.source-mark.arbit{background:rgba(146,108,27,.12);color:var(--att);box-shadow:inset 0 0 0 1px rgba(146,108,27,.16)}
+.evidence-score b{font-weight:700;color:var(--nd)}
+.progress{height:9px;background:var(--sunk)}
+.progress span{background:linear-gradient(90deg,var(--nd),var(--nd2))}
+.balance-result{border-radius:12px;background:linear-gradient(135deg,var(--div-soft),var(--panel));border:1px solid rgba(179,74,58,.13)}
+.calc-trace{display:grid;grid-template-columns:1fr auto 1fr auto 1fr auto 1fr auto 1fr;align-items:center;gap:10px;min-width:820px;margin-top:18px;padding-top:17px;border-top:1px solid var(--rule);overflow-x:auto}.calc-trace>div{display:flex;align-items:flex-start;gap:8px}.calc-trace i{flex:none;width:25px;height:25px;display:grid;place-items:center;border-radius:8px;background:var(--nd-soft);color:var(--nd);font-family:"IBM Plex Mono",monospace;font-size:8px;font-style:normal}.calc-trace span{display:flex;flex-direction:column}.calc-trace b{font-size:9.5px}.calc-trace small{margin-top:2px;color:var(--mute);font-size:8.5px;line-height:1.35}.calc-trace em{color:var(--rule2);font-style:normal}
+.product-details{border-radius:16px}
+.product-details summary{padding:20px 24px;background:linear-gradient(90deg,var(--panel),var(--sunk));font-weight:700}
+.product-details summary:after{width:28px;height:28px;display:grid;place-items:center;border-radius:9px;background:var(--nd-soft)}
+.product-details .details-body{padding:0 24px 24px}
+.version-chain{display:flex;align-items:center;gap:12px;margin:18px 0 12px;padding:14px 16px;border:1px solid var(--rule);border-radius:13px;background:var(--sunk);overflow-x:auto}.version-chain>div{min-width:145px;display:flex;align-items:center;gap:10px;padding:10px 12px;border:1px solid var(--rule);border-radius:11px;background:var(--panel)}.version-chain>div>i{width:28px;height:28px;display:grid;place-items:center;border-radius:8px;background:var(--pend-soft);color:var(--mute);font-family:"IBM Plex Mono",monospace;font-size:9px;font-style:normal}.version-chain span{display:flex;flex-direction:column}.version-chain b{font-size:9px}.version-chain small{color:var(--mute);font-size:8px}.version-chain em{color:var(--rule2);font-style:normal}.version-chain>div.current{border-color:var(--div);background:var(--div-soft)}.version-chain>div.current>i{background:var(--div);color:#fff}.version-chain>div.current b{color:var(--div)}
+.chart-grid{align-items:stretch}
+.chart-card{min-height:292px;position:relative}
+.chart-card h3{margin-bottom:3px}
+.chart-card .chart-sub{margin:0 0 14px;color:var(--mute);font-size:12px}
+.chart-wrap{height:205px;position:relative}
+.chart-wrap canvas{display:block;width:100%!important;height:100%!important}
+.chart-fallback{height:100%;display:grid;place-items:center;text-align:center;padding:18px;border:1px dashed var(--rule2);border-radius:12px;background:var(--sunk);color:var(--mute);font-size:12px}
+.chart-fallback b{display:block;color:var(--ink2);margin-bottom:4px}
+@media (prefers-reduced-motion:no-preference){
+  @keyframes ec-fade-up{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:translateY(0)}}
+  @keyframes ec-soft-in{from{opacity:0}to{opacity:1}}
+  @keyframes ec-breathe{0%,100%{box-shadow:0 5px 14px rgba(8,126,131,.10)}50%{box-shadow:0 8px 20px rgba(8,126,131,.19)}}
+  @keyframes ec-progress{from{transform:scaleX(0);transform-origin:left}to{transform:scaleX(1);transform-origin:left}}
+  @keyframes ec-route{to{stroke-dashoffset:-22}}
+  #view> *{animation:ec-fade-up .42s cubic-bezier(.22,.7,.25,1) both}
+  #view> .lot-hero{animation-delay:.03s}
+  #view> .metric-grid{animation-delay:.08s}
+  #view> .correlation-layout{animation-delay:.13s}
+  #view> .product-grid{animation-delay:.13s}
+  #view> .balance-card,#view> .product-details{animation-delay:.18s}
+  .brand-mark{animation:ec-breathe 4.8s ease-in-out infinite}
+  .brand:hover .brand-mark{animation:none;transform:rotate(-4deg) scale(1.05)}
+  .panel{transition:transform .24s ease,box-shadow .24s ease,border-color .24s ease}
+  .panel:hover{transform:translateY(-2px);box-shadow:0 16px 36px rgba(21,68,71,.085),0 3px 8px rgba(21,68,71,.04)}
+  .lot-main:hover,.verdict-card:hover{transform:translateY(-3px)}
+  .metric-grid .metric:nth-child(1){animation:ec-fade-up .45s .10s both}
+  .metric-grid .metric:nth-child(2){animation:ec-fade-up .45s .15s both}
+  .metric-grid .metric:nth-child(3){animation:ec-fade-up .45s .20s both}
+  .metric-grid .metric:nth-child(4){animation:ec-fade-up .45s .25s both}
+  .custody-step .dot{transition:transform .22s ease,box-shadow .22s ease}
+  .custody-step:hover .dot{transform:translateY(-3px) scale(1.08);box-shadow:0 6px 14px rgba(8,126,131,.22)}
+  .progress span{transform-origin:left;animation:ec-progress .9s .28s cubic-bezier(.22,.7,.25,1) both}
+  .tag{transition:transform .18s ease,box-shadow .18s ease}
+  .tag:hover{transform:translateY(-1px);box-shadow:0 4px 10px rgba(8,126,131,.12)}
+  tbody tr{transition:background .16s ease,transform .16s ease}
+  tbody tr:hover{transform:translateX(2px)}
+  .product-details[open] .details-body{animation:ec-soft-in .25s ease both}
+  .graph-lines .candidate{animation:ec-route 2.8s linear infinite}
+  .cg-node{transition:transform .2s ease,box-shadow .2s ease}.cg-node:hover{transform:translateY(-2px);box-shadow:0 12px 24px rgba(8,126,131,.16)}
+}
+@media (prefers-reduced-motion:reduce){
+  html{scroll-behavior:auto}
+  *,*::before,*::after{animation-duration:.01ms!important;animation-iteration-count:1!important;transition-duration:.01ms!important}
+}
+@media(max-width:820px){
+  .rail{position:static;height:auto;padding:12px 10px;background:var(--panel)}
+  .trust-card{display:none}
+  .system-state{display:none}
+  .assurance-strip{grid-template-columns:1fr;padding:18px}
+  .correlation-banner{grid-template-columns:1fr}.correlation-banner p{padding:10px 0;border-left:0;border-top:1px solid var(--rule)}.banner-stat{justify-self:start}
+  main{padding:28px 16px 62px}
+}
+@media(max-width:700px){
+  .top{min-height:70px}
+  .brand-copy small{display:none}
+  .brand-copy strong{font-size:15px}
+  .rail nav button{padding-top:10px;padding-bottom:10px}
+  .lot-main{padding:24px 22px}
+  .lot-title h1{font-size:29px}
+  .proof-stack{display:none}
+  .assurance-flow{grid-template-columns:1fr;gap:12px}.assurance-flow em{display:none}
+  .custody,.evidence-card,.balance-card{padding:20px}
+}
 
-```solidity
-require(authorizedWallets[actorId][msg.sender], "UNAUTHORIZED_WALLET");
-```
+</style>
+</head>
+<body>
 
-The current contract defines a 365-day validity window for pending evidence. Expiration is derived from `createdAt + EVIDENCE_TTL`; no `EXPIRED` state is stored on-chain.
+<header class="top">
+  <button class="brand" id="home" title="Voltar ao início">
+    <span class="brand-mark" aria-hidden="true">
+      <svg width="38" height="38" viewBox="0 0 40 40" role="img">
+        <defs>
+          <linearGradient id="brandGradient" x1="8" y1="5" x2="32" y2="35" gradientUnits="userSpaceOnUse">
+            <stop stop-color="#13B8B0"/>
+            <stop offset="1" stop-color="#0B6372"/>
+          </linearGradient>
+        </defs>
+        <rect x="4" y="4" width="32" height="32" rx="11" fill="url(#brandGradient)" opacity=".13"/>
+        <path d="M16.2 8h7.6M18.1 8v7.1l-6.2 11.2a3.3 3.3 0 0 0 2.9 4.7h10.4a3.3 3.3 0 0 0 2.9-4.7l-6.2-11.2V8" fill="none" stroke="url(#brandGradient)" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/>
+        <path d="M13.4 23.5c2.1-1.1 3.6 1.2 5.6.1 2.2-1.2 3.7 1.4 6.1.1" fill="none" stroke="#13B8B0" stroke-width="1.8" stroke-linecap="round"/>
+        <path d="M25.9 12.2c1.4-1.5 2.7-1.7 3.9-1.3-0.5 1.5-1.5 2.4-3.1 2.4" fill="none" stroke="#0B6372" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+      </svg>
+    </span>
+    <span class="brand-copy"><strong>Explore<span>Chem</span></strong><small>rastreabilidade verificável</small></span>
+  </button>
+  <div class="system-state" aria-label="Sistema operacional e verificado">
+    <span class="live-dot"></span><span><b>Ambiente verificado</b><small>dados privados · provas públicas</small></span>
+  </div>
+  <div class="role-switch"><label for="roleSelector">Perfil ativo</label><select id="roleSelector" aria-label="Selecionar operador ou ator">
+    <option value="op">Operador</option>
+  </select></div>
+  <div class="wallet-area" id="walletArea"></div>
+  <div class="session" id="session" aria-label="Usuário autenticado"></div>
+</header>
 
-### Submission event
+<div class="shell">
+  <aside class="rail">
+    <nav id="nav"></nav>
+    <div class="trust-card">
+      <div class="trust-icon" aria-hidden="true">✓</div>
+      <div><b>Privacidade por arquitetura</b><p>Em produção, API e RLS entregam somente o recorte autorizado. Documentos e relações não vão para a cadeia.</p></div>
+      <span>Supabase/RLS → CRE/TEE → Blockchain</span>
+    </div>
+  </aside>
+  <main id="view"></main>
+</div>
 
-```solidity
-event EvidenceSubmitted(
-    bytes32 indexed evidenceId,
-    bytes32 indexed actorId,
-    address indexed submittedBy,
-    bytes32 evidenceHash,
-    uint64 createdAt
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="https://cdn.jsdelivr.net/npm/ethers@6.13.5/dist/ethers.umd.min.js"></script>
+
+<script>
+const SUPABASE_URL = "https://mnmflnqmohgsxgavwenn.supabase.co";
+const SUPABASE_PUBLISHABLE_KEY = "sb_publishable_va4nLJ-Uzw2KzYzdOel-hQ_Toeddk-1";
+const EXPLORERCHEM_CONTRACT_ADDRESS = "0xAfbE9a85bc94A7C895AE33e22B268049A7ea59F2";
+const supabaseClient = supabase.createClient(
+  SUPABASE_URL,
+  SUPABASE_PUBLISHABLE_KEY
 );
-```
-
-The event allows the CRE workflow to receive an `evidenceId` without attempting to iterate over contract mappings.
-
-The processing strategy is:
-
-1. event-driven through `EvidenceSubmitted`;
-2. backed by a deterministic queue of pending evidence;
-3. recovered by scheduled reconciliation if an event is missed;
-4. repeatable by explicit `evidenceId` after temporary failures.
-
-Evidence processing never depends on random selection.
-
----
-
-## 8. Data that never goes on-chain
-
-The following information is not published:
-
-```text
-company name and tax identifier
-actorType
-
-originActor and originSite
-destinationActor and destinationSite
-carrierActor
-
-lotId
-documentRef
-evidenceType
-
-PDF files, reports, invoices, and attachments
-mass, concentration, assay, and composition
-commercial and logistical details
-
-correlationGroupId
-transferId
-relationId
-verified graph edges
-
-credentials
-private result and input salts
-private endpoints
-access-control relationships
-```
-
-There is no on-chain `metadataHash`. The original `evidenceHash` remains the
-unsalted hash of the exact document bytes. Private salts ARE used for
-`resultHash` and `aggregateInputHash`; those salted commitments are described
-in Section 17. Neither salt nor its private manifest is sent on-chain.
-
----
-
-## 9. Private storage
-
-ExploreChem uses two private storage layers.
-
-### Structured database
-
-The database stores searchable data such as:
-
-- `evidenceId` and `actorId`;
-- actor and evidence types;
-- origin, destination, and carrier identities;
-- operational sites;
-- `lotId` and `documentRef`;
-- document timestamp;
-- extractor version;
-- internal processing state;
-- permissions by company, transfer, lot, and result;
-- private correlation groups and transfers;
-- verified graph edges;
-- correlation-policy version;
-- workflow runs, locks, and idempotency keys.
-
-### Private file storage
-
-Private file storage contains:
-
-- original PDFs and documents;
-- laboratory attachments;
-- generated manifests;
-- mass-balance reports;
-- supporting incident records.
-
-Access requires authentication, authorization, auditing, temporary URLs, retention rules, and protection appropriate to the documents.
-
-`lotId` remains readable to authorized ExploreChem infrastructure because it must be searchable for correlation. It is never published directly on-chain.
-
----
-
-## 10. Why there is no metadataHash
-
-The fields used for correlation are extracted from the document already committed by `evidenceHash`.
-
-For example:
-
-- an invoice contains sender, recipient, product, quantity, and document reference;
-- a transport record contains origin, destination, lot, pickup, and delivery information;
-- a laboratory report contains the analyzed lot and measurement results.
-
-```text
-original document
-→ evidenceHash anchored on-chain
-→ TEE retrieves the original document
-→ TEE recalculates evidenceHash
-→ recalculated hash equals on-chain hash
-→ metadata is extracted again from the verified source
-```
-
-A separate commitment over a small and predictable metadata set would be redundant in this model and could increase enumeration risk.
-
-### Mandatory condition
-
-This decision is valid only when correlation fields are extracted from the anchored document. A manually entered value, external API response, or independently calculated field is not proven merely because the document's `evidenceHash` is valid.
-
----
-
-## 11. Deterministic and versioned extraction
-
-A hash proves that a file did not change. It does not define how a field should be interpreted.
-
-Each evidence type therefore requires:
-
-- a mandatory-field schema;
-- normalization rules;
-- an extractor version;
-- validation rules;
-- handling for missing or ambiguous fields.
-
-Example:
-
-```text
-evidenceType: ORIGIN_AND_QUANTITY
-extractorVersion: 1
-
-required fields:
-- originActor
-- destinationActor
-- lotId
-- documentRef
-- timestamp
-- material
-- quantity
-```
-
-The TEE uses the registered extractor version to reproduce extraction. The extractor version is also committed in the private result manifest.
-
----
-
-## 12. Evidence states
-
-### `PENDING`
-
-The evidence has been anchored but does not yet have a validated correlation.
-
-### `MATCHED`
-
-`MATCHED` means that the CRE/TEE:
-
-1. found a potential counterparty or related evidence;
-2. retrieved the relevant private documents;
-3. recalculated their `evidenceHash` values;
-4. confirmed document integrity;
-5. extracted fields through deterministic and versioned rules;
-6. validated the relationship according to the current correlation policy.
-
-It does not merely mean that two records looked similar. It also does not prove that every statement in a document is physically true.
-
-### Internal off-chain states
-
-The private processing layer may distinguish:
-
-```text
-QUEUED
-VERIFYING_INTEGRITY
-WAITING_COUNTERPART
-PARSER_ERROR
-INTEGRITY_REJECTED
-RETRY_SCHEDULED
-REVIEW_REQUIRED
-CORRELATED
-```
-
-| Situation | Internal result | On-chain state |
-|---|---|---|
-| No valid counterparty | `WAITING_COUNTERPART` | remains `PENDING` |
-| Hash mismatch | `INTEGRITY_REJECTED` | remains `PENDING` |
-| Temporary API failure | `RETRY_SCHEDULED` | remains `PENDING` |
-| Ambiguous relationship | `REVIEW_REQUIRED` | remains `PENDING` |
-| Validated relationship | `CORRELATED` | becomes `MATCHED` |
-
-The contract does not use `UNMATCHED` or `FAILED` evidence states.
-
-Each on-chain confirmation handles one evidence ID, not an array. The CRE
-sender must submit each confirmation in a separate transaction. New documents
-receive new IDs and start as `PENDING`; existing `MATCHED` records stay
-`MATCHED` when their relationships are revalidated off-chain.
-
----
-
-## 13. CRE/TEE correlation workflow
-
-```mermaid
-flowchart TD
-    A[EvidenceSubmitted] --> B[Deterministic queue]
-    B --> C[Verify hash in TEE]
-    C --> D[Locate candidate group]
-    D --> E[Revalidate relationships]
-    E --> F[PENDING to MATCHED]
-```
-
-### Complete flow
-
-1. the CRE receives or deterministically selects a pending `evidenceId`;
-2. it reads the on-chain actor, submitter, hash, state, and deadline;
-3. it confirms that the contract accepted a submission from an authorized wallet;
-4. it fetches the private document through the ExploreChem API;
-5. the TEE recalculates `evidenceHash`;
-6. metadata is extracted again with the versioned extractor;
-7. private indices narrow the candidate set;
-8. candidate documents are also retrieved and hash-verified;
-9. relationships are validated with a versioned correlation policy;
-10. groups, transfers, verified edges, and the workflow run are persisted privately;
-11. an individual approved verdict is sent through the authorized forwarder;
-12. the evidence changes from `PENDING` to `MATCHED`.
-
-Discovery metadata may include:
-
-```text
-actorId
-actorType
-evidenceType
-originActor
-originSite
-destinationActor
-destinationSite
-carrierActor
-lotId
-documentRef
-timestamp
-```
-
-These fields narrow the search. They are not a substitute for document verification and relationship validation.
-
----
-
-## 14. Private correlation graph
-
-The project does not use the name `token` for correlation. In a blockchain project, that word could be mistaken for an ERC-20, NFT, access credential, or transferable asset.
-
-The private model separates four identifiers:
-
-| Identifier | Fictional example | Purpose |
-|---|---|---|
-| `correlationGroupId` | `CR-7742` | Groups one connected material-chain component |
-| `transferId` | `TR-01` | Identifies one transfer or delivery |
-| `relationId` | `REL-004` | Identifies one verified edge between evidence records |
-| `workflowRunId` | `CRE-20260905-0918-0042` | Identifies the execution that performed validation |
-
-```text
-CR-7742
-├── TR-01: miner → carrier → processor
-├── AN-01: processor → laboratory
-└── TR-02: processor → carrier → manufacturer
-```
-
-A new evidence record receives the same `correlationGroupId` when it belongs to the same validated material component. A new movement inside that component receives a new `transferId`. A disconnected material chain receives a different group.
-
-### Verified edges
-
-Group membership alone is not sufficient. ExploreChem also stores why evidence records are connected:
-
-```text
-relationId: REL-001
-fromEvidenceId: EV-2026-0148
-toEvidenceId: EV-2026-0153
-relationType: ORIGIN_CUSTODY
-transferId: TR-01
-correlationPolicyVersion: correlation-1.2
-workflowRunId: CRE-20260905-0918-0042
-verifiedAt: 2026-09-05T09:18:00Z
-```
-
-Planned relationship types include:
-
-- `ORIGIN_DESTINATION`;
-- `ORIGIN_CUSTODY`;
-- `CUSTODY_DESTINATION`;
-- `MATERIAL_ANALYSIS`;
-- `TRANSFORMATION_INPUT`;
-- `TRANSFORMATION_OUTPUT`;
-- `RECYCLING`;
-- `RETURN`;
-- `DOCUMENT_REPLACEMENT`.
-
-The graph must support one-to-one, one-to-many, many-to-one, and many-to-many relationships. Splits, consolidation, mixing, recycling, and returns cannot be forced into a strictly linear model.
-
-### Trust rule
-
-> `correlationGroupId` accelerates discovery. It does not grant trust, access, or validity. Every relevant relationship is revalidated by the CRE/TEE.
-
-If a database administrator changes or deletes a group, the CRE can reconstruct
-it from available hash-verified documents and versioned rules. The group
-identifier is an index and cache, not a source of truth. Reconstruction still
-requires access to the documents and a recovery path independent of group
-membership. Hashes do not restore deleted documents or prove that a database
-returned every eligible candidate; availability, backups and completeness
-checks remain infrastructure and workflow responsibilities.
-
-`correlationGroupId`, transfers, edges, and the commercial graph remain off-chain.
-
-### Cycles and large groups
-
-Returns and recycling may create graph cycles. Each run therefore maintains:
-
-- a set of visited `evidenceIds`;
-- a maximum traversal depth;
-- a maximum number of evidence records per run;
-- paginated continuation for large groups.
-
----
-
-## 15. Carrier and chain of custody
-
-The carrier confirms physical movement between sender and recipient. The data model separates:
-
-```text
-originActorId
-destinationActorId
-carrierActorId
-```
-
-Transport evidence may contain:
-
-- pickup location, time, and mass;
-- delivery location, time, and mass;
-- lot and document reference;
-- people responsible for pickup and delivery;
-- damage, spillage, moisture, loss, or rejection;
-- explanation and supporting evidence for an incident.
-
-Example: a carrier picks up 1,000 kg and delivers 985 kg. The missing 15 kg cannot silently disappear. It becomes a custody difference that must be classified, documented, and handled by the mass-balance policy.
-
-### Double-counting rule
-
-The carrier's quantity normally confirms the same physical flow declared by the sender and recipient. It is not added as a new mass flow.
-
-| Evidence role | Calculation behavior |
-|---|---|
-| Physical input flow | Adds elemental mass |
-| Physical output flow | Subtracts elemental mass |
-| Inventory | Enters according to its temporal position |
-| Transport | Confirms custody and differences; does not duplicate the flow |
-| Laboratory | Supplies assay, composition, or measurement |
-| Commercial document | Confirms the business relationship |
-| Transformation | Connects inputs, products, rejects, and effluents |
-
----
-
-## 16. Mass-balance workflow
-
-The corrected contract receives both logical report types through `onReport`:
-an individual evidence confirmation or an individual partner balance result.
-One authorized workflow may perform both responsibilities. A distinct balance
-workflow ID is optional, not a requirement for two independent CRE systems.
-
-Mass balance is calculated **by lot**, not by a generic reconciliation period.
-
-The workflow never trusts a previously stored group by itself:
-
-```text
-load candidate group
-→ confirm on-chain state and evidenceHash again
-→ revalidate the required graph edges
-→ classify physical and documentary evidence
-→ prevent double counting
-→ normalize mass, assay, units, and basis
-→ calculate balance by chemical element
-→ build a canonical private manifest
-→ generate private salts per partner and revision
-→ calculate resultHash and aggregateInputHash
-→ anchor each partner's new version in a separate transaction
-```
-
-### Balance states
-
-```solidity
-enum BalanceStatus {
-    NONE,
-    CONFORME,
-    DIVERGENTE,
-    NAO_ATESTADO
+async function testarSupabase() {
+  const { data, error } = await supabaseClient
+    .from("explorerchem_actors")
+    .select("id, actor_id, display_name, actor_type")
+    .limit(5);
+
+  if (error) {
+    console.error("Erro no Supabase:", error);
+    return;
+  }
+
+  console.log("Banco integrado com sucesso.");
+  console.log("Dados recebidos:", data);
 }
-```
 
-- `CONFORME`: the result satisfies the defined rules and tolerances;
-- `DIVERGENTE`: an objective calculation inconsistency exists;
-- `NAO_ATESTADO`: the available evidence is insufficient to attest the balance.
+testarSupabase();
+/* ===================================================================
+   Dados da aplicação.
+   =================================================================== */
+/* ===================================================================
+   Dados da aplicação.
+   Vazios por padrão: preencha a partir da API do ExploreChem.
+   Nenhum valor de demonstração permanece neste arquivo.
+   =================================================================== */
 
-`NONE` is only the empty storage value. The balance does not reuse an evidence `FAILED` state.
+/* Lote em exibição. null enquanto nada foi carregado. */
+let LOTE=null;
 
----
+/* Balanço por elemento. Cada item precisa de:
+   e, nome, entrada, i0, saida, i1, sigma, k  — massas em mg de elemento. */
+let ELEMENTOS=[];
 
-## 17. Minimal private result per actor
-
-The contract records one result per actor and revision. Even when two partners
-share the same underlying balance, they receive different public commitments
-through different cryptographically random private salts.
-
-```solidity
-struct BalanceResult {
-    bytes32 resultId;
-    bytes32 actorId;
-    bytes32 resultHash;
-    bytes32 previousResultId;
-    bytes32 aggregateInputHash;
-    BalanceStatus status;
-    uint32 calculationVersion;
-    uint64 createdAt;
+/* Participantes cadastrados: id, nome, papel, praca, evid, desde, carteiras. */
+let ATORES=[];
+let ATOR_ATIVO=null;
+let ATORES_CARREGADOS=false;
+const actorTypeLabel={MINER:"Minerador",CARRIER:"Transportadora",LABORATORY:"Laboratório",PROCESSOR:"Processador",REFINER:"Purificador",RECYCLER:"Reciclador",MANUFACTURER:"Fabricante",OTHER:"Outro"};
+function roleForActor(actor){
+  const papel=actor&&String(actor.papel||"").toLowerCase();
+  if(papel.includes("transport")) return "transp";
+  if(papel.includes("laborat")) return "lab";
+  if(papel.includes("fabric")) return "cli";
+  return "forn";
 }
-```
-
-### Three different commitments
-
-| Field | What it commits to | Salt |
-| --- | --- | --- |
-| `evidenceHash` | Exact original document bytes | None; immutable after submission |
-| `aggregateInputHash` | Canonical private set of calculation inputs, including evidence IDs, document hashes and relevant versions | Fresh private input salt per partner and revision |
-| `resultHash` | Canonical private result manifest | Fresh private result salt per partner and revision |
-
-The term `privateNonce` in earlier project material means this private random
-salt; it is not a public transaction nonce. Use independent 32-byte
-cryptographically secure salts for input and result commitments, with distinct
-hash domains. Do not derive salts only from actor IDs, time or lot references.
-
-For each commitment, hash a versioned, unambiguous encoding of the domain,
-chain ID, registry address, actor ID, result revision, canonical private
-manifest hash and private salt. The same computed hash is saved in Supabase
-and on-chain. The private salt and manifest remain under access control and
-are provided only to authorized verifiers who need to reproduce the hash.
-Keep the same salts and hashes for a retry of the same result; use fresh salts
-for a new revision.
-
-Different salts prevent an identical balance or input set from becoming a
-shared public hash across partners. The contract cannot inspect salts or
-enforce their quality; the authenticated workflow must implement this rule.
-
-### Private result manifest
-
-The private manifest committed by `resultHash` includes:
-
-- `correlationGroupId`;
-- the result recipient's `actorId`;
-- deterministically ordered `evidenceIds`;
-- document `evidenceHash` values;
-- verified edges and relationship types;
-- normalized physical flows;
-- extractor versions;
-- correlation-policy version;
-- normalization-rule version;
-- algorithm and factor-table versions;
-- result revision (`calculationVersion`);
-- result by chemical element;
-- final state;
-- calculation time and the relevant lot snapshot;
-- `previousResultId`;
-- the reference to the private input manifest committed by `aggregateInputHash`.
-
-The group, evidence list, edges, quantities, calculations and salts remain
-private. The stored result contains `resultId`, `actorId`, `resultHash`,
-`previousResultId`, `aggregateInputHash`, status, revision and timestamp.
-
-### What aggregateInputHash does not prove by itself
-
-`aggregateInputHash` commits to the inputs without listing them publicly.
-The contract cannot derive the evidence list from that hash or check whether
-the hidden inputs were `MATCHED`. The authorized CRE/TEE must verify document
-hashes, re-extract and validate relationships, check input eligibility and
-completeness, prevent double counting, and perform the calculation.
-
-This is an explicit trust boundary of ExploreChem, not a claim that the
-contract independently verifies the private computation. Authentication of a
-workflow is not proof that its rules or implementation are correct.
-
-### Individual reports and transactions
-
-Each `onReport` invocation accepts one evidence confirmation OR one partner
-balance result. No arrays of evidence IDs or partner results are accepted.
-The CRE sender must submit each invocation as a separate transaction, without
-a multicall or external batch combining partners. One record per contract
-call alone cannot prevent an external transaction from composing calls.
-
-The current `BalanceResultAnchored` event retains indexed `actorId`.
-The field supports public association with the registered actor; the stored
-`actorId` also lets the contract reject cross-actor history links. Removing
-the event index would remove a filtering shortcut, not hide the actor: the
-report calldata and `getResult` remain public.
-
----
-
-## 18. Append-only result history
-
-The DPP and mass balance evolve when newly validated evidence joins the graph:
-
-```text
-V1 = evidence A + B
-V2 = evidence A + B + C, previousResultId = V1
-V3 = evidence A + B + C + D, previousResultId = V2
-```
-
-Every revision receives a new `resultId`, a fresh pair of private salts and
-new `resultHash`/`aggregateInputHash` commitments. Earlier versions remain
-available and are never overwritten. Status may change between revisions.
-
-The corrected contract requires revision 1 for a new root and predecessor
-revision + 1 for an update. A predecessor must exist, belong to the same actor
-and have no successor yet. `nextResultId` records that successor and rejects
-forks of an already superseded revision. `calculationVersion` means result
-revision; algorithm versions are committed privately instead.
-
-One actor can have independent histories for different private balances.
-Because lots are not public, the backend/CRE must select the correct history
-and prevent duplicate roots for the same private balance.
-
-An evidence record already marked `MATCHED` does not automatically return to `PENDING`. Its document integrity and relationships may still be revalidated during a relevant run. If new evidence changes the graph or calculation, the CRE creates a new result version while preserving the previous history.
-
----
-
-## 19. Internal product experience
-
-### Actor registration
-
-The administrator enters company information, connects the wallet, creates the `actorId`, associates authorized wallets, and defines the operational role.
-
-### Evidence upload
-
-The supplier, laboratory, processor, carrier, or manufacturer uploads its own document. ExploreChem preserves the original bytes, calculates `evidenceHash`, and requests the authorized wallet to anchor the evidence as `PENDING`.
-
-### Private queue and correlation
-
-The authorized operator can monitor:
-
-- pending, verifying, correlated, and waiting evidence;
-- the private `correlationGroupId`;
-- the number of evidence records, actors, transfers, and relationships;
-- verified edges and the reason for each relationship;
-- policy version and `workflowRunId`;
-- the most recent revalidation time.
-
-The interface must make the trust rule explicit:
-
-> The group accelerates discovery. Every relationship was verified again during this run.
-
-### Lot dashboard
-
-The operator can inspect:
-
-- physical inputs and outputs;
-- initial and final inventory;
-- process and custody losses;
-- yield;
-- results by chemical element;
-- included and excluded evidence;
-- calculation version;
-- current `resultHash` and previous history;
-- `CONFORME`, `DIVERGENTE`, or `NAO_ATESTADO` state.
-
-### Document verification
-
-The original document is shown only to authorized users, together with:
-
-- issuing company;
-- document type;
-- related lot;
-- submission time;
-- `evidenceHash`;
-- evidence role in the calculation;
-- authorized relationships;
-- validation rule and version;
-- verification result.
-
-### Carrier view
-
-The carrier records pickup, delivery, and incidents. It does not see the complete graph or commercial documents from other stages.
-
-### Supplier view
-
-The supplier sees its evidence, assigned transfer, direct counterparty, and individual result. It does not automatically see the counterparty's subsequent customer.
-
-### Client portal
-
-The responsible company invites the client to a specific result. The client is the administrator of its restricted space and receives:
-
-- the shared result dashboard;
-- a provenance summary with protected identities when required;
-- the verifiable report;
-- the integrity proof;
-- download access.
-
-The client cannot upload evidence, access other lots, or receive the complete `correlationGroupId`. Full disclosure of supply-chain identities requires explicit authorization from the participating companies.
-
----
-
-## 20. End-to-end flow
-
-```mermaid
-flowchart TD
-    A[Register actor and wallets] --> B[Upload and evidenceHash]
-    B --> C[PENDING on-chain]
-    C --> D[CRE/TEE validates graph]
-    D --> E[Individual MATCHED verdict]
-    E --> F[Lot-based mass balance]
-    F --> G[resultHash per actor]
-    G --> H[Authorized dashboard and download]
-```
-
-The primary trigger is event-driven. Scheduled reconciliation is a recovery mechanism, while explicit retry by `evidenceId` handles temporary failures.
-
----
-
-## 21. Responsibility by layer
-
-| Layer | Responsibility |
-|---|---|
-| Blockchain | Actor/wallet authorization, immutable `evidenceHash`, minimal state, salted `resultHash` and `aggregateInputHash`, revision links and authenticated report acceptance |
-| ExploreChem | Registration, product experience, permissions, audit trail, and history |
-| Supabase/private API | Searchable metadata, lots, groups, transfers, edges, and workflow runs |
-| Private file storage | Original documents, manifests, attachments, and reports |
-| CRE/TEE correlation | Integrity, deterministic extraction, discovery, and relationship revalidation |
-| CRE/TEE mass balance | Evidence classification, double-counting prevention, calculation, and manifest generation |
-| DPP | Verifiable and versioned product or lot history |
-| Client portal | Read-only consultation and downloads for an authorized result |
-
----
-
-## 22. Privacy properties
-
-The design avoids directly publishing:
-
-- lot number;
-- commercial origin and destination;
-- explicit carrier/counterparty relationships and private company profiles;
-- `correlationGroupId`, `transferId`, and graph edges;
-- invoices, reports, and document references;
-- mass, assay, and composition;
-- the complete commercial graph.
-
-> Commercial documents, the explicit correlation graph, quantities and salts
-> remain private. Opaque participant identifiers and on-chain activity remain
-> public. ExploreChem does not promise full participant anonymity.
-
-The current model does not attempt to hide `lotId` from authorized infrastructure operators because the identifier must remain searchable for processing.
-
-Public `actorId`, `evidenceId`, transaction, and timing data may still permit frequency analysis and pseudonymous clustering. Therefore:
-
-- public identifiers must be opaque;
-- identifiers must not embed a tax number, lot, document number, or company name;
-- correlated evidence receives individual on-chain confirmation;
-- partner results are submitted in separate transactions;
-- each partner and revision uses privately salted `resultHash` AND
-  `aggregateInputHash`, never a shared public input commitment.
-
-### Accepted MVP privacy boundary
-
-The design removes explicit multi-partner report lists and shared balance/input
-hashes. It does not eliminate traffic analysis: actor IDs, wallets, indexed
-events, history links and block times remain visible. Separate transactions
-may still be close in time or in the same block. Multiple workflows do not
-guarantee anonymity, and removing an application timestamp does not remove a
-block timestamp.
-
-`evidenceHash` remains unsalted, so identical original files produce identical
-public document hashes. This is separate from the salted balance commitments.
-
-These are acknowledged limitations of the MVP, not a claim of zero inference
-risk. Authentication and correctness of the authorized CRE/TEE workflow are
-central security requirements and must be tested accordingly.
-
----
-
-## 23. Integrity, consistency, and material truth
-
-ExploreChem distinguishes three properties.
-
-### Integrity
-
-The retrieved document has the same hash as the document originally anchored.
-
-### Consistency
-
-Independent documents contain compatible information about actors, lot, transport, receipt, analysis, or transformation.
-
-### Material truth
-
-The described physical event actually occurred.
-
-Blockchain, hashes, and the TEE support integrity and consistency. Material truth additionally depends on authorized issuers, signatures, audits, sensors, official sources, and external enforcement.
-
-`MATCHED` does not turn a document statement into absolute truth. It means integrity and correlation were approved under an identifiable policy version.
-
----
-
-## 24. Reliability and security requirements
-
-### Idempotency and concurrency
-
-The processing layer must use:
-
-- a temporary lock for each evidence record or correlation group;
-- a unique `workflowRunId`;
-- a fresh on-chain state check before submitting a report;
-- a unique constraint for the same edge, evidence pair, and policy version;
-- idempotent operations so retries cannot duplicate edges or results.
-
-### Canonicalization
-
-Before hashing, evidence identifiers and graph edges must use a deterministic
-order and a versioned serialization format. After canonicalization, use private
-random salts and distinct domains for result and input commitments to resist
-guessing from predictable data. Do not log or send salts in public calldata,
-events, frontend bundles or public repositories. Preserve private manifests
-and salts securely so authorized parties can reproduce past commitments.
-
-### Workflow authentication and private-input trust
-
-The contract accepts reports only from its configured forwarder and expected
-workflow ID. Reports fail closed while the primary workflow ID is unconfigured;
-zero no longer bypasses identity checks. An optional balance workflow ID may
-override the primary ID for result reports. Both report types use `onReport`.
-
-Salts provide no validation or authorization by themselves. The workflow must
-verify the anchored source documents and input eligibility each relevant run.
-This README does not claim an on-chain membership proof, zero-knowledge proof
-or independent contract-side verification of the hidden calculation.
-
-### Completed local contract checks
-
-The corrected contract passed 46 local checks using Solidity 0.8.26 and an
-in-process Ganache chain. Tests covered authorization, workflow validation,
-rejection of the old batch ABI, individual confirmations, salted-commitment
-fixtures, revision history and expiration. Optimized runtime size was 7,756
-bytes with 200 optimizer runs and the Paris EVM target.
-
-These checks are not Foundry/Slither/Mythril results, an independent audit,
-a live-network deployment or a real CRE/TEE end-to-end execution.
-
-### Planned validation
-
-Before the final presentation and any production use, the project is expected to undergo:
-
-- unit, integration, fuzz, and invariant testing with Foundry;
-- static analysis with Slither;
-- symbolic analysis with Mythril;
-- access-control and wallet-rotation review;
-- replay, idempotency, and concurrency tests;
-- altered, duplicated, missing, and ambiguous document tests;
-- split, consolidation, mixing, return, and recycling tests;
-- manifest canonicalization review;
-- calldata, event, endpoint, and privacy review;
-- final technical documentation review in English.
-
-Tool results will be published only after execution and human review. This README does not claim that an independent external audit has been completed.
-
----
-
-## 25. Current MVP status
-
-### Implemented in the current smart contract
-
-- minimal actor identity and multiple authorized wallets;
-- `evidenceHash` submission by an authorized wallet;
-- `NONE`, `PENDING`, and `MATCHED` evidence states;
-- derived 365-day expiration for pending evidence;
-- report delivery through an authorized forwarder;
-- a required primary workflow ID and an optional distinct balance workflow ID;
-- both individual report types routed through `onReport`;
-- individual correlation verdicts without a public counterparty list;
-- one balance result per actor per call, including `aggregateInputHash`;
-- `previousResultId`, sequential revisions and `nextResultId` for append-only history;
-- public verification functions for evidence and result hashes.
-
-### MVP architectural decisions being implemented
-
-- private document and metadata storage;
-- deterministic event-driven queue with recovery and retry;
-- private `correlationGroupId`, `transferId`, `relationId`, and `workflowRunId`;
-- storage and revalidation of graph edges;
-- visibility rules by actor, transfer, lot, and result;
-- evidence-role classification to prevent double counting;
-- canonical private result and input manifests with independent per-partner,
-  per-revision private salts;
-- CRE encoder updated to the corrected static report ABI and sender configured
-  to use separate transactions;
-- operator, supplier, carrier, and invited-client experiences.
-
-This distinction prevents planned architecture from being presented as completed functionality.
-
-## Current deployment
-
-The current contract is deployed on the Ethereum Sepolia testnet:
-
-| Contract | Address | Explorer |
-|---|---|---|
-| ExploreChemRegistry | `0xAfbE9a85bc94A7C895AE33e22B268049A7ea59F2` | [Sepolia Etherscan](https://sepolia.etherscan.io/address/0xAfbE9a85bc94A7C895AE33e22B268049A7ea59F2) |
-
-The frontend and staging CRE configuration use this address for testnet
-interactions. The contract was deployed with the Chainlink KeystoneForwarder
-for Ethereum Sepolia. Secrets, service-role keys and private salts are not
-included in the repository.
-
-## Demonstration
-
-Published application: [Open ExploreChem](https://armanfm.github.io/ExplorerChem/)
-
-The interface presents the authorized operator, supplier, carrier, and client
-experiences. Connect a wallet on Ethereum Sepolia to test the on-chain actions.
-The demonstration data shown in the interface is fictional.
-
-### Integration change
-
-The corrected `CREReport` is a static 288-byte ABI tuple in this order:
-
-```text
-uint8 reportType
-bytes32 evidenceId
-bytes32 resultId
-bytes32 actorId
-bytes32 resultHash
-bytes32 previousResultId
-bytes32 aggregateInputHash
-uint8 balanceStatus
-uint32 calculationVersion
-```
-
-Type 1 fills only `reportType = 1` and `evidenceId`; all result fields are
-zero. Type 2 uses `reportType = 2`, a zero `evidenceId`, and the result fields.
-Encode as `abi.encode(CREReport)`, not packed encoding. The old dynamic arrays
-are no longer compatible; regenerate frontend/backend ABI bindings and update
-the CRE encoder before integrating. These zero values are protocol values.
-
-The contract is not upgradeable. If an earlier version is already deployed,
-a new deployment is required, and historical records must remain associated
-with their original contract address and chain.
-
----
-
-## 26. Use of artificial intelligence
-
-The original ExploreChem idea, product vision, and core architectural direction were created by **Armando Freire and Jéssica**. After the team defined this foundation, **Claude**, **ChatGPT**, and **Manus** were used as supporting tools for refinement and development. Their assistance included:
-
-- architecture discussion and refinement;
-- documentation and copy review;
-- interface and user-experience suggestions;
-- assisted generation, explanation, and review of code;
-- identification of risks, inconsistencies, and test cases.
-
-These artificial-intelligence systems are not project team members, independent authors, or decision-makers. Every item incorporated into the official project — including architecture, business rules, documentation, interfaces, and code — is selected, adapted, reviewed, and approved by human team members.
-
-> ExploreChem's authorship and full responsibility for the product, code, documentation, technical decisions, and submitted claims belong to the project team.
-
-AI use is disclosed for transparency. It does not replace human review, testing, security analysis, or technical validation.
-
----
-
-## 27. Core principle
-
-> The blockchain does not need to know the commercial relationship. It needs to prove who submitted a document, which logical identity the submission belongs to, what content was committed at that moment, and which verifiable result was produced from authorized evidence.
-
-```text
-ExploreChem
-= private data + product experience + authorization
-
-CRE/TEE
-= integrity + revalidated correlation + mass balance
-
-Blockchain
-= identity + authorship + commitments + history
-
-DPP
-= verifiable evolution of a product or material lot
-```
-
----
-
-## 28. Team and authorship
-
-### Armando Freire — Technical Lead
-
-Responsible for technical leadership, software and system architecture, smart-contract development, Chainlink CRE/TEE workflow design, backend and blockchain integration, security planning, and technical documentation.
-
-### Jéssica — Product Lead
-
-Responsible for product leadership, problem framing, requirements, user experience, business validation, product communication, and presentation strategy.
-
-The original concept and product vision belong to Armando Freire and Jéssica. All final product decisions, source code, documentation, demonstrations, and submissions are reviewed and approved by the ExploreChem team. The team retains full authorship and responsibility for the project.
-
+function persistirAtoresLocais(){try{localStorage.setItem("explorechem_demo_actors",JSON.stringify(ATORES));}catch(e){}}
+function carregarAtoresLocais(){try{const saved=JSON.parse(localStorage.getItem("explorechem_demo_actors")||"[]");if(Array.isArray(saved))ATORES=saved;}catch(e){}}
+async function carregarAtores(){
+  carregarAtoresLocais();
+  try{const ativo=localStorage.getItem("explorechem_demo_active_actor");if(ativo&&ATORES.some(a=>a.id===ativo))ATOR_ATIVO=ativo;}catch(e){}
+  try{
+    const {data,error}=await supabaseClient.from("explorerchem_actors").select("id,actor_id,display_name,actor_type,country_code,created_at").order("created_at",{ascending:false});
+    if(!error&&Array.isArray(data)){
+      ATORES=data.map(a=>({dbId:a.id,id:a.actor_id,nome:a.display_name,papel:actorTypeLabel[a.actor_type]||a.actor_type,praca:a.country_code||"—",carteiras:1,evid:0,desde:a.created_at?new Date(a.created_at).toLocaleDateString("pt-BR"):"—"}));
+      try{const ativo=localStorage.getItem("explorechem_demo_active_actor");if(ativo&&ATORES.some(a=>a.id===ativo))ATOR_ATIVO=ativo;}catch(e){}
+      persistirAtoresLocais();
+    } else if(error) console.warn("Não foi possível carregar atores do Supabase:",error.message);
+  }catch(error){console.warn("Falha ao carregar atores:",error.message);}
+  ATORES_CARREGADOS=true;
+  if(document.readyState!=="loading") render();
+}
+function novoActorId(){
+  if(window.crypto&&typeof window.crypto.getRandomValues==='function'){
+    const bytes=new Uint8Array(32); window.crypto.getRandomValues(bytes);
+    return '0x'+Array.from(bytes).map(b=>b.toString(16).padStart(2,'0')).join('');
+  }
+  return '0x'+Array.from({length:32},()=>Math.floor(Math.random()*256).toString(16).padStart(2,'0')).join('');
+}
+
+/* Evidências do lote: id, ator, papel, doc, ref, corrente, base, status,
+   enviada, calculationRole, correlationGroupId e transferId. */
+let EVIDENCIAS=[];
+
+/* Evidências do participante autenticado: id, doc, ref, enviada, status, hash. */
+let MINHAS=[];
+
+/* Cadeia visível ao participante: [{nome, papel, self}] em ordem de custódia. */
+let CADEIA=[];
+
+/* Evidências da cadeia visível: {participante, doc, enviada, status, self}. */
+let CADEIA_EVIDENCIAS=[];
+
+/* Documento aberto na tela de verificação. Ver formato em T.documento. */
+let DOCUMENTO=null;
+
+/* Série do não contabilizado, em % da entrada, por versão do lote. */
+let SERIE=[];
+
+/* Catálogo de regras. O resultado de cada uma chega junto com o documento. */
+const CATALOGO_REGRAS=[
+  "Base da massa e base do teor coincidem",
+  "Temperatura de secagem entre 100 e 110 °C",
+  "Fórmula do óxido admitida para o elemento",
+  "Mesma versão da tabela de fatores em todas as correntes",
+  "Denominador de pureza igual a massa seca",
+  "Pesagem e amostragem de umidade no mesmo evento"
+];
+
+/* Derivados do balanço. Recalculados por recalcular(). */
+let conformes=0, divergentes=[], VEREDITO="NAO_ATESTADO";
+
+function recalcular(){
+  ELEMENTOS.forEach(x=>{
+    x.muf=(x.entrada+x.i0)-(x.saida+x.i1);
+    x.banda=x.k*x.sigma;
+    x.veredito=Math.abs(x.muf)<=x.banda?"CONFORME":"DIVERGENTE";
+    x.rel=x.entrada?x.muf/x.entrada*100:0;
+  });
+  conformes=ELEMENTOS.filter(x=>x.veredito==="CONFORME").length;
+  divergentes=ELEMENTOS.filter(x=>x.veredito==="DIVERGENTE");
+  VEREDITO=!ELEMENTOS.length?"NAO_ATESTADO":(divergentes.length?"DIVERGENTE":"CONFORME");
+}
+recalcular();
+
+/* Ponto de entrada para dados já filtrados pela API/RLS do Supabase.
+   O parâmetro role precisa corresponder ao perfil autenticado. A URL desta
+   maquete escolhe apenas o layout e nunca deve autorizar dados em produção.
+     carregar({role, lote, elementos, atores, evidencias, minhas,
+               cadeia, cadeiaEvidencias, documento, serie});          */
+function carregar(d){
+  d=d||{};
+  if(d.role!==role) throw new Error("Escopo de dados incompatível com o perfil autenticado.");
+  if("lote" in d) LOTE=d.lote;
+  if("elementos" in d) ELEMENTOS=d.elementos||[];
+  if("serie" in d) SERIE=d.serie||[];
+  if(role==="op"){
+    if("atores" in d) ATORES=d.atores||[];
+    if("evidencias" in d) EVIDENCIAS=d.evidencias||[];
+    if("documento" in d) DOCUMENTO=d.documento;
+  }
+  if(role==="forn"||role==="transp"){
+    if("minhas" in d) MINHAS=d.minhas||[];
+    if("cadeia" in d) CADEIA=d.cadeia||[];
+    if("cadeiaEvidencias" in d) CADEIA_EVIDENCIAS=d.cadeiaEvidencias||[];
+  }
+  recalcular();
+  render();
+}
+window.ExploreChem={carregar:carregar};
+
+const fmt=n=>n.toLocaleString("pt-BR");
+const sgn=n=>(n>0?"+":n<0?"−":"")+fmt(Math.abs(n));
+const pct=n=>n.toFixed(3).replace(".",",")+"%";
+const kg3=n=>(n/1000000).toLocaleString("pt-BR",{minimumFractionDigits:3,maximumFractionDigits:3});
+
+const NAVS={
+  op:[["lote","Visão do lote"],["evidencias","Evidências"],
+      ["documento","Documento e verificação"],["atores","Atores da cadeia"],
+      ["cadastro","Cadastrar ator"]],
+  forn:[["lote","Visão do lote"],["evidencias","Evidências"],["documento","Documento e verificação"],["atores","Atores da cadeia"],
+        ["enviar","Enviar evidência"],["minhas","Minhas evidências"],["cadeia","Minha cadeia"],["resultado","Resultado do lote"],["convidar","Convidar cliente"],["cadastro","Cadastro de atores"]],
+  lab:[["lote","Visão do lote"],["evidencias","Evidências"],["documento","Documento e verificação"],["atores","Atores da cadeia"],
+       ["analisar","Enviar análise"],["minhas","Minhas análises"],["cadeia","Minha cadeia"],["resultado","Resultado do lote"],["cadastro","Cadastro de atores"]],
+  transp:[["lote","Visão do lote"],["evidencias","Evidências"],["documento","Documento e verificação"],["atores","Atores da cadeia"],
+          ["entrega","Registrar transporte"],["minhas","Minhas evidências"],["cadeia","Minha cadeia"],["transferencia","Minha transferência"],["resultado","Resultado do lote"],["cadastro","Cadastro de atores"]],
+  cli:[["dashboard","Dashboard"]]};
+/* Sessão autenticada. Preencha com os dados reais do login. */
+let SESSION={
+  op:{iniciais:"—",nome:"Não autenticado",acesso:"Operação"},
+  forn:{iniciais:"—",nome:"Não autenticado",acesso:"Participante"},
+  lab:{iniciais:"—",nome:"Não autenticado",acesso:"Laboratório"},
+  transp:{iniciais:"—",nome:"Não autenticado",acesso:"Transportadora"},
+  cli:{iniciais:"—",nome:"Não autenticado",acesso:"Convidado"}
+};
+
+const roleSolicitada=new URLSearchParams(window.location.search).get("role");
+let role=["op","forn","lab","transp","cli"].includes(roleSolicitada)?roleSolicitada:"op";
+let page=NAVS[role][0][0];
+let walletAddress="";
+let walletChainId="";
+const $=s=>document.querySelector(s);
+let chartInstances=[];
+function getWalletProvider(){
+  const providers=window.ethereum&&window.ethereum.providers;
+  if(Array.isArray(providers)) return providers.find(p=>p.isMetaMask)||providers[0];
+  return window.ethereum;
+}
+
+function chartTheme(){
+  const styles=getComputedStyle(document.documentElement);
+  return {ink:styles.getPropertyValue("--ink").trim(),mute:styles.getPropertyValue("--mute").trim(),
+    rule:styles.getPropertyValue("--rule").trim(),nd:styles.getPropertyValue("--nd").trim(),
+    nd2:styles.getPropertyValue("--nd2").trim(),soft:styles.getPropertyValue("--nd-soft").trim(),
+    ok:styles.getPropertyValue("--ok").trim(),div:styles.getPropertyValue("--div").trim()};
+}
+function chartFallback(id,title){
+  const canvas=$(id); if(!canvas) return;
+  const wrap=canvas.parentElement;
+  wrap.innerHTML='<div class="chart-fallback"><div><b>'+title+'</b>O gráfico ficará disponível quando a biblioteca visual carregar.</div></div>';
+}
+function renderCharts(){
+  chartInstances.forEach(c=>c.destroy()); chartInstances=[];
+  if(typeof Chart==="undefined"){
+    chartFallback("#trendChart","Tendência histórica");
+    chartFallback("#elementChart","Conservação por elemento");
+    return;
+  }
+  const c=chartTheme();
+  const common={responsive:true,maintainAspectRatio:false,animation:{duration:700,easing:"easeOutQuart"},
+    plugins:{legend:{display:false},tooltip:{backgroundColor:c.ink,titleFont:{family:"Manrope",weight:"700"},bodyFont:{family:"Manrope"},padding:10,cornerRadius:10}},
+    scales:{x:{grid:{display:false},ticks:{color:c.mute,font:{family:"Manrope",size:10,weight:"600"}}},y:{grid:{color:c.rule},ticks:{color:c.mute,font:{family:"IBM Plex Mono",size:10},callback:v=>v.toLocaleString("pt-BR")+"%"},beginAtZero:true}}};
+  const trend=document.getElementById("trendChart");
+  if(trend) chartInstances.push(new Chart(trend,{type:"line",data:{labels:["v1.0","v1.1","v1.2","v2.0","v2.1","atual"],datasets:[{data:SERIE,borderColor:c.nd,backgroundColor:c.soft,fill:true,tension:.38,pointRadius:3,pointHoverRadius:6,pointBackgroundColor:c.nd2,borderWidth:2}]},options:common}));
+  const element=document.getElementById("elementChart");
+  if(element) chartInstances.push(new Chart(element,{type:"bar",data:{labels:ELEMENTOS.map(x=>x.e),datasets:[{label:"Disponível",data:ELEMENTOS.map(x=>(x.entrada+x.i0)/1000000),backgroundColor:c.soft,borderColor:c.nd2,borderWidth:1,borderRadius:7},{label:"Contabilizado",data:ELEMENTOS.map(x=>(x.saida+x.i1)/1000000),backgroundColor:c.nd,borderColor:c.nd,borderWidth:1,borderRadius:7}]},options:{...common,plugins:{...common.plugins,legend:{display:true,position:"bottom",labels:{color:c.mute,usePointStyle:true,pointStyle:"circle",padding:14,font:{family:"Manrope",size:10,weight:"600"}}}},scales:{...common.scales,y:{...common.scales.y,ticks:{color:c.mute,font:{family:"IBM Plex Mono",size:10},callback:v=>v.toLocaleString("pt-BR")+" kg"}}}}}));
+}
+
+const shortWallet=address=>address?address.slice(0,6)+"…"+address.slice(-4):"";
+const networkName=chainId=>({"0xaa36a7":"Sepolia","0x1":"Ethereum","0x89":"Polygon"}[chainId]||"Rede "+chainId);
+
+function renderWallet(){
+  const area=$("#walletArea");
+  const atorAtivo=ATORES.find(a=>a.id===ATOR_ATIVO);
+  const actorBadge=atorAtivo?'<span class="actor-context" title="Identidade usada nesta demonstração"><b>Ator ativo</b> '+val(atorAtivo.nome)+' · '+val(atorAtivo.papel)+'</span>':'';
+  if(role==="cli"){
+    area.innerHTML=actorBadge+'<span class="readonly-state">Acesso somente leitura</span>';
+    return;
+  }
+  if(!walletAddress){
+    area.innerHTML=actorBadge+'<button class="wallet-connect" id="connectWallet" type="button" aria-label="Conectar carteira Web3">'+
+      '<svg width="16" height="16" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6.5h14a2 2 0 0 1 2 2v9H4a2 2 0 0 1-2-2v-11a2 2 0 0 1 2-2h12" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/><circle cx="16.5" cy="12" r="1" fill="currentColor"/></svg>'+ 
+      'Conectar carteira</button>';
+    $("#connectWallet").onclick=connectWallet;
+    return;
+  }
+  const correta=walletChainId==="0xaa36a7";
+  area.innerHTML=actorBadge+'<div class="wallet-state'+(correta?'':' wallet-warning')+'" title="Carteira conectada">'+
+    '<span class="wallet-network">'+networkName(walletChainId)+'</span>'+ 
+    '<span class="wallet-address">'+shortWallet(walletAddress)+'</span>'+ 
+    '<button type="button" class="wallet-logout" id="disconnectWallet">Logout</button></div>';
+  const disconnect=$("#disconnectWallet");
+  if(disconnect) disconnect.onclick=disconnectWallet;
+}
+
+async function connectWallet(){
+  const provider=getWalletProvider();
+  if(!provider){
+    toast("Nenhuma carteira Web3 foi detectada neste navegador.");
+    return;
+  }
+  try{
+    const contas=await provider.request({method:"eth_requestAccounts"});
+    walletAddress=contas[0]||"";
+    walletChainId=await provider.request({method:"eth_chainId"});
+    renderWallet();
+    toast(walletChainId==="0xaa36a7"?"Carteira conectada à Sepolia.":"Carteira conectada. Troque a rede para Sepolia antes de assinar.");
+  }catch(error){
+    toast("A conexão com a carteira não foi autorizada.");
+  }
+}
+
+async function restoreWallet(){
+  const provider=getWalletProvider();
+  if(!provider||role==="cli") return;
+  try{
+    const contas=await provider.request({method:"eth_accounts"});
+    walletAddress=contas[0]||"";
+    walletChainId=walletAddress?await provider.request({method:"eth_chainId"}):"";
+    renderWallet();
+  }catch(error){ renderWallet(); }
+}
+
+function disconnectWallet(){
+  walletAddress="";
+  walletChainId="";
+  renderWallet();
+  toast("Carteira desconectada desta sessão.");
+}
+
+async function refreshWalletChain(){
+  const provider=getWalletProvider();
+  if(!provider) return "";
+  walletChainId=await provider.request({method:"eth_chainId"});
+  renderWallet();
+  return walletChainId;
+}
+
+function toast(m){
+  document.querySelectorAll(".toast").forEach(t=>t.remove());
+  const t=document.createElement("div");
+  t.className="toast";t.setAttribute("role","status");t.textContent=m;
+  document.body.appendChild(t);setTimeout(()=>t.remove(),3200);
+}
+function vtag(v){
+  const m={CONFORME:"t-ok",DIVERGENTE:"t-div",NAO_ATESTADO:"t-att","NÃO ATESTADO":"t-att",MATCHED:"t-ok",PENDING:"t-pend"};
+  return '<span class="tag '+(m[v]||"t-pend")+'">'+v+'</span>';
+}
+const seta=d=>'<svg width="20" height="12" viewBox="0 0 20 12" aria-hidden="true">'+
+  '<path d="M0 6h16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"'+
+  (d?' stroke-dasharray="2 3"':'')+'/>'+
+  (d?'':'<path d="M12 2l4 4-4 4" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>')+
+  '</svg>';
+
+function sparkline(){
+  const max=Math.max.apply(null,SERIE)*1.3;
+  const pts=SERIE.map((v,i)=>[i/(SERIE.length-1)*100,100-(v/max)*100]);
+  const path=pts.map((p,i)=>(i?"L":"M")+p[0].toFixed(2)+" "+p[1].toFixed(2)).join(" ");
+  const last=pts[pts.length-1];
+  return '<svg class="chart" viewBox="0 0 100 100" preserveAspectRatio="none" role="img" '+
+    'aria-label="Não contabilizado nas versões do lote">'+
+    '<path d="'+path+' L100 100 L0 100 Z" fill="var(--nd-soft)"/>'+
+    '<path d="'+path+'" fill="none" stroke="var(--nd)" stroke-width="1.6" '+
+    'vector-effect="non-scaling-stroke" stroke-linejoin="round" stroke-linecap="round"/>'+
+    '<circle cx="'+last[0]+'" cy="'+last[1]+'" r="2.6" fill="var(--nd)" vector-effect="non-scaling-stroke"/></svg>';
+}
+function donut(p){
+  const r=42,c=2*Math.PI*r;
+  return '<div class="donut"><svg width="104" height="104" viewBox="0 0 108 108" role="img" aria-label="'+pct(p)+' contabilizado">'+
+    '<circle cx="54" cy="54" r="'+r+'" fill="none" stroke="var(--rule)" stroke-width="9"/>'+
+    '<circle cx="54" cy="54" r="'+r+'" fill="none" stroke="var(--nd)" stroke-width="9" stroke-linecap="round" '+
+    'stroke-dasharray="'+c+'" stroke-dashoffset="'+(c*(1-p/100))+'" transform="rotate(-90 54 54)"/></svg>'+
+    '<div><div class="val">'+pct(p)+'</div><div class="sm">da massa de entrada contabilizada nas saídas e no inventário</div></div></div>';
+}
+
+function heroIdentidade(){
+  const nd=ELEMENTOS[0];
+  return '<div class="identity"><div class="eqwrap"><div class="eq">'+
+    '<div class="t"><i>'+fmt(nd.entrada)+'</i><span>entradas</span></div><div class="op">+</div>'+
+    '<div class="t"><i>'+fmt(nd.i0)+'</i><span>inventário inicial</span></div><div class="op">−</div>'+
+    '<div class="t"><i>'+fmt(nd.saida)+'</i><span>saídas</span></div><div class="op">−</div>'+
+    '<div class="t"><i>'+fmt(nd.i1)+'</i><span>inventário final</span></div><div class="op">=</div>'+
+    '<div class="t res"><i>'+fmt(nd.muf)+'</i><span>não contabilizado</span></div>'+
+    '</div></div><div class="heroline">'+
+    '<span class="big">'+fmt(nd.muf)+'<span style="font-size:18px;font-weight:400"> mg</span></span>'+
+    '<span class="cap">de neodímio sem destino declarado, '+pct(Math.abs(nd.rel))+' da entrada</span>'+
+    vtag(nd.veredito)+'</div>'+
+    '<p class="note">Tudo em miligramas de elemento, base seca a 105 °C. Óxido é apresentação: '+
+    'nenhuma massa de óxido entra na identidade de conservação.</p></div>';
+}
+function avisoArbitrado(){
+  return '<div class="quiet-warning"><span aria-hidden="true">ⓘ</span><div><b><span class="source-mark arbit">ARBITRADO</span> Parâmetros de demonstração</b>'+ 
+    '<p>Esta simulação utiliza k = 3 e σ definido por elemento. Como o veredito depende desses valores, ele herda a marca arbitrada até que a política de tolerância seja aprovada, medida e versionada.</p></div></div>';
+}
+function avisoDivergente(){
+  if(!divergentes.length) return "";
+  const d=divergentes[0];
+  return '<div class="arb bad"><b>'+divergentes.map(x=>x.e).join(", ")+' fora da banda</b>'+
+    '<p>'+d.nome+' está em '+fmt(d.muf)+' mg contra uma banda de ± '+fmt(d.banda)+' mg. Somado à '+
+    'massa total do lote, esse excesso desapareceria na folga do neodímio. O lote abre '+
+    'janela de contestação.</p></div>';
+}
+function tabelaElementos(){
+  return '<div class="panel scrollx"><table><thead><tr><th>Elemento</th>'+
+    '<th class="num">Entradas + I₀</th><th class="num">Saídas + I₁</th>'+
+    '<th class="num">Não contabilizado</th><th class="num">Banda k·σ</th><th>Veredito</th></tr></thead><tbody>'+
+    ELEMENTOS.map(x=>'<tr><td><b>'+x.e+'</b> <span class="sm">'+x.nome+'</span></td>'+
+      '<td class="num">'+fmt(x.entrada+x.i0)+'</td><td class="num">'+fmt(x.saida+x.i1)+'</td>'+
+      '<td class="num">'+sgn(x.muf)+'</td><td class="num">± '+fmt(x.banda)+'</td>'+
+      '<td>'+vtag(x.veredito)+'</td></tr>').join("")+'</tbody></table></div>';
+}
+
+const T={};
+
+/* Estado vazio padrão. Toda tela mostra isto enquanto não houver dado. */
+function vazio(titulo,texto){
+  return '<div class="panel pad" style="text-align:center;padding:48px 24px">'+
+    '<b style="display:block;font-size:15px;margin-bottom:6px">'+titulo+'</b>'+
+    '<p style="margin:0;color:var(--ink2);max-width:52ch;margin-inline:auto">'+texto+'</p></div>';
+}
+function semLote(){
+  return vazio("Nenhum lote carregado",
+    "Carregue um lote para ver o balanço, as correntes, as correlações e a prova ancorada.");
+}
+const semDado='<span class="sm">—</span>';
+const val=(v,alt)=>v===undefined||v===null||v===""?(alt===undefined?semDado:alt):v;
+
+/* ---------------- Operação ---------------- */
+
+T.lote=()=>{
+  if(!LOTE||!ELEMENTOS.length) return semLote();
+  const nd=ELEMENTOS[0];
+  const g=LOTE.correlationGroup||{};
+  const run=LOTE.workflowRun||{};
+
+  return '<div class="crumb">Operação confidencial · lote <span class="mono">'+val(LOTE.lotId)+'</span></div>'+
+  '<section class="lot-hero"><div class="panel lot-main">'+
+  '<div class="proof-stack" aria-hidden="true"><i></i><i></i><i></i><span>#</span></div>'+
+  '<div class="lot-kicker"><span class="tag t-nd">GRUPO PRIVADO REVALIDADO</span> Balanço de massa'+
+  (LOTE.version?' · versão '+LOTE.version:'')+'</div>'+
+  '<div class="lot-title"><div><h1>'+val(LOTE.lotId)+'</h1>'+
+  '<p class="lot-sub">Balanço do lote entre t₀ e t₁. Entradas de origens '+
+  'distintas, saídas e inventários foram normalizados e recalculados a partir das evidências verificadas.</p></div>'+
+  '<button class="btn dl">Baixar relatório</button></div>'+
+  '<div class="lot-meta"><span>Responsável <b>'+val(LOTE.responsibleActor)+'</b></span>'+
+  '<span>Janela documental <b>'+val(LOTE.documentWindow)+'</b></span>'+
+  '<span>Cálculo <b class="mono">'+val(LOTE.calculationVersion)+'</b></span>'+
+  '<span>Resultado <b class="mono">'+val(LOTE.resultId)+'</b></span></div>'+
+  '</div><aside class="panel verdict-card"><div><span class="eyebrow">Resultado atual</span>'+
+  '<div class="verdict"><span class="status-dot"></span>'+VEREDITO+'</div>'+
+  '<p class="reason">'+(divergentes.length
+    ? divergentes.length+' de '+ELEMENTOS.length+' elementos está fora da tolerância: '+
+      divergentes.map(x=>x.nome).join(', ')+'. O lote permanece disponível para análise e contestação.'
+    : 'Todos os '+ELEMENTOS.length+' elementos estão dentro da tolerância declarada.')+'</p></div>'+
+  '<div class="foot"><span>Atualizado após nova evidência</span><b>'+val(LOTE.anchoredAt)+'</b></div></aside></section>'+
+
+  '<section class="metric-grid" aria-label="Resumo do balanço">'+
+  '<div class="panel metric"><span class="label">Massa elemental de '+nd.e+' disponível</span>'+
+  '<span class="value">'+kg3(nd.entrada+nd.i0)+'<span class="unit">kg de '+nd.e+'</span></span>'+
+  '<div class="hint">Σ entradas + I₀ · compromisso em mg inteiro</div></div>'+
+  '<div class="panel metric"><span class="label">Massa elemental de '+nd.e+' contabilizada</span>'+
+  '<span class="value">'+kg3(nd.saida+nd.i1)+'<span class="unit">kg de '+nd.e+'</span></span>'+
+  '<div class="hint">Σ saídas + I₁ · compromisso em mg inteiro</div></div>'+
+  '<div class="panel metric"><span class="label">'+nd.e+' não contabilizado</span>'+
+  '<span class="value">'+kg3(nd.muf)+'<span class="unit">kg de '+nd.e+'</span></span>'+
+  '<div class="hint">'+fmt(nd.muf)+' mg · '+pct(Math.abs(nd.rel))+' da entrada</div></div>'+
+  '<div class="panel metric'+(divergentes.length?' alert':'')+'"><span class="label">Elementos em revisão</span>'+
+  '<span class="value">'+divergentes.length+'<span class="unit">de '+ELEMENTOS.length+'</span></span>'+
+  '<div class="hint">'+(divergentes.length
+    ? divergentes.map(x=>x.nome).join(', ')+' excede a tolerância declarada'
+    : 'Nenhum elemento fora da tolerância')+'</div></div></section>'+
+
+  '<section class="assurance-strip" aria-label="Arquitetura de confiança">'+
+  '<div class="assurance-copy"><span>COMO A PROVA NASCE</span><b>Privado onde importa. Público onde comprova.</b></div>'+
+  '<div class="assurance-flow"><div><i>01</i><span><b>Documento original</b><small>Arquivo preservado no cofre privado</small></span></div><em>→</em>'+
+  '<div><i>02</i><span><b>Validação confidencial</b><small>Integridade, correlação e cálculo no CRE/TEE</small></span></div><em>→</em>'+
+  '<div><i>03</i><span><b>Prova versionada</b><small>Hashes e estados ancorados sem expor o negócio</small></span></div></div></section>'+
+
+  '<section class="correlation-layout"><div class="panel correlation-card">'+
+  '<div class="section-title"><div><span class="section-eyebrow">GRAFO CONFIDENCIAL</span>'+
+  '<h2>Grupo privado <span class="mono">'+val(g.correlationGroupId)+'</span></h2>'+
+  '<p>O identificador localiza candidatos; cada relação abaixo foi conferida novamente nesta execução.</p></div>'+
+  (g.edgeCount?'<span class="tag t-ok">'+g.edgeCount+' RELAÇÕES REVALIDADAS</span>':'')+'</div>'+
+  '<div class="correlation-kpis"><span><b>'+val(g.evidenceCount,0)+'</b> evidências</span>'+
+  '<span><b>'+val(g.actorCount,0)+'</b> atores</span>'+
+  '<span><b>'+val(g.physicalFlowCount,0)+'</b> correntes físicas</span>'+
+  '<span><b class="mono">'+val(g.correlationPolicyVersion)+'</b> política</span></div>'+
+  (g.nodes&&g.nodes.length
+    ? '<div class="panel scrollx" style="margin-top:14px"><table><thead><tr><th>Nó</th><th>Função</th>'+
+      '<th>Participante</th><th>Evidência</th><th>Estado</th></tr></thead><tbody>'+
+      g.nodes.map((n,i)=>'<tr><td class="mono">'+String(i+1).padStart(2,"0")+'</td>'+
+        '<td>'+val(n.funcao)+'</td><td>'+val(n.participante)+'</td>'+
+        '<td class="mono" style="font-size:12.5px">'+val(n.evidencia)+'</td>'+
+        '<td>'+vtag(val(n.estado,"PENDING"))+'</td></tr>').join("")+
+      '</tbody></table></div>'
+    : vazio("Grafo ainda não montado",
+        "Assim que houver evidências correlacionadas neste lote, os nós aparecem aqui."))+
+  (g.edges&&g.edges.length
+    ? '<h3 style="margin-top:20px">Arestas verificadas</h3><div class="panel scrollx"><table><thead><tr><th>relationId</th><th>De</th><th>Para</th><th>Tipo</th><th>transferId</th><th>Verificada em</th></tr></thead><tbody>'+
+      g.edges.map(e=>'<tr><td class="mono">'+val(e.relationId)+'</td><td class="mono">'+val(e.fromEvidenceId)+'</td><td class="mono">'+val(e.toEvidenceId)+'</td><td>'+val(e.relationType)+'</td><td class="mono">'+val(e.transferId)+'</td><td>'+val(e.verifiedAt)+'</td></tr>').join('')+
+      '</tbody></table></div>'
+    : vazio("Nenhuma aresta validada","As relações verificadas aparecem aqui com sua regra, transferência e última verificação."))+
+  '</div>'+
+  '<aside class="panel verification-card"><div class="run-head"><div><span>EXECUÇÃO CRE/TEE</span>'+
+  '<h2>'+val(run.title,"Sem execução registrada")+'</h2></div><i></i></div>'+
+  '<div class="run-id"><span>workflowRunId</span><b class="mono">'+val(run.workflowRunId)+'</b><small>'+val(run.executedAt)+'</small></div>'+
+  '<div class="verification-score"><b>'+val(run.confirmedEvidence,0)+'/'+val(run.totalEvidence,0)+'</b><span>evidências confirmadas</span></div>'+
+  '<div class="progress"><span style="width:'+(run.totalEvidence?Math.round((run.confirmedEvidence/run.totalEvidence)*100):0)+'%"></span></div>'+
+  '<div class="verification-list"><div><span>Integridade dos hashes</span><b>'+val(run.hashStatus)+'</b></div>'+
+  '<div><span>Relações rechecadas</span><b>'+val(run.revalidatedEdges)+'</b></div>'+
+  '<div><span>Política de correlação</span><b class="mono">'+val(g.correlationPolicyVersion)+'</b></div>'+
+  '<div><span>Versão do cálculo</span><b class="mono">'+val(LOTE.calculationVersion)+'</b></div></div>'+
+  '<div class="trust-note"><b>O grupo não é fonte de confiança</b><p>O identificador apenas acelera '+
+  'a descoberta. O CRE/TEE reabre os dados e valida cada aresta antes do cálculo.</p></div></aside></section>'+
+
+  '<section class="panel balance-card"><div class="section-title"><div>'+
+  '<span class="section-eyebrow">IDENTIDADE DE CONSERVAÇÃO</span>'+
+  '<h2>Balanço elemental · '+nd.nome+'</h2>'+
+  '<p>Unidade canônica: massa do elemento em miligramas inteiros. Óxido é apresentação e não entra '+
+  'na identidade.</p></div>'+vtag(nd.veredito)+'</div>'+
+  '<div class="balance-line"><div class="balance-item"><span>Σ entradas + I₀</span><b>'+fmt(nd.entrada+nd.i0)+' mg</b></div>'+
+  '<div class="balance-op">−</div><div class="balance-item"><span>Σ saídas + I₁</span><b>'+fmt(nd.saida+nd.i1)+' mg</b></div>'+
+  '<div class="balance-op">=</div><div class="balance-item balance-result"><span>MUF · não contabilizado</span>'+
+  '<b>'+fmt(nd.muf)+' mg</b></div></div>'+
+  '<div class="calc-trace"><div><i>00</i><span><b>Coerência de base</b><small>massa e teor compatíveis</small></span></div><em>→</em>'+
+  '<div><i>01</i><span><b>Normalização</b><small>base seca a 105 °C</small></span></div><em>→</em>'+
+  '<div><i>02</i><span><b>Conversão elementar</b><small>óxido para elemento</small></span></div><em>→</em>'+
+  '<div><i>03</i><span><b>Inteiro canônico</b><small>arredondamento único</small></span></div><em>→</em>'+
+  '<div><i>04</i><span><b>Decisão</b><small>|MUF| ≤ k·σ</small></span></div></div></section>'+
+
+  '<details class="panel product-details"><summary><div>Detalhamento por elemento'+
+  '<span>'+ELEMENTOS.map(x=>x.nome).join(', ')+'</span></div></summary>'+
+  '<div class="details-body">'+tabelaElementos()+avisoDivergente()+avisoArbitrado()+'</div></details>'+
+
+  '<details class="panel product-details"><summary><div>Correntes e bases de cálculo'+
+  '<span>Entradas, produto, rejeito e efluente usados nesta versão</span></div></summary>'+
+  '<div class="details-body">'+
+  (LOTE.physicalFlows&&LOTE.physicalFlows.length
+    ? '<div class="panel scrollx"><table><thead><tr><th>Corrente</th><th>Tipo</th><th>Base</th>'+
+      '<th class="num">Massa seca</th><th class="num">Elemento contido</th><th>Origem do valor</th></tr></thead><tbody>'+
+      LOTE.physicalFlows.map(c=>'<tr><td>'+val(c.nome)+'</td><td>'+val(c.tipo)+'</td>'+
+        '<td class="mono">'+val(c.base)+'</td><td class="num">'+val(c.massaSeca)+'</td>'+
+        '<td class="num">'+val(c.contido)+'</td><td>'+val(c.origem)+'</td></tr>').join("")+
+      '</tbody></table></div>'
+    : vazio("Nenhuma corrente declarada","As correntes físicas aparecem aqui quando as evidências correspondentes forem correlacionadas."))+
+  '</div></details>'+
+
+  '<details class="panel product-details"><summary><div>Prova blockchain e histórico'+
+  '<span>Resultado atual, versões anteriores e transação de ancoragem</span></div></summary>'+
+  '<div class="details-body">'+
+  (LOTE.versions&&LOTE.versions.length
+    ? '<div class="version-chain">'+LOTE.versions.map((v,i)=>
+        '<div'+(i===LOTE.versions.length-1?' class="current"':'')+'><i>'+val(v.label)+'</i>'+
+        '<span><b>'+val(v.status)+'</b><small class="mono">'+val(v.resultId)+
+        (i===LOTE.versions.length-1?' · ATUAL':'')+'</small></span></div>').join('<em>→</em>')+
+      '</div>'
+    : '')+
+  '<div class="panel pad"><dl class="kv">'+
+  '<dt>resultId atual</dt><dd class="mono">'+val(LOTE.resultId)+'</dd>'+
+  '<dt>resultHash atual</dt><dd class="mono">'+val(LOTE.resultHash)+'</dd>'+
+  '<dt>previousResultId</dt><dd class="mono">'+val(LOTE.previousResultId)+'</dd>'+
+  '<dt>Versão do cálculo</dt><dd class="mono">'+val(LOTE.calculationVersion)+'</dd>'+
+  '<dt>Ancorado em</dt><dd>'+val(LOTE.anchoredAt)+'</dd>'+
+  '<dt>Transação</dt><dd class="hash">'+val(LOTE.transactionHash)+'</dd></dl>'+
+  '<p class="note">O resultado atual foi adicionado ao histórico. A versão anterior continua '+
+  'disponível e não pode ser sobrescrita. O resultHash compromete o manifesto privado com '+
+  'evidenceIds ordenados, arestas, versões das regras, recorte do ator e privateNonce. Nenhum '+
+  'desses dados privados é publicado na transação.</p></div></div></details>';
+};
+
+T.evidencias=()=>{
+  const g=(LOTE&&LOTE.correlationGroup)||{};
+  const q=(LOTE&&LOTE.queue)||{};
+  return '<div class="crumb">Lote <span class="mono">'+(LOTE?val(LOTE.lotId):semDado)+'</span></div>'+
+  '<h1>Fila e correlação privada</h1><p class="sub">Cada documento entra como PENDING. O CRE/TEE '+
+  'confirma o hash, extrai novamente os dados do documento e valida as relações antes de marcar MATCHED.</p>'+
+  '<div class="stats" aria-label="Fila determinística">'+
+  '<div><span class="n mono">EvidenceSubmitted</span><span class="l">Gatilho principal</span></div>'+
+  '<div><span class="n">'+val(q.pendingCount,0)+'</span><span class="l">PENDING na fila</span></div>'+
+  '<div><span class="n">'+val(q.retryCount,0)+'</span><span class="l">Retries programados</span></div>'+
+  '<div><span class="n">'+val(q.lastRecoveryScan)+'</span><span class="l">Última varredura de recuperação</span></div></div>'+
+  '<p class="note">Processamento orientado por evento, fila determinística e varredura programada como fallback. '+
+  'Nenhuma evidência depende de escolha aleatória.</p>'+
+  (g.correlationGroupId?'<div class="correlation-banner"><div><span>correlationGroupId CANDIDATO</span><b class="mono">'+g.correlationGroupId+'</b></div>'+
+   '<p><strong>Descoberta acelerada, confiança recalculada.</strong> O grupo orienta a varredura; '+
+   'origem, destino, datas, referências e relações são conferidos novamente pelo CRE/TEE.</p>'+
+   '<div class="banner-stat"><b>'+val(g.edgeCount,0)+'</b><span>arestas revalidadas<br>nesta execução</span></div></div>':'')+
+  (EVIDENCIAS.length
+    ? '<div class="panel scrollx"><table><thead><tr><th>Evidência</th><th>Participante</th>'+
+      '<th>Documento</th><th>Função no cálculo</th><th>transferId</th><th>correlationGroupId</th><th>Estado</th></tr></thead><tbody>'+
+      EVIDENCIAS.map(e=>'<tr><td class="mono" style="font-size:12.5px">'+val(e.id)+'<div class="sm">'+val(e.enviada)+'</div></td>'+
+        '<td>'+val(e.ator)+'<div class="sm">'+val(e.papel)+'</div></td>'+
+        '<td>'+val(e.doc)+'<div class="sm mono">'+val(e.ref)+'</div></td><td>'+val(e.calculationRole)+'</td>'+
+        '<td class="mono" style="font-size:12px">'+val(e.transferId)+'</td>'+
+        '<td class="mono" style="font-size:12px">'+val(e.correlationGroupId)+'</td><td>'+vtag(val(e.status,"PENDING"))+'</td></tr>').join("")+
+      '</tbody></table></div>'
+    : vazio("Nenhuma evidência registrada",
+        "Quando um participante enviar um documento, ele aparece aqui como pendente até a correlação ser validada."))+
+  (g.edges&&g.edges.length
+    ? '<h2>Arestas verificadas</h2><div class="panel scrollx"><table><thead><tr><th>relationId</th><th>Evidência A</th><th>Evidência B</th><th>Relação</th><th>transferId</th><th>Política</th><th>Verificada em</th></tr></thead><tbody>'+
+      g.edges.map(e=>'<tr><td class="mono">'+val(e.relationId)+'</td><td class="mono">'+val(e.fromEvidenceId)+'</td><td class="mono">'+val(e.toEvidenceId)+'</td><td>'+val(e.relationType)+'</td><td class="mono">'+val(e.transferId)+'</td><td class="mono">'+val(g.correlationPolicyVersion)+'</td><td>'+val(e.verifiedAt)+'</td></tr>').join('')+
+      '</tbody></table></div>'
+    : '')+
+  '<p class="note">Evidência pendente há mais de 365 dias deixa de ser correlacionável. Não é '+
+  'reprovação do material: é encerramento por prazo. Grupo, transferências e arestas permanecem '+
+  'no Supabase/TEE e não concedem acesso nem são publicados on-chain. O contrato recebe um '+
+  'evidenceId por relatório de correlação, evitando revelar um conjunto no mesmo calldata.</p>';
+};
+
+T.documento=()=>{
+  if(!DOCUMENTO) return '<h1>Documento e verificação</h1>'+
+    '<p class="sub">O documento original ao lado do que o sistema extraiu dele e das regras aplicadas.</p>'+
+    vazio("Nenhum documento selecionado",
+      "Abra uma evidência na lista para ver o arquivo original, os campos extraídos e o resultado das regras.");
+  const d=DOCUMENTO;
+  const campos=d.campos||[];
+  const extraido=d.extraido||[];
+  const regras=d.regras||[];
+  return '<div class="crumb">Evidência <span class="mono">'+val(d.evidenceId)+'</span> · '+val(d.emissor)+'</div>'+
+  '<div class="headrow"><div class="grow"><h1>Documento e verificação</h1>'+
+  '<p class="sub">O documento original ao lado do que o sistema extraiu dele e das regras aplicadas.</p></div>'+
+  '<div class="actions"><button class="btn ghost dl">Baixar original</button></div></div>'+
+  '<div class="split32"><div class="docview"><div class="sheet">'+
+  '<h4>'+val(d.emissor)+'</h4><h5>'+val(d.titulo)+'</h5><dl>'+
+  campos.map(c=>'<dt>'+val(c[0])+'</dt><dd>'+val(c[1])+'</dd>').join("")+'</dl>'+
+  (d.rodape?'<div class="ft">'+d.rodape+'</div>':'')+'</div></div><div class="stack">'+
+  '<div class="panel pad"><h3>Extraído do documento</h3><dl class="kv">'+
+  extraido.map(c=>'<dt>'+val(c[0])+'</dt><dd>'+val(c[1])+'</dd>').join("")+'</dl></div>'+
+  '<div class="panel pad hash-proof"><div class="hash-proof-head"><div><span>PROVA PÚBLICA</span>'+
+  '<h3>Impressão digital do documento</h3></div><b class="mono">evidenceHash</b></div>'+
+  '<p class="hash" style="margin:0">'+val(d.evidenceHash)+'</p>'+
+  '<p class="note">Este hash comprova os bytes exatos do arquivo, não o resultado do balanço. '+
+  'Baixe o original e recalcule. Se divergir, o documento apresentado não é o que foi registrado.</p></div>'+
+  '<div class="panel"><div class="pad" style="padding-bottom:0"><h3>Regras verificadas</h3></div>'+
+  (regras.length
+    ? '<table><tbody>'+regras.map(r=>'<tr><td>'+val(r[0])+'</td><td style="text-align:right">'+
+        (r[1]==="ok"?'<span class="tag t-ok">OK</span>':'<span class="tag t-att">Ressalva</span>')+
+        '</td></tr>').join("")+'</tbody></table>'
+    : '<div class="pad"><p class="sm" style="margin:0">Nenhuma regra avaliada para este documento.</p></div>')+
+  '</div></div></div>';
+};
+
+T.atores=()=>
+  '<h1>Atores da cadeia</h1><p class="sub">Cada empresa tem uma identidade lógica e uma ou mais '+
+  'carteiras autorizadas. Trocar a chave não muda a identidade nem apaga o histórico já ancorado.</p>'+
+  (ATORES.length
+    ? '<div class="panel scrollx"><table><thead><tr><th>Empresa</th><th>Papel</th><th>Praça</th>'+
+      '<th>Identidade</th><th class="num">Carteiras</th><th class="num">Evidências</th><th>Desde</th></tr></thead><tbody>'+
+      ATORES.map(a=>'<tr><td style="font-weight:500">'+val(a.nome)+'</td><td>'+val(a.papel)+'</td>'+
+        '<td>'+val(a.praca)+'</td><td class="mono" style="font-size:12.5px">'+val(a.id)+'</td>'+
+        '<td class="num">'+val(a.carteiras,0)+'</td><td class="num">'+val(a.evid,0)+'</td>'+
+        '<td>'+val(a.desde)+'</td></tr>').join("")+'</tbody></table></div>'
+    : vazio("Nenhum ator cadastrado",
+        "Use “Cadastrar ator” para registrar a primeira empresa e associar a carteira autorizada."))+
+  '<p class="note">Documento de registro da empresa não aparece aqui nem para os participantes. '+
+  'Um ator reconhece o outro por nome, praça e carteira.</p>';
+
+T.cadastro=()=>{
+  if(role!=="op") return '<h1>Cadastro de atores</h1><p class="sub">Esta tela é visível para consulta, mas somente o operador pode criar ou editar atores.</p>'+ 
+    (ATORES.length?'<div class="panel scrollx"><table><thead><tr><th>Empresa</th><th>Papel</th><th>Identificador</th></tr></thead><tbody>'+ATORES.map(a=>'<tr><td>'+val(a.nome)+'</td><td>'+val(a.papel)+'</td><td class="mono">'+val(a.id)+'</td></tr>').join('')+'</tbody></table></div>':vazio("Nenhum ator cadastrado","O diretório ainda não possui participantes."));
+  return '<div class="crumb">Atores da cadeia · novo participante</div><h1>Cadastrar ator</h1>'+
+  '<p class="sub">O cadastro grava uma transação: identidade e carteira vão para a blockchain. '+
+  'Razão social e contato ficam apenas aqui.</p><div class="split">'+
+  '<div class="panel pad"><h3>Identificação</h3>'+
+  '<div class="field"><label for="rs">Razão social</label>'+ 
+  '<input id="rs" placeholder="Nome empresarial completo"></div>'+ 
+  '<div class="field"><label for="actorId">Identificador único da empresa</label>'+ 
+  '<div style="display:flex;gap:8px"><input id="actorId" class="mono" readonly style="flex:1" value="'+novoActorId()+'">'+ 
+  '<button type="button" class="btn ghost sm" id="gerarActorId">Gerar</button></div>'+ 
+  '<p class="sm">Identificador opaco para referência no sistema; não é token transferível nem ativo blockchain.</p></div>'+ 
+  '<div class="f2"><div class="field"><label for="pr">Praça de operação</label>'+
+  '<input id="pr" placeholder="Cidade, UF"></div>'+
+  '<div class="field"><label for="pa">País</label><input id="pa" placeholder="País"></div></div>'+
+  '<div class="f2"><div class="field"><label for="rp">Responsável</label>'+
+  '<input id="rp" placeholder="Nome do responsável"></div>'+
+  '<div class="field"><label for="em">E-mail</label>'+
+  '<input id="em" type="email" placeholder="contato@empresa.com"></div></div>'+
+  '<div class="field"><label for="wl">Carteira autorizada</label>'+
+  '<input id="wl" class="mono" placeholder="0x…"></div>'+
+  '<p class="note">A carteira assina o envio de evidências. Outras podem ser autorizadas depois, '+
+  'sem trocar a identidade.</p></div><div class="stack">'+
+  '<div class="panel pad"><h3>Papel na cadeia</h3><div class="chips" id="papeis">'+
+  ["Minerador","Transportadora","Laboratório","Purificador","Reciclador","Fabricante"]
+    .map(x=>'<button type="button" class="chip" aria-pressed="false">'+x+'</button>').join("")+
+  '</div><p class="note">Um cadastro por papel. A mesma empresa pode ser laboratório numa operação '+
+  'e fornecedora noutra, e são identidades separadas.</p></div>'+
+  '<div class="panel pad"><h3>O que este ator poderá ver</h3><dl class="kv">'+
+  '<dt>As próprias evidências</dt><dd><span class="tag t-ok">Sim</span></dd>'+
+  '<dt>A etapa seguinte da cadeia</dt><dd><span class="tag t-ok">Sim</span></dd>'+
+  '<dt>O veredito dos lotes que alimentou</dt><dd><span class="tag t-ok">Sim</span></dd>'+
+  '<dt>O que acontece depois do destinatário</dt><dd><span class="tag t-pend">Não</span></dd>'+
+  '<dt>Documentos de terceiros</dt><dd><span class="tag t-pend">Não</span></dd>'+
+  '<dt>Massas e teores de outras correntes</dt><dd><span class="tag t-pend">Não</span></dd></dl></div>'+
+  '<div class="actions"><button class="btn" id="salvarAtor">Cadastrar e assinar</button>'+ 
+  '<button class="btn ghost">Cancelar</button></div></div></div>'+ 
+  '<section class="panel pad actor-switcher"><h3>Navegar como ator</h3>'+ 
+  '<p class="sm">Selecione um participante para visualizar sua experiência no MVP. Os dados abaixo são fictícios.</p>'+ 
+  '<div class="f2"><div class="field"><label for="atorSelecionado">Ator da demonstração</label>'+ 
+  '<select id="atorSelecionado"><option value="">Nenhum ator cadastrado ainda</option>'+ 
+  ATORES.map(a=>'<option value="'+val(a.id)+'"'+(ATOR_ATIVO===a.id?' selected':'')+'>'+val(a.nome)+' · '+val(a.papel)+'</option>').join('')+ 
+  '</select></div><div id="atorSelecionadoInfo" class="note">'+ 
+  (ATOR_ATIVO?'Perfil ativo selecionado.':'Cadastre um ator para habilitar a navegação.')+'</div></div>'+ 
+  (ATOR_ATIVO?'<div class="actions"><button type="button" class="btn" id="entrarComoAtor">Entrar como este ator</button><button type="button" class="btn ghost" id="sairDoAtor">Desconfirmar ator</button></div>':'')+'</section>';
+};
+
+T.acessoNegado=()=>{
+  const ator=ATORES.find(a=>a.id===ATOR_ATIVO);
+  return '<div class="panel pad" style="max-width:720px"><h1>Acesso restrito</h1>'+ 
+    '<p class="sub">Esta visão não pertence ao papel atualmente selecionado.</p>'+ 
+    '<p>Ator ativo: <b>'+val(ator&&ator.nome,"nenhum")+'</b><br>Papel autorizado: <b>'+val(ator&&ator.papel,"não selecionado")+'</b></p>'+ 
+    '<p class="note">Somente o operador visualiza todas as etapas. Um participante acessa apenas suas próprias evidências, sua transferência e os resultados compartilhados.</p>'+ 
+    '<div class="actions"><button class="btn" id="voltarCadastro">Voltar ao cadastro de ator</button></div></div>';
+};
+
+/* ---------------- Participante ---------------- */
+
+T.enviar=()=>
+  '<div class="crumb">Envio de evidência'+(LOTE?' · lote <span class="mono">'+val(LOTE.lotId)+'</span>':'')+'</div>'+
+  '<h1>Enviar evidência</h1><p class="sub">Envie apenas o documento que é seu. Ele recebe um hash '+
+  'no momento do envio e entra como PENDING. Qualquer alteração posterior muda o hash; se o arquivo '+
+  'privado for removido, a âncora continua on-chain e a ausência fica detectável.</p><div class="split"><div class="stack">'+
+  '<div class="panel pad"><h3>Documento</h3>'+
+  '<label class="drop" for="arquivo"><b>Selecione ou solte o arquivo</b>PDF assinado, até 20 MB</label>'+
+  '<input id="arquivo" type="file" accept="application/pdf" style="display:none">'+
+  '<div id="arquivoInfo"></div><p class="note">O evidenceHash é calculado sobre os bytes originais '+
+  'deste arquivo antes da submissão on-chain.</p></div></div>'+
+  '<div class="stack"><div class="panel pad"><h3>Informações auxiliares da submissão</h3>'+
+  '<p class="sm">Estes campos ajudam a organizar a fila, mas não são considerados prova. O CRE/TEE '+
+  'extrai e valida novamente os valores diretamente do documento ancorado.</p>'+
+  '<div class="field"><label for="td">Tipo de documento</label><select id="td">'+
+  '<option value="">Selecione…</option>'+
+  '<option>Declaração de origem e quantidade</option><option>Nota fiscal de saída</option>'+
+  '<option>Laudo de análise elementar</option><option>Conhecimento de transporte</option>'+
+  '<option>Registro de transformação</option></select></div>'+
+  '<div class="f2"><div class="field"><label for="dr">Referência</label>'+
+  '<input id="dr" class="mono" placeholder="Número do documento"></div>'+
+  '<div class="field"><label for="lt">Lote</label>'+
+  '<input id="lt" class="mono" placeholder="Identificador do lote"></div></div>'+
+  '<div class="f2"><div class="field"><label for="mb">Massa bruta</label>'+
+  '<input id="mb" class="mono" placeholder="0,000 kg"></div>'+
+  '<div class="field"><label for="bs">Base declarada</label><select id="bs" class="mono">'+
+  '<option value="">Selecione…</option><option>AS_RECEIVED</option><option>DRY_105C</option>'+
+  '<option>CALCINED</option><option>LIQUIDO_TOTAL</option></select></div></div>'+
+  '<div class="f2"><div class="field"><label for="um">Umidade livre</label>'+
+  '<input id="um" class="mono" placeholder="0,00 %"></div>'+
+  '<div class="field"><label for="ts">Temperatura de secagem</label>'+
+  '<input id="ts" class="mono" placeholder="105 °C"></div></div>'+
+  '<div class="field"><label for="dst">Destinatário</label>'+
+  '<input id="dst" placeholder="Empresa destinatária"></div>'+ 
+  '<div class="field"><label for="incoterm">Condição do frete</label><select id="incoterm">'+
+  '<option value="">Selecione…</option><option value="CIF">CIF — frete e seguro por conta do vendedor</option>'+
+  '<option value="FOB">FOB — frete por conta do comprador</option></select></div>'+ 
+  '<div id="carrierFields" class="panel soft" style="display:none;margin-top:10px;padding:12px">'+
+  '<b>Transportadora contratada</b><p class="sm">No FOB, informe quem fará a custódia entre as partes.</p>'+
+  '<div class="f2"><div class="field"><label for="carrierName">Transportadora</label><input id="carrierName" placeholder="Empresa transportadora"></div>'+
+  '<div class="field"><label for="carrierRef">Referência do frete</label><input id="carrierRef" class="mono" placeholder="CT-e ou referência"></div></div></div>'+ 
+  '<p class="note"><b>Não atestado:</b> nenhum valor digitado nesta área entra na correlação ou no '+
+  'balanço sem ser confirmado no documento e revalidado pelo CRE/TEE.</p></div>'+
+  '<div class="actions"><button class="btn" id="enviarEv">Assinar e enviar</button></div></div></div>';
+
+T.analisar=()=>
+  '<div class="crumb">Laboratório · análise independente</div><h1>Enviar análise da amostra</h1>'+ 
+  '<p class="sub">O laboratório registra somente o laudo e a composição da amostra. Esta evidência não cria uma nova corrente de massa; o CRE/TEE usa o resultado para validar o balanço.</p>'+ 
+  '<div class="split"><div class="stack"><div class="panel pad"><h3>Laudo laboratorial</h3>'+ 
+  '<label class="drop" for="arquivoAnalise"><b>Selecione ou solte o laudo</b>PDF assinado, até 20 MB</label>'+ 
+  '<input id="arquivoAnalise" type="file" accept="application/pdf" style="display:none"><div id="arquivoAnaliseInfo"></div>'+ 
+  '<p class="note">O hash é calculado sobre os bytes originais antes da ancoragem.</p></div></div>'+ 
+  '<div class="stack"><div class="panel pad"><h3>Identificação da análise</h3>'+ 
+  '<div class="f2"><div class="field"><label for="sampleId">Identificador da amostra</label><input id="sampleId" class="mono" placeholder="Amostra do laboratório"></div>'+ 
+  '<div class="field"><label for="labLot">Lote relacionado</label><input id="labLot" class="mono" placeholder="LOT-…"></div></div>'+ 
+  '<div class="f2"><div class="field"><label for="labRef">Referência do laudo</label><input id="labRef" class="mono" placeholder="Número do laudo"></div>'+ 
+  '<div class="field"><label for="sampleAt">Data da amostra</label><input id="sampleAt" type="datetime-local"></div></div>'+ 
+  '<div class="f2"><div class="field"><label for="elementTested">Elemento analisado</label><input id="elementTested" placeholder="Neodímio, cobalto…"></div>'+ 
+  '<div class="field"><label for="assay">Teor encontrado</label><input id="assay" class="mono" placeholder="0,00 %"></div></div>'+ 
+  '<div class="filerow"><b>Função no balanço</b><span>COMPOSITION_ONLY · não soma massa</span></div>'+ 
+  '<p class="note"><b>Validação:</b> os valores digitados são apenas referência. O CRE/TEE relê o laudo ancorado e confirma a composição antes de usar o resultado.</p>'+ 
+  '<div class="actions"><button class="btn" id="enviarAnalise">Assinar e enviar análise</button></div></div></div></div>';
+
+T.entrega=()=>{
+  const transferId=LOTE?val(LOTE.assignedTransferId):semDado;
+  return '<div class="crumb">Cadeia de custódia'+(LOTE?' · lote <span class="mono">'+val(LOTE.lotId)+'</span>':'')+'</div>'+
+  '<h1>Registrar transporte</h1><p class="sub">Confirme o que foi coletado e o que foi entregue. '+
+  'A evidência da transportadora comprova custódia e possíveis diferenças, mas não cria uma nova '+
+  'corrente de massa no balanço.</p><div class="split"><div class="stack">'+
+  '<div class="panel pad"><h3>Transferência atribuída</h3><dl class="kv">'+
+  '<dt>transferId</dt><dd class="mono">'+transferId+'</dd>'+
+  '<dt>Origem</dt><dd>'+val(LOTE&&LOTE.transferOrigin)+'</dd>'+
+  '<dt>Destino</dt><dd>'+val(LOTE&&LOTE.transferDestination)+'</dd></dl></div>'+
+  '<div class="panel pad"><h3>Documento de transporte</h3>'+
+  '<label class="drop" for="arquivoTransporte"><b>Selecione ou solte o arquivo</b>Conhecimento de transporte ou comprovante de entrega</label>'+
+  '<input id="arquivoTransporte" type="file" accept="application/pdf" style="display:none">'+
+  '<div id="arquivoTransporteInfo"></div></div></div>'+
+  '<div class="stack"><div class="panel pad"><h3>Coleta e entrega</h3>'+
+  '<div class="f2"><div class="field"><label for="coletaEm">Coletado em</label><input id="coletaEm" type="datetime-local"></div>'+
+  '<div class="field"><label for="entregaEm">Entregue em</label><input id="entregaEm" type="datetime-local"></div></div>'+
+  '<div class="f2"><div class="field"><label for="massaColetada">Massa coletada</label><input id="massaColetada" class="mono" placeholder="0,000 kg"></div>'+
+  '<div class="field"><label for="massaEntregue">Massa entregue</label><input id="massaEntregue" class="mono" placeholder="0,000 kg"></div></div>'+
+  '<div class="filerow" id="custodyDifference"><b>Diferença de custódia</b><span>Informe as duas massas</span></div>'+
+  '<div class="field"><label for="ocorrencia">Ocorrência de custódia</label><select id="ocorrencia">'+
+  '<option>Sem ocorrência</option><option>Avaria</option><option>Perda parcial</option><option>Derramamento</option><option>Umidade</option><option>Recusa no recebimento</option></select></div>'+
+  '<div class="field"><label for="justificativa">Justificativa ou observação</label><input id="justificativa" placeholder="Descreva a diferença ou a confirmação da entrega"></div>'+
+  '<p class="note">Massa coletada e entregue corroboram a mesma corrente física. A diferença é '+
+  'classificada pela política de custódia e nunca é somada como uma segunda entrada.</p></div>'+
+  '<div class="actions"><button class="btn" id="enviarTransporte">Assinar e registrar entrega</button></div></div></div>';
+};
+
+T.minhas=()=>
+  '<h1>Minhas evidências</h1><p class="sub">Seu histórico completo. Você baixa qualquer documento '+
+  'que enviou. Qualquer alteração quebra a correspondência com o hash; uma remoção não apaga a '+
+  'âncora nem o histórico on-chain.</p>'+
+  (MINHAS.length
+    ? '<div class="panel scrollx"><table><thead><tr><th>Evidência</th><th>Documento</th>'+
+      '<th>Enviada</th><th>Estado</th><th>Hash ancorado</th><th class="num">Original</th></tr></thead><tbody>'+
+      MINHAS.map(e=>'<tr><td class="mono" style="font-size:12.5px">'+val(e.id)+'</td>'+
+        '<td>'+val(e.doc)+'<div class="sm mono">'+val(e.ref)+'</div></td><td>'+val(e.enviada)+'</td>'+
+        '<td>'+vtag(val(e.status,"PENDING"))+'</td>'+
+        '<td class="hash" style="max-width:180px">'+val(e.hash)+'</td>'+
+        '<td class="num"><button class="btn ghost sm dl">Baixar</button></td></tr>').join("")+
+      '</tbody></table></div>'
+  : vazio("Você ainda não enviou evidências",
+        role==="transp"
+          ? "Use “Registrar transporte” para enviar o documento de custódia. Ele aparece aqui após a ancoragem do hash."
+          : "Use “Enviar evidência” para registrar o primeiro documento. Ele aparece aqui logo após a ancoragem do hash."))+
+  '<p class="note">Documentos de outros participantes não aparecem aqui. Do conjunto, o que chega '+
+  'até você é o veredito do lote.</p>';
+
+T.cadeia=()=>
+  '<h1>Minha cadeia</h1><p class="sub">Você enxerga a operação até o destinatário do seu material. '+
+  'O que ele faz depois — para quem vende, qual laboratório contrata — não aparece aqui.</p>'+
+  (CADEIA.length
+    ? '<div class="chain">'+CADEIA.map((n,i)=>
+        '<div class="node'+(n.self?' self':'')+'"><b>'+val(n.nome)+'</b>'+
+        '<span class="r">'+val(n.papel)+(n.self?' · você':'')+'</span></div>'+
+        (i<CADEIA.length-1?'<div class="link">'+seta(false)+'</div>':''))
+        .join("")+
+      '<div class="link">'+seta(true)+'</div>'+
+      '<div class="horizon"><b>Fim da sua visibilidade</b>O que o destinatário faz com o material '+
+      'depois disso não é exibido para você.</div></div>'
+    : vazio("Cadeia ainda não formada",
+        "Assim que sua evidência for correlacionada com a contraparte, os participantes visíveis aparecem aqui."))+
+  '<h2>Evidências desta cadeia</h2>'+
+  (CADEIA_EVIDENCIAS.length
+    ? '<div class="panel scrollx"><table><thead><tr><th>Participante</th><th>Documento</th>'+
+      '<th>Enviada</th><th>Estado</th></tr></thead><tbody>'+
+      CADEIA_EVIDENCIAS.map(e=>'<tr><td>'+val(e.participante)+
+        (e.self?' <span class="sm">você</span>':'')+'</td><td>'+val(e.doc)+'</td>'+
+        '<td>'+val(e.enviada)+'</td><td>'+vtag(val(e.status,"PENDING"))+'</td></tr>').join("")+
+      '</tbody></table></div>'
+    : '')+
+  '<p class="note">A transportadora confirma a custódia, não a composição. É a testemunha de que '+
+  'o material saiu de um lugar e chegou a outro.</p>';
+
+T.transferencia=()=>{
+  const c=(LOTE&&LOTE.custody)||{};
+  return '<div class="crumb">Transferência atribuída <span class="mono">'+val(LOTE&&LOTE.assignedTransferId)+'</span></div>'+
+  '<h1>Minha transferência</h1><p class="sub">Você visualiza somente a coleta, a entrega e as '+
+  'ocorrências sob sua responsabilidade. O grafo completo e o identificador do grupo privado não são enviados para esta tela.</p>'+
+  '<div class="stats"><div><span class="n">'+val(c.pickedUpMass)+'</span><span class="l">Massa coletada</span></div>'+
+  '<div><span class="n">'+val(c.deliveredMass)+'</span><span class="l">Massa entregue</span></div>'+
+  '<div><span class="n">'+val(c.difference)+'</span><span class="l">Diferença de custódia</span></div>'+
+  '<div><span class="n">'+val(c.status)+'</span><span class="l">Estado da entrega</span></div></div>'+
+  '<div class="split" style="margin-top:14px"><div class="panel pad"><h3>Rota autorizada</h3><dl class="kv">'+
+  '<dt>Origem</dt><dd>'+val(LOTE&&LOTE.transferOrigin)+'</dd><dt>Destino</dt><dd>'+val(LOTE&&LOTE.transferDestination)+'</dd>'+
+  '<dt>Coletado em</dt><dd>'+val(c.pickedUpAt)+'</dd><dt>Entregue em</dt><dd>'+val(c.deliveredAt)+'</dd></dl></div>'+
+  '<div class="panel pad"><h3>Ocorrência</h3><dl class="kv"><dt>Classificação</dt><dd>'+val(c.incidentType)+'</dd>'+
+  '<dt>Justificativa</dt><dd>'+val(c.justification)+'</dd><dt>Evidência</dt><dd class="mono">'+val(c.evidenceId)+'</dd></dl></div></div>'+
+  '<p class="note">As massas da transportadora corroboram a corrente do remetente e do destinatário. '+
+  'Elas não são somadas novamente no balanço.</p>';
+};
+
+T.resultado=()=>{
+  if(!LOTE||!ELEMENTOS.length) return '<h1>Resultado do lote</h1>'+
+    '<p class="sub">O veredito do lote em que o seu material entrou.</p>'+
+    vazio("Nenhum resultado disponível",
+      "Quando o balanço do lote for calculado e ancorado, seu comprovante aparece aqui.");
+  const minha=LOTE.myContribution;
+  return '<div class="crumb">Lote <span class="mono">'+val(LOTE.lotId)+'</span></div>'+
+  '<div class="headrow"><div class="grow"><h1>Resultado do lote</h1>'+
+  '<p class="sub">O veredito do lote em que o seu material entrou. As massas e os teores das '+
+  'outras correntes permanecem com quem as declarou.</p></div><div>'+vtag(VEREDITO)+'</div></div>'+
+  avisoArbitrado()+avisoDivergente()+
+  '<h2>Sua contribuição</h2>'+
+  (minha
+    ? '<div class="panel scrollx"><table><thead><tr><th>Corrente</th><th>Base</th>'+
+      '<th class="num">Massa seca</th><th class="num">Elemento contido</th><th>Evidência</th></tr></thead>'+
+      '<tbody><tr><td>'+val(minha.corrente)+'</td><td class="mono">'+val(minha.base)+'</td>'+
+      '<td class="num">'+val(minha.massaSeca)+'</td><td class="num">'+val(minha.contido)+'</td>'+
+      '<td class="mono" style="font-size:12.5px">'+val(minha.evidencia)+'</td></tr></tbody></table></div>'
+    : vazio("Nenhuma contribuição sua neste lote",
+        "Suas correntes aparecem aqui quando as evidências que você enviou forem correlacionadas."))+
+  '<p class="note">Só a sua corrente aparece detalhada. As outras entradas, o produto, o rejeito e '+
+  'o efluente entram no cálculo sem que os valores cheguem até você.</p>'+
+  '<h2>Seu comprovante</h2><div class="panel pad"><dl class="kv">'+
+  '<dt>resultId</dt><dd class="mono">'+val(LOTE.myResultId)+'</dd>'+
+  '<dt>resultHash</dt><dd class="mono">'+val(LOTE.myResultHash)+'</dd>'+
+  '<dt>previousResultId</dt><dd class="mono">'+val(LOTE.myPreviousResultId)+'</dd>'+
+  '<dt>Ancorado em</dt><dd>'+val(LOTE.anchoredAt)+'</dd></dl>'+
+  '<p class="note">Este hash é só seu. Ele deriva do resultado somado aos seus dados, então difere '+
+  'do que os demais participantes receberam pelo mesmo lote.</p>'+
+  '<div class="actions"><button class="btn ghost dl">Baixar relatório</button>'+
+  '<button class="btn ghost dl">Baixar comprovante</button></div></div>';
+};
+
+T.convidar=()=>
+  '<h1>Convidar cliente</h1><p class="sub">O convite vale para um resultado específico. Quem '+
+  'recebe não enxerga seus outros lotes, suas evidências nem os demais participantes.</p>'+
+  '<div class="split"><div class="panel pad">'+
+  '<div class="field"><label for="cr">Resultado a compartilhar</label>'+
+  '<select id="cr" class="mono"><option value="">Selecione um resultado ancorado…</option>'+
+  (LOTE&&LOTE.myResultHash?'<option>'+val(LOTE.lotId)+' · '+LOTE.myResultHash+'</option>':'')+
+  '</select></div>'+
+  '<div class="field"><label for="ce">E-mail do convidado</label>'+
+  '<input id="ce" type="email" placeholder="contato@cliente.com"></div>'+
+  '<div class="field"><label for="cv">Validade do acesso</label><select id="cv">'+
+  '<option>90 dias</option><option>180 dias</option><option>Sem prazo</option></select></div>'+
+  '<div class="actions"><button class="btn" id="enviarConvite">Enviar convite</button></div></div>'+
+  '<div class="panel pad"><h3>O que o convidado passa a ver</h3><dl class="kv">'+
+  '<dt>Veredito do lote</dt><dd><span class="tag t-ok">Sim</span></dd>'+
+  '<dt>Conservação por elemento</dt><dd><span class="tag t-ok">Sim</span></dd>'+
+  '<dt>Relatório em PDF</dt><dd><span class="tag t-ok">Sim</span></dd>'+
+  '<dt>Seus outros lotes</dt><dd><span class="tag t-pend">Não</span></dd>'+
+  '<dt>Documentos e evidências</dt><dd><span class="tag t-pend">Não</span></dd>'+
+  '<dt>Massas por corrente</dt><dd><span class="tag t-pend">Não</span></dd>'+
+  '<dt>Enviar qualquer coisa</dt><dd><span class="tag t-pend">Não</span></dd></dl></div></div>';
+
+/* ---------------- Cliente ---------------- */
+
+T.dashboard=()=>{
+  if(!LOTE||!ELEMENTOS.length) return '<h1>Balanço verificado</h1>'+
+    vazio("Nenhum resultado compartilhado com você",
+      "Quando uma empresa compartilhar um resultado ancorado, ele aparece aqui com o relatório e o comprovante.");
+  const provenance=LOTE.clientProvenance||[];
+  return '<div class="crumb">Compartilhado por '+val(LOTE.sharingCompany)+' · acesso por convite</div>'+
+  '<div class="headrow"><div class="grow"><h1>Balanço verificado</h1>'+
+  '<p class="sub">Resultado autorizado do lote '+val(LOTE.lotId)+', com janela documental '+
+  val(LOTE.documentWindow)+'. Confira se o relatório é o mesmo que foi ancorado.</p></div>'+
+  '<div>'+vtag(VEREDITO)+'</div></div>'+
+  '<div class="stats">'+
+  '<div><span class="n">'+vtag(VEREDITO)+'</span><span class="l">Veredito do lote</span></div>'+
+  '<div><span class="n">'+conformes+' / '+ELEMENTOS.length+'</span><span class="l">Elementos dentro da banda</span></div>'+
+  '<div><span class="n">'+val(LOTE.matchedEvidenceCount,0)+'</span><span class="l">Evidências verificadas</span></div>'+
+  '<div><span class="n">'+String(val(LOTE.anchoredAt,"")).split(" ")[0]+'</span><span class="l">Ancorado em</span></div></div>'+
+  '<h2>Proveniência verificada</h2>'+
+  (provenance.length
+    ? '<div class="panel scrollx"><table><thead><tr><th>Etapa</th><th>Identidade exibida</th><th>Estado</th><th>Verificada em</th></tr></thead><tbody>'+
+      provenance.map(p=>'<tr><td>'+val(p.stage)+'</td><td>'+val(p.identity,"Identidade protegida")+'</td><td>'+vtag(val(p.status,"MATCHED"))+'</td><td>'+val(p.verifiedAt)+'</td></tr>').join('')+
+      '</tbody></table></div>'
+    : vazio("Proveniência protegida","As etapas autorizadas aparecem aqui sem revelar documentos, relações comerciais ou o grupo completo."))+
+  '<p class="note">Esta tela não recebe o identificador do grupo privado, transferências completas nem documentos de terceiros. '+
+  'Em produção, a API e o RLS do Supabase enviam somente o resultado compartilhado.</p>'+
+  '<div class="split chart-grid" style="margin-top:14px">'+
+  '<section class="panel pad chart-card"><h3>Não contabilizado por versão</h3>'+
+  '<p class="chart-sub">Evolução da parcela sem destino declarado</p>'+
+  (SERIE.length
+    ? '<div class="chart-wrap"><canvas id="trendChart" aria-label="Evolução do não contabilizado por versão do lote"></canvas></div>'+
+      '<div style="display:flex;justify-content:space-between;margin-top:8px" class="sm">'+
+      '<span>'+SERIE.length+' versões do lote</span><span>'+pct(Math.abs(ELEMENTOS[0].rel))+' agora</span></div>'
+    : '<p class="sm" style="margin:12px 0 0">Sem histórico anterior para este lote.</p>')+
+  '</section>'+
+  '<section class="panel pad chart-card"><h3>Conservação por elemento</h3>'+
+  '<p class="chart-sub">Entrada disponível versus massa contabilizada</p>'+
+  '<div class="chart-wrap"><canvas id="elementChart" aria-label="Comparativo da conservação por elemento"></canvas></div>'+
+  '</section></div>'+
+  avisoArbitrado()+
+  '<h2>Conservação por elemento</h2>'+tabelaElementos()+avisoDivergente()+
+  '<h2>Conferir por conta própria</h2><div class="panel pad"><dl class="kv">'+
+  '<dt>resultId</dt><dd class="mono">'+val(LOTE.clientResultId)+'</dd>'+
+  '<dt>resultHash</dt><dd class="mono">'+val(LOTE.clientResultHash)+'</dd>'+
+  '<dt>previousResultId</dt><dd class="mono">'+val(LOTE.clientPreviousResultId)+'</dd>'+
+  '<dt>Transação</dt><dd class="hash">'+val(LOTE.clientTransactionHash)+'</dd>'+
+  '<dt>Origem</dt><dd>'+val(LOTE.sharingCompany)+' · '+val(LOTE.matchedEvidenceCount,0)+
+  ' evidências correlacionadas</dd></dl>'+
+  '<p class="note">Baixe o relatório, recalcule o hash e compare com o que está na transação. '+
+  'Se divergir, o documento foi alterado depois da ancoragem.</p>'+
+  '<div class="actions"><button class="btn dl">Baixar relatório</button>'+
+  '<button class="btn ghost dl">Baixar comprovante</button></div></div>'+
+  '<div class="panel pad" style="margin-top:14px"><h3>O que este resultado não afirma</h3>'+
+  '<p style="margin:0;color:var(--ink2);max-width:64ch">Que o material saiu inequivocamente de uma '+
+  'mina específica, nem que as declarações dos participantes são verdadeiras no mundo físico. Ele '+
+  'afirma que documentos independentes se correspondem, que a massa de cada elemento se conserva '+
+  'dentro da banda declarada, e que nada disso mudou desde a ancoragem.</p></div>';
+};
+
+function render(){
+  const sessao=SESSION[role];
+  $("#session").innerHTML='<span class="session-avatar">'+sessao.iniciais+'</span>'+ 
+    '<span class="session-copy"><b>'+sessao.nome+'</b><span>'+sessao.acesso+'</span></span>';
+  renderWallet();
+  const roleSelector=$("#roleSelector");
+  if(roleSelector){
+    const opts='<option value="op">Operador — acesso completo</option>'+ATORES.map(a=>'<option value="actor:'+val(a.id)+'">'+val(a.nome)+' — '+val(a.papel)+'</option>').join('');
+    roleSelector.innerHTML=opts;
+    roleSelector.value=role==="op"?"op":(ATOR_ATIVO?"actor:"+ATOR_ATIVO:"op");
+    roleSelector.disabled=role!=="op";
+    roleSelector.title=role!=="op"?"Desconfirme o ator para trocar de perfil.":"Escolha Operador ou um ator cadastrado.";
+    roleSelector.onchange=function(){
+      const next=this.value;
+      if(next==="op"){
+        ATOR_ATIVO=null;try{localStorage.removeItem("explorechem_demo_active_actor");}catch(e){}
+        window.location.href=window.location.pathname;
+        return;
+      }
+      const atorId=next.slice(6),ator=ATORES.find(a=>a.id===atorId);
+      if(!ator){toast("Ator não encontrado.");return;}
+      ATOR_ATIVO=ator.id;try{localStorage.setItem("explorechem_demo_active_actor",ATOR_ATIVO);}catch(e){}
+      window.location.href=window.location.pathname+"?role="+encodeURIComponent(roleForActor(ator));
+    };
+  }
+  $("#nav").innerHTML=NAVS[role].map(n=>
+    '<button data-page="'+n[0]+'"'+(n[0]===page?' aria-current="page"':'')+'>'+n[1]+'</button>').join("");
+  $("#nav").querySelectorAll("button").forEach(b=>
+    b.onclick=function(){page=b.dataset.page;render();});
+  $("#view").innerHTML=T[page]?T[page]():"";
+  window.scrollTo({top:0,behavior:"instant"});
+  renderCharts();
+
+  const ps=$("#papeis");
+  if(ps) ps.querySelectorAll(".chip").forEach(c=>
+    c.onclick=function(){ps.querySelectorAll(".chip").forEach(x=>
+      x.setAttribute("aria-pressed",String(x===c)));});
+
+  const bind=function(sel,msg){const el=$(sel);if(el)el.onclick=function(e){e.preventDefault();toast(msg);};};
+  const bindOnchain=function(sel,msg){const el=$(sel);if(el)el.onclick=function(e){
+    e.preventDefault();
+    if(!walletAddress){toast("Conecte uma carteira autorizada antes de continuar.");return;}
+    if(walletChainId!=="0xaa36a7"){toast("Troque a carteira para a rede Sepolia antes de assinar.");return;}
+    toast(msg);
+  };};
+  const salvarAtor=$("#salvarAtor");
+  if(salvarAtor) salvarAtor.onclick=async function(e){
+    e.preventDefault();
+    if(!walletAddress){toast("Conecte uma carteira autorizada antes de continuar.");return;}
+    const chainAtual=await refreshWalletChain();
+    if(chainAtual!=="0xaa36a7"){toast("Troque a carteira para a rede Sepolia antes de assinar.");return;}
+    const nome=$("#rs")?.value.trim(), papel=$("#papeis .chip[aria-pressed=\"true\"]")?.textContent.trim();
+    if(!nome||!papel){toast("Informe a razão social e selecione um papel.");return;}
+    const novo={id:$("#actorId")?.value||novoActorId(),nome,papel,praca:$("#pr")?.value||"—",carteiras:1,evid:0,desde:new Date().toLocaleDateString("pt-BR")};
+    if(ATORES.some(a=>a.id===novo.id)){toast("Identificador já usado. Gere outro antes de cadastrar.");return;}
+    salvarAtor.disabled=true; salvarAtor.textContent="Assinando…";
+    const actorType={"Minerador":"MINER","Transportadora":"CARRIER","Laboratório":"LABORATORY","Purificador":"REFINER","Reciclador":"RECYCLER","Fabricante":"MANUFACTURER"}[papel]||"OTHER";
+    try{
+      if(!window.ethers) throw new Error("Biblioteca Web3 não carregou");
+      const provider=new ethers.BrowserProvider(getWalletProvider());
+      const signer=await provider.getSigner();
+      const abi=["function registerActor(bytes32 actorId, address controller) external"];
+      const contract=new ethers.Contract(EXPLORERCHEM_CONTRACT_ADDRESS,abi,signer);
+      const tx=await contract.registerActor(novo.id,walletAddress);
+      const receipt=await tx.wait();
+      const {data:row,error}=await supabaseClient.from("explorerchem_actors").insert({
+        actor_id:novo.id, display_name:nome, actor_type:actorType, country_code:($("#pa")?.value||"BR").slice(0,2).toUpperCase(),
+        active:true, onchain_registered_at:new Date().toISOString(), onchain_registration_tx:receipt.hash
+      }).select("id,actor_id,display_name,actor_type").single();
+      if(error) throw new Error("Blockchain confirmada, mas o Supabase recusou o cadastro: "+error.message);
+      novo.dbId=row.id; ATORES.push(novo); ATOR_ATIVO=novo.id; persistirAtoresLocais();
+      toast("Ator cadastrado na blockchain e no Supabase.");
+      setTimeout(()=>render(),450);
+    }catch(error){
+      console.error(error); toast(error.message||"Não foi possível concluir o cadastro.");
+      salvarAtor.disabled=false; salvarAtor.textContent="Cadastrar e assinar";
+    }
+  };
+  const gerarActorId=$("#gerarActorId");
+  if(gerarActorId) gerarActorId.onclick=function(){
+    let id;
+    do { id=novoActorId(); } while(ATORES.some(a=>a.id===id));
+    const campo=$("#actorId"); if(campo) campo.value=id;
+  };
+  const atorSelecionado=$("#atorSelecionado");
+  if(atorSelecionado) atorSelecionado.onchange=function(){ATOR_ATIVO=this.value||null;try{localStorage.setItem("explorechem_demo_active_actor",ATOR_ATIVO||"");}catch(e){};renderWallet();toast(ATOR_ATIVO?"Ator ativo selecionado para esta navegação.":"Nenhum ator selecionado.");};
+  const entrarComoAtor=$("#entrarComoAtor");
+  if(entrarComoAtor) entrarComoAtor.onclick=function(){const ator=ATORES.find(a=>a.id===ATOR_ATIVO);if(!ator){toast("Selecione um ator primeiro.");return;}role=roleForActor(ator);page=NAVS[role][0][0];window.location.href=window.location.pathname+"?role="+encodeURIComponent(role);};
+  const sairDoAtor=$("#sairDoAtor");
+  if(sairDoAtor) sairDoAtor.onclick=function(){ATOR_ATIVO=null;try{localStorage.removeItem("explorechem_demo_active_actor");}catch(e){};role="op";page="cadastro";render();toast("Ator desconfirmado. Você voltou ao modo operador.");};
+  bindOnchain("#enviarEv","Evidência enviada. Hash gravado, estado pendente.");
+  bindOnchain("#enviarAnalise","Análise enviada. Hash gravado como COMPOSITION_ONLY e estado PENDING.");
+  bindOnchain("#enviarTransporte","Entrega registrada. EvidenceHash ancorado como PENDING.");
+  bind("#enviarConvite","Convite enviado para este resultado.");
+  const bindFile=function(inputSel,infoSel){const input=$(inputSel),info=$(infoSel);if(input&&info)input.onchange=function(){
+    const file=input.files&&input.files[0];
+    info.innerHTML=file?'<div class="filerow"><b>'+file.name+'</b><span>'+Math.ceil(file.size/1024)+' KB · pronto para hash</span></div>':'';
+  };};
+  bindFile("#arquivo","#arquivoInfo");
+  bindFile("#arquivoAnalise","#arquivoAnaliseInfo");
+  bindFile("#arquivoTransporte","#arquivoTransporteInfo");
+  const incoterm=$("#incoterm"),carrierFields=$("#carrierFields");
+  if(incoterm&&carrierFields) incoterm.onchange=function(){carrierFields.style.display=this.value==="FOB"?"block":"none";};
+  const collected=$("#massaColetada"),delivered=$("#massaEntregue"),difference=$("#custodyDifference");
+  const parseMass=v=>{const clean=v.replace(/\s*kg/gi,"").replace(/\./g,"").replace(",",".");return Number(clean);};
+  const updateDifference=()=>{if(!collected||!delivered||!difference)return;const a=parseMass(collected.value),b=parseMass(delivered.value);difference.innerHTML=Number.isFinite(a)&&Number.isFinite(b)?'<b>Diferença de custódia</b><span>'+Math.max(0,a-b).toLocaleString("pt-BR",{minimumFractionDigits:3,maximumFractionDigits:3})+' kg</span>':'<b>Diferença de custódia</b><span>Informe as duas massas</span>';};
+  if(collected&&delivered){collected.oninput=updateDifference;delivered.oninput=updateDifference;}
+  const abrirEvidencia=$("#abrirEvidenciaTransporte");
+  if(abrirEvidencia) abrirEvidencia.onclick=function(){page="evidencias";render();};
+  document.querySelectorAll(".dl").forEach(b=>
+    b.onclick=function(){toast("Arquivo gerado. Recalcule o hash e compare com a transação.");});
+}
+
+$("#home").onclick=function(){page=NAVS[role][0][0];render();};
+
+render();
+restoreWallet();
+carregarAtores();
+const walletProvider=getWalletProvider();
+if(walletProvider&&typeof walletProvider.on==="function"){
+  walletProvider.on("accountsChanged",contas=>{walletAddress=contas[0]||"";if(!walletAddress)walletChainId="";renderWallet();});
+  walletProvider.on("chainChanged",chainId=>{walletChainId=chainId;renderWallet();});
+}
+</script>
+</body>
+</html>
