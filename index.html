@@ -58,7 +58,6 @@ body:before{content:"";position:fixed;inset:0;pointer-events:none;z-index:-1;bac
 button{font:inherit;color:inherit;cursor:pointer;border:0;background:none;transition:background .18s ease,border-color .18s ease,color .18s ease,box-shadow .18s ease,transform .18s ease}
 button:active{transform:translateY(1px)}
 :focus-visible{outline:2px solid var(--nd);outline-offset:2px}
-/* Estilo para campos bloqueados */
 #view.readonly .drop{opacity:.55;cursor:not-allowed;border-style:solid}
 #view.readonly input:disabled,#view.readonly select:disabled{opacity:.7;cursor:not-allowed}
 #view.readonly .btn:disabled{opacity:.45;box-shadow:none;transform:none;cursor:not-allowed}
@@ -431,6 +430,7 @@ input.mono,select.mono{font-family:"IBM Plex Mono",monospace;font-size:12.5px}
     <option value="op">Operador</option>
     <option value="forn">Fornecedor</option>
     <option value="transp">Transportadora</option>
+    <option value="lab">Laboratório</option>
     <option value="cli">Cliente</option>
   </select></div>
   <div class="wallet-area" id="walletArea"></div>
@@ -494,9 +494,9 @@ const actorTypeLabel={MINER:"Minerador",CARRIER:"Transportadora",LABORATORY:"Lab
 function persistirAtoresLocais(){try{localStorage.setItem("explorechem_demo_actors",JSON.stringify(ATORES));}catch(e){}}
 function carregarAtoresLocais(){try{const saved=JSON.parse(localStorage.getItem("explorechem_demo_actors")||"[]");if(Array.isArray(saved))ATORES=saved;}catch(e){}}
 
-/* ===== PATCH 1: Mapa papel → visão e persistência do ator ativo ===== */
+/* Mapa papel → visão e persistência do ator ativo */
 const PAPEL_ROLE={
-  "Minerador":"forn","Laboratório":"forn","Laboratorio":"forn","Purificador":"forn",
+  "Minerador":"forn","Laboratório":"lab","Laboratorio":"lab","Purificador":"forn",
   "Reciclador":"forn","Fabricante":"forn","Processador":"forn","Outro":"forn",
   "Transportadora":"transp"
 };
@@ -506,17 +506,16 @@ function atorAtivo(){return ATORES.find(a=>a.id===ATOR_ATIVO)||null;}
 function escopoAtor(){
   const ator=atorAtivo();
   const roleDoAtor=ator?(PAPEL_ROLE[ator.papel]||"forn"):null;
-  const telaDeAtor=(role==="forn"||role==="transp");
-  // Se nenhum ator selecionado, tudo editável (mude a última parte se quiser travar tudo)
+  const telaDeAtor=(role==="forn"||role==="transp"||role==="lab");
   return {ator,roleDoAtor,somenteLeitura:!!(ator&&telaDeAtor&&roleDoAtor!==role)};
 }
 
-/* ===== PATCH 2: Função que aplica o bloqueio ===== */
+/* Função que aplica o bloqueio */
 function aplicarSomenteLeitura(){
   const view=$("#view"), esc=escopoAtor();
   view.classList.toggle("readonly",esc.somenteLeitura);
   if(!esc.somenteLeitura) return;
-  const nomeRole={forn:"Fornecedor",transp:"Transportadora",op:"Operador",cli:"Cliente"};
+  const nomeRole={forn:"Fornecedor",transp:"Transportadora",lab:"Laboratório",op:"Operador",cli:"Cliente"};
   const aviso=document.createElement("div");
   aviso.className="quiet-warning";
   aviso.innerHTML='<span aria-hidden="true">🔒</span><div>'+
@@ -587,7 +586,7 @@ function carregar(d){
     if("evidencias" in d) EVIDENCIAS=d.evidencias||[];
     if("documento" in d) DOCUMENTO=d.documento;
   }
-  if(role==="forn"||role==="transp"){
+  if(role==="forn"||role==="transp"||role==="lab"){
     if("minhas" in d) MINHAS=d.minhas||[];
     if("cadeia" in d) CADEIA=d.cadeia||[];
     if("cadeiaEvidencias" in d) CADEIA_EVIDENCIAS=d.cadeiaEvidencias||[];
@@ -602,7 +601,7 @@ const sgn=n=>(n>0?"+":n<0?"−":"")+fmt(Math.abs(n));
 const pct=n=>n.toFixed(3).replace(".",",")+"%";
 const kg3=n=>(n/1000000).toLocaleString("pt-BR",{minimumFractionDigits:3,maximumFractionDigits:3});
 
-/* Navegação original (com "convidar" removido de forn) */
+/* Navegação atualizada (inclui laboratório) */
 const NAVS={
   op:[["lote","Visão do lote"],["evidencias","Evidências"],
       ["documento","Documento e verificação"],["atores","Atores da cadeia"],
@@ -611,17 +610,20 @@ const NAVS={
         ["cadeia","Minha cadeia"],["resultado","Resultado do lote"]],
   transp:[["entrega","Registrar transporte"],["minhas","Minhas evidências"],
           ["transferencia","Minha transferência"]],
+  lab:[["dashboard","Dashboard"],["enviar","Enviar laudo"],["minhas","Meus laudos"],
+       ["cadeia","Minha cadeia"],["resultado","Resultado do lote"]],
   cli:[["dashboard","Dashboard"]]};
 
 let SESSION={
   op:{iniciais:"—",nome:"Não autenticado",acesso:"Operação"},
   forn:{iniciais:"—",nome:"Não autenticado",acesso:"Participante"},
   transp:{iniciais:"—",nome:"Não autenticado",acesso:"Transportadora"},
+  lab:{iniciais:"—",nome:"Não autenticado",acesso:"Laboratório"},
   cli:{iniciais:"—",nome:"Não autenticado",acesso:"Convidado"}
 };
 
 const roleSolicitada=new URLSearchParams(window.location.search).get("role");
-let role=["op","forn","transp","cli"].includes(roleSolicitada)?roleSolicitada:"op";
+let role=["op","forn","transp","lab","cli"].includes(roleSolicitada)?roleSolicitada:"op";
 let page=NAVS[role][0][0];
 let walletAddress="";
 let walletChainId="";
@@ -816,7 +818,7 @@ function semLote(){
 const semDado='<span class="sm">—</span>';
 const val=(v,alt)=>v===undefined||v===null||v===""?(alt===undefined?semDado:alt):v;
 
-/* ========== TELAS (exatamente as mesmas, sem alterações) ========== */
+/* ========== TELAS ========== */
 T.lote=()=>{
   if(!LOTE||!ELEMENTOS.length) return semLote();
   const nd=ELEMENTOS[0];
@@ -1307,7 +1309,75 @@ T.dashboard=()=>{
   'dentro da banda declarada, e que nada disso mudou desde a ancoragem.</p></div>';
 };
 
-/* ===== PATCH 3 e 5: render com aplicação do bloqueio e persistência ===== */
+/* ===== TELA DO LABORATÓRIO ===== */
+T.lab = () => {
+  // Dados mockados para demonstração
+  const totalAmostras = 47;
+  const aprovadas = 38;
+  const reprovadas = 5;
+  const pendentes = 4;
+
+  const laudosRecentes = [
+    { id: "LAB-2025-001", cliente: "Mineradora Serra Clara", amostra: "Lote 1045", status: "aprovado", data: "13/06/2025" },
+    { id: "LAB-2025-002", cliente: "Neodym Processamento", amostra: "Lote 2100", status: "aprovado", data: "12/06/2025" },
+    { id: "LAB-2025-003", cliente: "CircularMet Recuperação", amostra: "Lote 0789", status: "reprovado", data: "10/06/2025" },
+    { id: "LAB-2025-004", cliente: "Magnetra Componentes", amostra: "Lote 3321", status: "pendente", data: "09/06/2025" },
+    { id: "LAB-2025-005", cliente: "Rota Mineral Logística", amostra: "Lote 4400", status: "aprovado", data: "08/06/2025" },
+    { id: "LAB-2025-006", cliente: "GeoAssay Laboratórios", amostra: "Lote 5510", status: "aprovado", data: "07/06/2025" }
+  ];
+
+  return `
+  <div class="crumb">Laboratório · análise de materiais</div>
+  <div class="headrow"><div class="grow"><h1>Dashboard de Análises</h1>
+  <p class="sub">Visão geral dos laudos emitidos e amostras em processo. Resultados são ancorados na blockchain para rastreabilidade.</p></div>
+  <button class="btn dl">Exportar relatório mensal</button></div>
+
+  <div class="stats" aria-label="Estatísticas do laboratório">
+    <div><span class="n">${totalAmostras}</span><span class="l">Total de amostras</span></div>
+    <div><span class="n">${aprovadas}</span><span class="l">Aprovadas</span></div>
+    <div><span class="n">${reprovadas}</span><span class="l">Reprovadas</span></div>
+    <div><span class="n">${pendentes}</span><span class="l">Pendentes</span></div>
+  </div>
+
+  <div class="correlation-banner" style="margin:16px 0">
+    <div><span>TAXA DE CONFORMIDADE</span><b>${Math.round((aprovadas/totalAmostras)*100)}%</b></div>
+    <p><strong>Última calibração:</strong> 10/06/2025 · todos os equipamentos dentro da especificação.</p>
+    <div class="banner-stat"><b>${aprovadas}/${totalAmostras}</b><span>laudos aprovados<br>no período</span></div>
+  </div>
+
+  <h2 style="margin-top:24px">Laudos recentes</h2>
+  <div class="panel scrollx">
+    <table>
+      <thead><tr><th>ID do laudo</th><th>Cliente</th><th>Amostra</th><th>Status</th><th>Data</th><th class="num">Detalhes</th></tr></thead>
+      <tbody>
+        ${laudosRecentes.map(l => `
+          <tr>
+            <td class="mono" style="font-size:12px">${l.id}</td>
+            <td>${l.cliente}</td>
+            <td>${l.amostra}</td>
+            <td>${vtag(l.status === 'aprovado' ? 'CONFORME' : (l.status === 'reprovado' ? 'DIVERGENTE' : 'PENDING'))}</td>
+            <td>${l.data}</td>
+            <td class="num"><button class="btn ghost sm dl">Abrir</button></td>
+          </tr>
+        `).join('')}
+      </tbody>
+    </table>
+  </div>
+
+  <div class="quiet-warning" style="margin-top:18px">
+    <span aria-hidden="true">📋</span>
+    <div><b>Controle de qualidade integrado</b>
+    <p>Os laudos são gerados a partir de evidências enviadas pelos fornecedores. O resultado é ancorado e disponível para as partes autorizadas. Todos os dados sensíveis permanecem no ambiente privado.</p></div>
+  </div>
+
+  <div class="actions" style="margin-top:16px">
+    <button class="btn" id="novoLaudo">Novo laudo</button>
+    <button class="btn ghost" id="verPendentes">Ver pendentes (${pendentes})</button>
+  </div>
+  `;
+};
+
+/* ===== RENDER ===== */
 function render(){
   const sessao=SESSION[role];
   $("#session").innerHTML='<span class="session-avatar">'+sessao.iniciais+'</span>'+
@@ -1334,13 +1404,12 @@ function render(){
     c.onclick=function(){ps.querySelectorAll(".chip").forEach(x=>
       x.setAttribute("aria-pressed",String(x===c)));});
 
-  /* ===== PATCH 3: aplicar bloqueio ===== */
+  /* Aplica bloqueio */
   aplicarSomenteLeitura();
 
   const bind=function(sel,msg){const el=$(sel);if(el)el.onclick=function(e){e.preventDefault();toast(msg);};};
   const bindOnchain=function(sel,msg){const el=$(sel);if(el)el.onclick=function(e){
     e.preventDefault();
-    /* ===== PATCH 4: verifica se é somente leitura ===== */
     if(escopoAtor().somenteLeitura){toast("Perfil somente leitura nesta visão.");return;}
     if(!walletAddress){toast("Conecte uma carteira autorizada antes de continuar.");return;}
     if(walletChainId!=="0xaa36a7"){toast("Troque a carteira para a rede Sepolia antes de assinar.");return;}
@@ -1375,7 +1444,6 @@ function render(){
       if(error) throw new Error("Blockchain confirmada, mas o Supabase recusou o cadastro: "+error.message);
       novo.dbId=row.id; ATORES.push(novo); ATOR_ATIVO=novo.id;
       persistirAtoresLocais();
-      /* ===== PATCH 5: persistir ator ativo ===== */
       persistirAtorAtivo();
       toast("Ator cadastrado na blockchain e no Supabase.");
       setTimeout(()=>render(),450);
@@ -1390,7 +1458,6 @@ function render(){
     do { id=novoActorId(); } while(ATORES.some(a=>a.id===id));
     const campo=$("#actorId"); if(campo) campo.value=id;
   };
-  /* ===== PATCH 5: salvar ator selecionado ===== */
   const atorSelecionado=$("#atorSelecionado");
   if(atorSelecionado) atorSelecionado.onchange=function(){
     ATOR_ATIVO=this.value||null; persistirAtorAtivo();
@@ -1413,13 +1480,24 @@ function render(){
   const updateDifference=()=>{if(!collected||!delivered||!difference)return;const a=parseMass(collected.value),b=parseMass(delivered.value);difference.innerHTML=Number.isFinite(a)&&Number.isFinite(b)?'<b>Diferença de custódia</b><span>'+Math.max(0,a-b).toLocaleString("pt-BR",{minimumFractionDigits:3,maximumFractionDigits:3})+' kg</span>':'<b>Diferença de custódia</b><span>Informe as duas massas</span>';};
   if(collected&&delivered){collected.oninput=updateDifference;delivered.oninput=updateDifference;}
 
+  /* Botões específicos do laboratório */
+  const novoLaudo=$("#novoLaudo");
+  if(novoLaudo) novoLaudo.onclick=function(){
+    if(escopoAtor().somenteLeitura){toast("Perfil somente leitura nesta visão.");return;}
+    toast("Abrindo formulário para novo laudo (simulação).");
+  };
+  const verPendentes=$("#verPendentes");
+  if(verPendentes) verPendentes.onclick=function(){
+    if(escopoAtor().somenteLeitura){toast("Perfil somente leitura nesta visão.");return;}
+    toast("Exibindo laudos pendentes (simulação).");
+  };
+
   document.querySelectorAll(".dl").forEach(b=>
     b.onclick=function(){toast("Arquivo gerado. Recalcule o hash e compare com a transação.");});
 }
 
 $("#home").onclick=function(){page=NAVS[role][0][0];render();};
 
-/* ===== PATCH 5: carregar ator ativo antes do render inicial ===== */
 carregarAtorAtivo();
 render();
 restoreWallet();
