@@ -217,6 +217,16 @@ Evidence may include:
 - transformation record;
 - manufacturing or recycling record.
 
+- 
+## Navegação do ator de demonstração
+
+O MVP inclui um seletor de atores abaixo do formulário de registro. Após o registro de um ator, o operador pode selecioná-lo para navegar pelo sistema usando a função e o escopo de visibilidade do ator.
+
+Este mecanismo de demonstração evita a necessidade de um login e carteira separados para cada participante fictício. A carteira conectada assina a transação de registro, enquanto cada ator recebe seu próprio ID único e persistente `actorId`.
+
+Trata-se de um identificador opaco gerado aleatoriamente, armazenado como `actor_id` no Supabase e registrado como `actorId` na blockchain. É único, mas não é um token transferível, stablecoin, NFT, credencial ou chave de acesso.
+
+O seletor de atores destina-se apenas à demonstração do MVP. Em produção, será substituído por identidade verificada, contas autenticadas, autorização de carteira e políticas de acesso ao backend/RLS.
 ---
 
 ## 7. On-chain data
