@@ -23,7 +23,7 @@ The system separates responsibilities:
 - **Chainlink CRE + TEE:** document integrity checks, deterministic extraction, graph correlation, and confidential calculation;
 - **Blockchain:** minimal identity, authorship, integrity, state, and result commitments;
 - **DPP:** the evolving Digital Product Passport associated with a product or material lot;
-- **Invited client:** access to an authorized dashboard and downloadable reports, without evidence upload privileges.
+- **MVP client:** open read-only access to the demonstration mass-balance dashboard, without evidence upload privileges. Production access will be restricted to results explicitly authorized by the responsible company.
 
 > The blockchain is not ExploreChem's corporate database. It stores only what is required to prove submission, integrity, state, and result history.
 
@@ -59,7 +59,7 @@ The MVP is designed to:
 - calculate a mass balance for a specific lot;
 - append new result versions without deleting previous ones;
 - restrict each participant to an authorized view of the chain;
-- provide invited clients with read-only dashboards and downloads.
+- provide clients with an open read-only mass-balance dashboard for the MVP demonstration, while keeping production access authorization as a separate requirement.
 
 The MVP does not claim that cryptography alone proves that a physical event happened. It proves document integrity and rule-based consistency. Material truth still depends on authorized issuers, audits, sensors, official sources, and external enforcement.
 
@@ -125,13 +125,13 @@ ExploreChem may receive evidence from:
 - generates a verifiable mass-balance report;
 - accesses the private graph only within its operational scope.
 
-### Invited client
+### MVP client
 
-- receives access from the company responsible for a specific result;
-- sees only the authorized dashboard and provenance summary;
-- downloads the report and integrity proof;
+- opens the demonstration mass-balance dashboard without an invitation;
+- receives read-only access for a simpler jury and user experience;
 - cannot upload, modify, or delete evidence;
-- cannot access other lots or the complete private graph.
+- does not receive private documents or the complete private graph;
+- will require authentication and explicit result authorization in production.
 
 ### Visibility horizon
 
@@ -140,7 +140,7 @@ ExploreChem may receive evidence from:
 | CRE/TEE | Private graph required for correlation and calculation |
 | Company or actor | Own evidence, direct relationships, and authorized results |
 | Carrier | Assigned pickup, delivery, and incident information |
-| Invited client | Specifically shared dashboard and downloads |
+| MVP client | Open read-only demonstration dashboard; production access requires explicit authorization |
 | Public blockchain observer | Opaque actor/evidence/result IDs, wallets, hashes, states, revision links, calldata, events and block times |
 
 The private correlation identifier never grants access. Authorization is enforced independently by application and database policies.
@@ -217,16 +217,37 @@ Evidence may include:
 - transformation record;
 - manufacturing or recycling record.
 
-- 
-## Navegação do ator de demonstração
+## Demonstration actor navigation
 
-O MVP inclui um seletor de atores abaixo do formulário de registro. Após o registro de um ator, o operador pode selecioná-lo para navegar pelo sistema usando a função e o escopo de visibilidade do ator.
+The MVP includes an actor selector below the registration form. After an actor is registered, the operator can select it to navigate through the system using that actor's role and visibility scope.
 
-Este mecanismo de demonstração evita a necessidade de um login e carteira separados para cada participante fictício. A carteira conectada assina a transação de registro, enquanto cada ator recebe seu próprio ID único e persistente `actorId`.
+This demonstration mechanism avoids requiring a separate login and wallet for every fictional participant. The connected administrative wallet signs actor registration, while each actor receives its own unique and persistent `actorId`.
 
-Trata-se de um identificador opaco gerado aleatoriamente, armazenado como `actor_id` no Supabase e registrado como `actorId` na blockchain. É único, mas não é um token transferível, stablecoin, NFT, credencial ou chave de acesso.
+`actorId` is an opaque randomly generated identifier, stored as `actor_id` in Supabase and registered as `actorId` on-chain. It is unique, but it is not a transferable token, stablecoin, NFT, credential, or access key.
 
-O seletor de atores destina-se apenas à demonstração do MVP. Em produção, será substituído por identidade verificada, contas autenticadas, autorização de carteira e políticas de acesso ao backend/RLS.
+The selector is intended only for the MVP demonstration. In production it will be replaced by verified identities, authenticated accounts, wallet authorization, and backend/RLS access policies.
+
+### Demonstration editing permissions
+
+| Profile | Allowed write scope |
+|---|---|
+| Operator | Registers actors and monitors processing; does not submit participant evidence |
+| Miner (`MINER`) | Submits only mining evidence through the supplier view |
+| Carrier (`CARRIER`) | Records only assigned transport and custody information |
+| Laboratory (`LABORATORY`) | Submits only laboratory reports and analysis information |
+| Refiner (`REFINER`) | Submits only purification evidence through the supplier view |
+| Recycler (`RECYCLER`) | Submits only recycling evidence through the supplier view |
+| Manufacturer (`MANUFACTURER`) | Submits only manufacturing evidence through the supplier view |
+| Client | Read-only mass-balance dashboard |
+
+The interface disables editing outside the selected actor's permitted view. The database validation layer also checks structural compatibility between `actor_db_id`, `actor_type`, the operation, and the submitted document type. This structural check does not replace production identity authentication.
+
+### Temporary public Supabase access
+
+To support a simple hands-on MVP demonstration without creating a Supabase account for every fictional participant, anonymous `SELECT` and `INSERT` policies are temporarily enabled only for the demonstration actor registry. All demonstration data is fictional. This temporary policy means the actor registry is not presented as production-grade access control.
+
+Operational evidence, private documents, transfers, and results are not intended to use unrestricted anonymous writes. In production, direct anonymous insertion will be removed. A wallet-authenticated Edge Function will verify the signature, nonce, actor ownership, and operational role before writing through protected backend/RLS policies. Supabase secret and `service_role` keys are never included in the frontend or public repository.
+
 ---
 
 ## 7. On-chain data
@@ -875,15 +896,15 @@ The supplier sees its evidence, assigned transfer, direct counterparty, and indi
 
 ### Client portal
 
-The responsible company invites the client to a specific result. The client is the administrator of its restricted space and receives:
+For the MVP demonstration, the client opens the mass-balance dashboard directly in read-only mode. This deliberate simplification improves the jury and user experience without granting evidence-writing privileges. The client receives:
 
-- the shared result dashboard;
+- the demonstration result dashboard;
 - a provenance summary with protected identities when required;
 - the verifiable report;
 - the integrity proof;
 - download access.
 
-The client cannot upload evidence, access other lots, or receive the complete `correlationGroupId`. Full disclosure of supply-chain identities requires explicit authorization from the participating companies.
+The client cannot upload, modify, or delete evidence and does not receive the complete private `correlationGroupId`. In production, authentication and explicit result authorization will replace the open demonstration access. Full disclosure of supply-chain identities requires explicit authorization from the participating companies.
 
 ---
 
@@ -1077,7 +1098,20 @@ Tool results will be published only after execution and human review. This READM
   per-revision private salts;
 - CRE encoder updated to the corrected static report ABI and sender configured
   to use separate transactions;
-- operator, supplier, carrier, and invited-client experiences.
+- operator, supplier, carrier, laboratory, and client experiences;
+- open read-only client access for the MVP demonstration, replaced by authenticated and explicitly authorized result access in production;
+- wallet-authenticated Edge Functions and restrictive backend/RLS policies for production writes.
+
+### Implemented in the current frontend and demonstration database
+
+- actor registration and persistent demonstration actor selection;
+- operator registration scope, with participant evidence editing disabled for the operator;
+- separate carrier and laboratory editing experiences;
+- supplier-view editing for miners, refiners, recyclers, and manufacturers;
+- read-only client mass-balance dashboard without an invitation requirement;
+- frontend role locks that preserve navigation while disabling unauthorized fields, uploads, and submission actions;
+- structural database validation that associates laboratory reports with `LABORATORY`, transport with `CARRIER`, mining with `MINER`, purification with `REFINER`, recycling with `RECYCLER`, and manufacturing with `MANUFACTURER`;
+- temporary anonymous actor-registry access for fictional MVP data only.
 
 This distinction prevents planned architecture from being presented as completed functionality.
 
@@ -1098,9 +1132,18 @@ included in the repository.
 
 Published application: [Open ExploreChem](https://armanfm.github.io/ExplorerChem/)
 
-The interface presents the authorized operator, supplier, carrier, and client
-experiences. Connect a wallet on Ethereum Sepolia to test the on-chain actions.
-The demonstration data shown in the interface is fictional.
+The interface presents operator, supplier, carrier, laboratory, and client
+experiences. The actor selector simulates each fictional participant while
+preserving its editing scope. Actor registration on-chain is owner-only and
+therefore requires the administrative deployment wallet. Other wallets can
+connect, but they can perform an on-chain action only when the contract has
+authorized that wallet for the corresponding `actorId`.
+
+The client dashboard is intentionally open in read-only mode for the MVP. The
+Supabase actor registry also uses temporary anonymous read and insert policies
+so the fictional demonstration can run without separate participant accounts.
+This is a disposable demonstration configuration, not the production security
+model. All demonstration data shown in the interface is fictional.
 
 ### Integration change
 
@@ -1179,3 +1222,4 @@ Responsible for technical leadership, software and system architecture, smart-co
 Responsible for product leadership, problem framing, requirements, user experience, business validation, product communication, and presentation strategy.
 
 The original concept and product vision belong to Armando Freire and Jéssica. All final product decisions, source code, documentation, demonstrations, and submissions are reviewed and approved by the ExploreChem team. The team retains full authorship and responsibility for the project.
+
