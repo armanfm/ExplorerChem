@@ -320,7 +320,7 @@ input.mono,select.mono{font-family:"IBM Plex Mono",monospace;font-size:12.5px}
 .trust-note{margin-top:auto;padding:12px 13px;border-left:3px solid var(--nd);border-radius:0 10px 10px 0;background:var(--nd-soft)}.trust-note b{font-size:10.5px}.trust-note p{margin:4px 0 0;color:var(--ink2);font-size:9.5px;line-height:1.5}
 .correlation-banner{display:grid;grid-template-columns:auto 1fr auto;align-items:center;gap:18px;margin:0 0 14px;padding:15px 18px;border:1px solid color-mix(in srgb,var(--nd) 20%,var(--rule));border-radius:15px;background:linear-gradient(110deg,var(--tint),var(--panel));box-shadow:0 8px 24px rgba(21,68,71,.045)}
 .correlation-banner>div:first-child{display:flex;flex-direction:column}.correlation-banner>div:first-child span{color:var(--nd);font-size:8px;font-weight:700;letter-spacing:.11em}.correlation-banner>div:first-child b{font-size:14px}.correlation-banner p{margin:0;padding-left:18px;border-left:1px solid var(--rule);color:var(--ink2);font-size:10.5px;line-height:1.5}.correlation-banner p strong{color:var(--ink)}
-.banner-stat{display:flex;align-items:center;gap:7px;padding:8px 10px;border-radius:10px;background:var(--nd-soft);color:var(--nd)}.banner-stat b{font-family:"IBM Plex Mono",monospace;font-size:20px}.banner-stat span{font-size:8.5px;line-height:1.35}
+.banner-stat{display:flex;align-items:center;justify-content:center;justify-self:end;align-self:center;width:150px;min-height:42px;box-sizing:border-box;gap:8px;padding:8px 12px;border-radius:10px;background:var(--nd-soft);color:var(--nd);line-height:1;white-space:nowrap}.banner-stat b{display:block;font-family:"IBM Plex Mono",monospace;font-size:20px;line-height:1}.banner-stat span{display:flex;align-items:center;text-align:left;font-size:8.5px;line-height:1.25}
 .custody,.evidence-card,.balance-card{padding:24px 26px}
 .custody-step .dot{border-radius:10px}
 .custody-step.done .dot{background:linear-gradient(145deg,var(--nd2),var(--nd));border-color:var(--nd)}
@@ -610,7 +610,7 @@ const NAVS={
         ["cadeia","Minha cadeia"],["resultado","Resultado do lote"]],
   transp:[["entrega","Registrar transporte"],["minhas","Minhas evidências"],
           ["transferencia","Minha transferência"]],
-  lab:[["dashboard","Dashboard"],["enviar","Enviar laudo"],["minhas","Meus laudos"],
+  lab:[["lab","Análise"],["laudo","Enviar laudo"],["minhas","Meus laudos"],
        ["cadeia","Minha cadeia"],["resultado","Resultado do lote"]],
   cli:[["dashboard","Dashboard"]]};
 
@@ -618,8 +618,8 @@ let SESSION={
   op:{iniciais:"—",nome:"Não autenticado",acesso:"Operação"},
   forn:{iniciais:"—",nome:"Não autenticado",acesso:"Participante"},
   transp:{iniciais:"—",nome:"Não autenticado",acesso:"Transportadora"},
-  lab:{iniciais:"—",nome:"Não autenticado",acesso:"Análise"},
-  cli:{iniciais:"—",nome:"Não autenticado",acesso:"Convidado"}
+  lab:{iniciais:"—",nome:"Não autenticado",acesso:"Laboratório"},
+  cli:{iniciais:"—",nome:"Cliente",acesso:"Balanço de massa"}
 };
 
 const roleSolicitada=new URLSearchParams(window.location.search).get("role");
@@ -1091,6 +1091,22 @@ T.cadastro=()=>
   '</select></div><div id="atorSelecionadoInfo" class="note">'+
   (ATOR_ATIVO?'Perfil ativo selecionado.':'Cadastre um ator para habilitar a navegação.')+'</div></div></section>';
 
+T.laudo=()=>
+  '<div class="crumb">Análise laboratorial'+(LOTE?' · lote <span class="mono">'+val(LOTE.lotId)+'</span>':'')+'</div>'+ 
+  '<h1>Enviar laudo</h1><p class="sub">Envie o laudo analítico da amostra. O documento recebe um hash no momento do envio e fica disponível para a correlação do lote.</p><div class="split"><div class="stack">'+
+  '<div class="panel pad"><h3>Arquivo do laudo</h3>'+ 
+  '<label class="drop" for="arquivoLaudo"><b>Selecione ou solte o arquivo</b>Laudo assinado em PDF, até 20 MB</label>'+ 
+  '<input id="arquivoLaudo" type="file" accept="application/pdf" style="display:none">'+ 
+  '<div id="arquivoLaudoInfo"></div><p class="note">O evidenceHash é calculado sobre os bytes originais do laudo antes da submissão on-chain.</p></div></div>'+ 
+  '<div class="stack"><div class="panel pad"><h3>Informações da análise</h3>'+ 
+  '<div class="field"><label for="amostraLab">Identificação da amostra</label><input id="amostraLab" placeholder="Código da amostra"></div>'+ 
+  '<div class="f2"><div class="field"><label for="ltLab">Lote</label><input id="ltLab" class="mono" placeholder="Identificador do lote"></div>'+ 
+  '<div class="field"><label for="metodoLab">Método analítico</label><input id="metodoLab" placeholder="Método utilizado"></div></div>'+ 
+  '<div class="field"><label for="resultadoLab">Resultado da análise</label><select id="resultadoLab"><option value="">Selecione…</option><option>Conforme</option><option>Não conforme</option><option>Pendente de revisão</option></select></div>'+ 
+  '<div class="field"><label for="analistaLab">Responsável técnico</label><input id="analistaLab" placeholder="Nome do responsável técnico"></div>'+ 
+  '<p class="note"><b>Não atestado:</b> os campos auxiliares organizam o envio; os valores oficiais são extraídos e validados a partir do laudo ancorado.</p></div>'+ 
+  '<div class="actions"><button class="btn" id="enviarLaudo">Assinar e enviar laudo</button></div></div></div>';
+
 T.enviar=()=>
   '<div class="crumb">Envio de evidência'+(LOTE?' · lote <span class="mono">'+val(LOTE.lotId)+'</span>':'')+'</div>'+
   '<h1>Enviar evidência</h1><p class="sub">Envie apenas o documento que é seu. Ele recebe um hash '+
@@ -1258,7 +1274,7 @@ T.dashboard=()=>{
     vazio("Nenhum resultado compartilhado com você",
       "Quando uma empresa compartilhar um resultado ancorado, ele aparece aqui com o relatório e o comprovante.");
   const provenance=LOTE.clientProvenance||[];
-  return '<div class="crumb">Compartilhado por '+val(LOTE.sharingCompany)+' · acesso por convite</div>'+
+  return '<div class="crumb">Balanço de massa · demonstração aberta</div>'+
   '<div class="headrow"><div class="grow"><h1>Balanço verificado</h1>'+
   '<p class="sub">Resultado autorizado do lote '+val(LOTE.lotId)+', com janela documental '+
   val(LOTE.documentWindow)+'. Confira se o relatório é o mesmo que foi ancorado.</p></div>'+
@@ -1311,20 +1327,12 @@ T.dashboard=()=>{
 
 /* ===== TELA DO LABORATÓRIO ===== */
 T.lab = () => {
-  // Dados mockados para demonstração
-  const totalAmostras = 47;
-  const aprovadas = 38;
-  const reprovadas = 5;
-  const pendentes = 4;
-
-  const laudosRecentes = [
-    { id: "LAB-2025-001", cliente: "Mineradora Serra Clara", amostra: "Lote 1045", status: "aprovado", data: "13/06/2025" },
-    { id: "LAB-2025-002", cliente: "Neodym Processamento", amostra: "Lote 2100", status: "aprovado", data: "12/06/2025" },
-    { id: "LAB-2025-003", cliente: "CircularMet Recuperação", amostra: "Lote 0789", status: "reprovado", data: "10/06/2025" },
-    { id: "LAB-2025-004", cliente: "Magnetra Componentes", amostra: "Lote 3321", status: "pendente", data: "09/06/2025" },
-    { id: "LAB-2025-005", cliente: "Rota Mineral Logística", amostra: "Lote 4400", status: "aprovado", data: "08/06/2025" },
-    { id: "LAB-2025-006", cliente: "GeoAssay Laboratórios", amostra: "Lote 5510", status: "aprovado", data: "07/06/2025" }
-  ];
+  const laudosRecentes = [];
+  const totalAmostras = laudosRecentes.length;
+  const aprovadas = 0;
+  const reprovadas = 0;
+  const pendentes = 0;
+  const taxaConformidade = totalAmostras ? Math.round((aprovadas/totalAmostras)*100)+"%" : "—";
 
   return `
   <div class="crumb">Laboratório · análise de materiais</div>
@@ -1340,8 +1348,8 @@ T.lab = () => {
   </div>
 
   <div class="correlation-banner" style="margin:16px 0">
-    <div><span>TAXA DE CONFORMIDADE</span><b>${Math.round((aprovadas/totalAmostras)*100)}%</b></div>
-    <p><strong>Última calibração:</strong> 10/06/2025 · todos os equipamentos dentro da especificação.</p>
+    <div><span>TAXA DE CONFORMIDADE</span><b>${taxaConformidade}</b></div>
+    <p><strong>Calibração:</strong> nenhum registro disponível.</p>
     <div class="banner-stat"><b>${aprovadas}/${totalAmostras}</b><span>laudos aprovados<br>no período</span></div>
   </div>
 
@@ -1350,7 +1358,7 @@ T.lab = () => {
     <table>
       <thead><tr><th>ID do laudo</th><th>Cliente</th><th>Amostra</th><th>Status</th><th>Data</th><th class="num">Detalhes</th></tr></thead>
       <tbody>
-        ${laudosRecentes.map(l => `
+        ${laudosRecentes.length ? laudosRecentes.map(l => `
           <tr>
             <td class="mono" style="font-size:12px">${l.id}</td>
             <td>${l.cliente}</td>
@@ -1359,7 +1367,7 @@ T.lab = () => {
             <td>${l.data}</td>
             <td class="num"><button class="btn ghost sm dl">Abrir</button></td>
           </tr>
-        `).join('')}
+        `).join('') : '<tr><td colspan="6" style="text-align:center;padding:28px">Nenhum laudo registrado.</td></tr>'}
       </tbody>
     </table>
   </div>
@@ -1467,6 +1475,7 @@ function render(){
 
   bindOnchain("#enviarEv","Evidência enviada. Hash gravado, estado pendente.");
   bindOnchain("#enviarTransporte","Entrega registrada. EvidenceHash ancorado como PENDING.");
+  bindOnchain("#enviarLaudo","Laudo enviado. Hash gravado, estado pendente.");
 
   const bindFile=function(inputSel,infoSel){const input=$(inputSel),info=$(infoSel);if(input&&info)input.onchange=function(){
     const file=input.files&&input.files[0];
@@ -1474,6 +1483,7 @@ function render(){
   };};
   bindFile("#arquivo","#arquivoInfo");
   bindFile("#arquivoTransporte","#arquivoTransporteInfo");
+  bindFile("#arquivoLaudo","#arquivoLaudoInfo");
 
   const collected=$("#massaColetada"),delivered=$("#massaEntregue"),difference=$("#custodyDifference");
   const parseMass=v=>{const clean=v.replace(/\s*kg/gi,"").replace(/\./g,"").replace(",",".");return Number(clean);};
@@ -1484,7 +1494,7 @@ function render(){
   const novoLaudo=$("#novoLaudo");
   if(novoLaudo) novoLaudo.onclick=function(){
     if(escopoAtor().somenteLeitura){toast("Perfil somente leitura nesta visão.");return;}
-    toast("Abrindo formulário para novo laudo (simulação).");
+    page="laudo"; render();
   };
   const verPendentes=$("#verPendentes");
   if(verPendentes) verPendentes.onclick=function(){
