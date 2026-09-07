@@ -673,6 +673,13 @@ async function usuarioSupabaseAtual(){
 }
 async function urlAssinada(bucket,path){
   if(!bucket||!path) throw new Error("O documento ainda não possui um caminho de armazenamento.");
+
+  // O bucket de evidências é privado. Antes de solicitar a signed URL,
+  // garante a sessão Supabase da demonstração e aplica o claim de atores.
+  // Isso afeta somente o acesso ao arquivo original já armazenado;
+  // não depende de novo broadcast nem altera a evidência on-chain.
+  await garantirSessaoSupabaseDemo();
+
   const {data,error}=await supabaseClient.storage.from(bucket).createSignedUrl(path,3600);
   if(error) throw new Error("Não foi possível preparar o download: "+error.message);
   if(!data?.signedUrl) throw new Error("O armazenamento não retornou uma URL de download.");
@@ -684,68 +691,6 @@ async function abrirDocumento(item){
     window.open(url,"_blank","noopener,noreferrer");
   }catch(error){console.error(error);toast(error.message||"Não foi possível abrir o documento.");}
 }
-function hashCurto(value){
-  const v=String(value||"");
-  return /^0x[0-9a-fA-F]{64}$/.test(v)?v.slice(0,10)+"…"+v.slice(-8):v||"—";
-}
-function txReal(value){
-  const v=String(value||"");
-  return /^0x[0-9a-fA-F]{64}$/.test(v)&&!/^0x0{64}$/i.test(v);
-}
-function imprimirProvaCorrelacao(){
-  const ordem={MINER:1,CARRIER:2,LABORATORY:3,REFINER:4,PROCESSOR:4,MANUFACTURER:5,RECYCLER:6,OTHER:9};
-  const docs=[...EVIDENCIAS_REMOTAS].sort((a,b)=>(ordem[a.actorType]||9)-(ordem[b.actorType]||9)||String(a.submittedAt||"").localeCompare(String(b.submittedAt||"")));
-  if(!docs.length){toast("Ainda não há evidências para imprimir.");return;}
-  const matched=docs.filter(e=>String(e.state||"").toUpperCase()==="MATCHED");
-  const txs=matched.filter(e=>txReal(e.matchTxHash));
-  const zeroTx=matched.length-txs.length;
-  const geradoEm=new Date().toISOString();
-  const linhas=docs.map((e,i)=>{
-    const estado=String(e.state||"PENDING").toUpperCase();
-    const integridade=estado==="MATCHED"?"VERIFICADA NO MATCH":"NÃO CONCLUÍDA";
-    const matchTx=txReal(e.matchTxHash)?e.matchTxHash:(e.matchTxHash||"—");
-    return `<tr>
-      <td>${i+1}</td>
-      <td><b>${escaparHtml(e.actorName||"Participante")}</b><br><small>${escaparHtml(e.actorType||"")}</small></td>
-      <td><code>${escaparHtml(e.displayCode||e.evidenceId||"—")}</code><br><small>${escaparHtml(e.originalFilename||"")}</small></td>
-      <td>${escaparHtml(estado)}</td>
-      <td>${escaparHtml(integridade)}</td>
-      <td><code>${escaparHtml(e.evidenceHash||"—")}</code></td>
-      <td><code>${escaparHtml(matchTx)}</code></td>
-      <td>${escaparHtml(e.matchedAt||"—")}</td>
-    </tr>`;
-  }).join("");
-  const html=`<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><title>ExploreChem — Prova CRE-TEE</title>
-  <style>
-    @page{size:A4 landscape;margin:12mm}
-    *{box-sizing:border-box}body{font-family:Arial,sans-serif;color:#17262d;margin:0;font-size:10px}
-    h1{font-size:22px;margin:0 0 4px}h2{font-size:13px;margin:18px 0 7px}.muted{color:#64777d}.mono,code{font-family:Consolas,monospace;word-break:break-all}
-    .head{border-bottom:2px solid #087e83;padding-bottom:10px;margin-bottom:12px}.brand{color:#087e83;font-weight:700;letter-spacing:.04em}
-    .grid{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin:12px 0}.card{border:1px solid #cfdede;border-radius:8px;padding:9px}.card b{display:block;font-size:17px;color:#087e83}
-    .policy{border-left:4px solid #087e83;background:#edf7f5;padding:9px 11px;margin:10px 0;line-height:1.45}
-    table{width:100%;border-collapse:collapse;table-layout:fixed}th,td{border:1px solid #d9e4e4;padding:6px;vertical-align:top}th{background:#eef5f5;text-align:left;font-size:8.5px;text-transform:uppercase;letter-spacing:.04em}
-    th:nth-child(1){width:3%}th:nth-child(2){width:12%}th:nth-child(3){width:14%}th:nth-child(4){width:7%}th:nth-child(5){width:10%}th:nth-child(6){width:18%}th:nth-child(7){width:24%}th:nth-child(8){width:12%}
-    td code{font-size:7.8px}.foot{margin-top:12px;padding-top:8px;border-top:1px solid #ccdada;line-height:1.5}.warn{color:#8b6113}
-    @media print{button{display:none}}
-  </style></head><body>
-  <div class="head"><div class="brand">EXPLORECHEM · ARTEFATO DE CORRELAÇÃO</div><h1>Prova de processamento CRE/TEE</h1><div class="muted">Gerado em ${escaparHtml(geradoEm)} · Ethereum Sepolia · contrato ${escaparHtml(EXPLORERCHEM_CONTRACT_ADDRESS)}</div></div>
-  <div class="grid">
-    <div class="card"><span>Evidências</span><b>${docs.length}</b></div>
-    <div class="card"><span>MATCHED</span><b>${matched.length}</b></div>
-    <div class="card"><span>Tx de match reais</span><b>${txs.length}</b></div>
-    <div class="card"><span>Pendentes</span><b>${docs.length-matched.length}</b></div>
-  </div>
-  <div class="policy"><b>Política operacional.</b> Novas evidências podem ser verificadas imediatamente para demonstração e retry. Relações já MATCHED são revalidadas no ciclo semanal. A verificação imediata usa as mesmas regras de hash, extração e correlação; muda somente o momento do disparo.</div>
-  <h2>Evidências e referências on-chain</h2>
-  <table><thead><tr><th>#</th><th>Participante</th><th>Evidência</th><th>Estado</th><th>Integridade</th><th>evidenceHash</th><th>Tx de MATCH</th><th>Matched em</th></tr></thead><tbody>${linhas}</tbody></table>
-  <div class="foot"><b>Leitura do artefato.</b> O evidenceHash identifica os bytes ancorados do documento. A transação de MATCH é a referência pública da confirmação aceita on-chain. Este PDF é um artefato de conferência gerado a partir do estado persistido após o processamento; ele não substitui os documentos originais nem afirma verdade física do material.${zeroTx?` <span class="warn">Há ${zeroTx} evidência(s) MATCHED sem txHash real carregado nesta tela; atualize os dados após o broadcast antes de salvar o PDF.</span>`:""}</div>
-  </body></html>`;
-  const w=window.open("","_blank");
-  if(!w){toast("O navegador bloqueou a janela de impressão. Permita pop-ups para gerar o PDF.");return;}
-  w.document.open();w.document.write(html);w.document.close();
-  setTimeout(()=>{w.focus();w.print();},450);
-}
-
 function baixarSnapshotBalanco(){
   const snapshot={
     tipo:"ExploreChem balance snapshot",
@@ -767,7 +712,7 @@ async function carregarDocumentosRemotos(){
   carregarEvidenciasLocais();
   try{
     const {data,error}=await supabaseClient.from("explorerchem_evidences")
-      .select("id,evidence_id,display_code,actor_db_id,document_type,calculation_role,state,evidence_hash,storage_bucket,storage_path,original_filename,submission_tx_hash,match_tx_hash,matched_at,created_at")
+      .select("id,evidence_id,display_code,actor_db_id,document_type,calculation_role,state,evidence_hash,storage_bucket,storage_path,original_filename,submission_tx_hash,created_at")
       .order("created_at",{ascending:false}).limit(100);
     if(!error&&Array.isArray(data)){
       const remotos=data.map(e=>({
@@ -776,7 +721,7 @@ async function carregarDocumentosRemotos(){
         actorType:ATORES.find(a=>a.dbId===e.actor_db_id)?.papel,
         documentType:e.document_type,calculationRole:e.calculation_role,state:e.state,evidenceHash:e.evidence_hash,
         storageBucket:e.storage_bucket,storagePath:e.storage_path,originalFilename:e.original_filename,
-        submissionTxHash:e.submission_tx_hash,matchTxHash:e.match_tx_hash,matchedAt:e.matched_at,submittedAt:e.created_at
+        submissionTxHash:e.submission_tx_hash,submittedAt:e.created_at
       }));
       const byId=new Map(remotos.map(e=>[e.evidenceId,e]));
       EVIDENCIAS_REMOTAS.forEach(e=>{if(!byId.has(e.evidenceId))byId.set(e.evidenceId,e);});
@@ -1367,9 +1312,8 @@ T.evidencias=()=>{
   const q=(LOTE&&LOTE.queue)||{};
   const filas=evidenciasExibidas();
   return '<div class="crumb">Lote <span class="mono">'+(LOTE?val(LOTE.lotId):semDado)+'</span></div>'+
-  '<div class="headrow"><div class="grow"><h1>Fila e correlação privada</h1><p class="sub">Cada documento entra como PENDING. O CRE/TEE '+
-  'confirma o hash, extrai novamente os dados do documento e valida as relações antes de marcar MATCHED.</p></div>'+
-  '<div class="actions"><button class="btn ghost" id="printCorrelationProof">Imprimir prova CRE/TEE</button></div></div>'+
+  '<h1>Fila e correlação privada</h1><p class="sub">Cada documento entra como PENDING. O CRE/TEE '+
+  'confirma o hash, extrai novamente os dados do documento e valida as relações antes de marcar MATCHED.</p>'+
   '<div class="stats" aria-label="Fila determinística">'+
   '<div><span class="n mono">EvidenceSubmitted</span><span class="l">Gatilho principal</span></div>'+
   '<div><span class="n">'+val(q.pendingCount,0)+'</span><span class="l">PENDING na fila</span></div>'+
@@ -1587,7 +1531,7 @@ T.minhas=()=>
         '<td>'+val(e.doc)+'<div class="sm mono">'+val(e.ref)+'</div></td><td>'+val(e.enviada)+'</td>'+
         '<td>'+vtag(val(e.status,"PENDING"))+'</td>'+
         '<td class="hash" style="max-width:180px">'+val(e.hash)+'</td>'+
-        '<td class="num"><button class="btn ghost sm" data-download-evidence="'+escaparHtml(e.id)+'">Baixar</button></td></tr>').join("")+
+        '<td class="num"><button class="btn ghost sm" data-download-evidence="'+escaparHtml(e.id)+'">Baixar original</button></td></tr>').join("")+
       '</tbody></table></div>'
   : vazio("Você ainda não enviou evidências",
         role==="transp"
@@ -1688,14 +1632,14 @@ function documentosClienteHtml(){
     : '<button class="btn ghost" data-download-snapshot="balance">Baixar snapshot do balanço</button>';
   return '<section class="panel pad" style="margin-top:14px"><div class="section-title"><div>'+
     '<span class="section-eyebrow">DOCUMENTOS PARA CONFERÊNCIA</span><h2>Arquivos usados na prova</h2>'+
-    '<p>O PDF original permite recalcular o evidenceHash. O relatório do balanço é um arquivo separado do PDF de cada participante.</p></div>'+
+    '<p>O arquivo original permite recalcular o evidenceHash. O relatório do balanço é um artefato separado dos documentos de cada participante.</p></div>'+
     '<div class="actions">'+reportAction+'</div></div>'+
     (docs.length
       ? '<div class="panel scrollx"><table><thead><tr><th>Participante</th><th>Documento</th><th>Estado</th><th>evidenceHash</th><th class="num">Download</th></tr></thead><tbody>'+
         docs.map(e=>'<tr><td>'+escaparHtml(e.actorName||"Participante")+'</td><td>'+escaparHtml(e.originalFilename||"Documento")+
           '<div class="sm mono">'+escaparHtml(e.displayCode||e.evidenceId||"")+'</div></td><td>'+
           vtag(e.state||"PENDING")+'</td><td class="hash" style="max-width:220px">'+escaparHtml(e.evidenceHash||"")+
-          '</td><td class="num"><button class="btn ghost sm" data-download-evidence="'+escaparHtml(e.evidenceId)+'">Baixar PDF</button></td></tr>').join("")+
+          '</td><td class="num"><button class="btn ghost sm" data-download-evidence="'+escaparHtml(e.evidenceId)+'">Baixar original</button></td></tr>').join("")+
         '</tbody></table></div>'
       : '<div class="filerow"><b>Nenhum documento disponível ainda</b><span>Após o envio de uma evidência, ela aparecerá aqui quando o registro estiver autorizado.</span></div>')+
     '<p class="note">O cliente continua somente leitura: pode conferir o balanço, o resultHash e os documentos disponibilizados, mas não altera evidências nem envia arquivos.</p></section>';
@@ -1942,9 +1886,6 @@ function render(){
     if(escopoAtor().somenteLeitura){toast("Perfil somente leitura nesta visão.");return;}
     toast("Exibindo laudos pendentes (simulação).");
   };
-
-  const printCorrelationProof=$("#printCorrelationProof");
-  if(printCorrelationProof) printCorrelationProof.onclick=function(e){e.preventDefault();imprimirProvaCorrelacao();};
 
   document.querySelectorAll("[data-download-evidence]").forEach(b=>b.onclick=async function(e){
     e.preventDefault();
