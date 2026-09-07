@@ -1355,21 +1355,6 @@ async function refreshWalletChain(){
   return walletChainId;
 }
 
-function normalizarNomeAtor(value){
-  return String(value||"")
-    .normalize("NFKC")
-    .trim()
-    .replace(/\s+/g," ")
-    .toLocaleLowerCase("pt-BR");
-}
-
-function resolverActorDbIdPorNome(nome){
-  const chave=normalizarNomeAtor(nome);
-  if(!chave)return null;
-  const ator=ATORES.find(a=>normalizarNomeAtor(a.nome)===chave);
-  return ator?.dbId||null;
-}
-
 async function enviarEvidenciaReal(button){
   const esc=escopoAtor();
   if(esc.somenteLeitura){toast("Perfil somente leitura nesta visão.");return;}
@@ -1392,23 +1377,29 @@ async function enviarEvidenciaReal(button){
     try{
       jsonData=await lerJsonDoArquivo(file);
 
-      const originActor=String(jsonData?.originActor||"").trim();
-      const destinationActor=String(jsonData?.destinationActor||"").trim();
+      const normalizeActorName=value=>String(value||"")
+        .trim()
+        .normalize("NFD")
+        .replace(/[\u0300-\u036f]/g,"")
+        .replace(/\s+/g," ")
+        .toLowerCase();
 
-      if(!originActor) throw new Error("O JSON não contém originActor.");
-      if(!destinationActor) throw new Error("O JSON não contém destinationActor.");
+      const originName=String(jsonData?.originActor||"").trim();
+      const destinationName=String(jsonData?.destinationActor||"").trim();
 
-      originActorDbId=resolverActorDbIdPorNome(originActor);
-      destinationActorDbId=resolverActorDbIdPorNome(destinationActor);
+      if(!originName) throw new Error("O JSON não contém originActor.");
+      if(!destinationName) throw new Error("O JSON não contém destinationActor.");
 
-      if(!originActorDbId){
-        throw new Error('A origem "'+originActor+'" não corresponde a nenhum ator ativo cadastrado no Supabase.');
-      }
-      if(!destinationActorDbId){
-        throw new Error('O destino "'+destinationActor+'" não corresponde a nenhum ator ativo cadastrado no Supabase.');
-      }
+      const originActor=ATORES.find(a=>normalizeActorName(a.nome)===normalizeActorName(originName));
+      const destinationActor=ATORES.find(a=>normalizeActorName(a.nome)===normalizeActorName(destinationName));
+
+      if(!originActor?.dbId) throw new Error('Origem não cadastrada em explorerchem_actors: '+originName);
+      if(!destinationActor?.dbId) throw new Error('Destino não cadastrado em explorerchem_actors: '+destinationName);
+
+      originActorDbId=originActor.dbId;
+      destinationActorDbId=destinationActor.dbId;
     }catch(error){
-      toast(error.message||"Não foi possível interpretar origem e destino do JSON.");
+      toast(error.message||"Não foi possível extrair origem e destino do JSON.");
       return;
     }
   }
@@ -1454,10 +1445,11 @@ async function enviarEvidenciaReal(button){
     button.textContent="Registrando metadados…";
     const payload={
       evidence_id:evidenceId,display_code:"EV-"+Date.now()+"-"+evidenceId.slice(2,10).toUpperCase(),
-      actor_db_id:esc.ator.dbId,submitted_by_user_id:userId,submitted_wallet:walletAddress,
-      document_type:config.documentType,calculation_role:config.calculationRole,state:"PENDING",
+      actor_db_id:esc.ator.dbId,
       origin_actor_db_id:originActorDbId,
       destination_actor_db_id:destinationActorDbId,
+      submitted_by_user_id:userId,submitted_wallet:walletAddress,
+      document_type:config.documentType,calculation_role:config.calculationRole,state:"PENDING",
       evidence_hash:evidenceHash,hash_algorithm:"SHA-256",storage_bucket:EVIDENCE_BUCKET,
       storage_path:storagePath,original_filename:file.name,mime_type:mimeType,size_bytes:file.size,
       extractor_version:"frontend-raw-file-v1",chain_id:SEPOLIA_CHAIN_ID_DECIMAL,
