@@ -460,6 +460,7 @@ const EXPLORERCHEM_CONTRACT_ADDRESS = "0xAfbE9a85bc94A7C895AE33e22B268049A7ea59F
 const EVIDENCE_BUCKET = "explorechem-evidence";
 const REPORT_BUCKET = "explorechem-reports";
 const SEPOLIA_CHAIN_ID_DECIMAL = 11155111;
+const SEPOLIA_PUBLIC_RPC = "https://ethereum-sepolia-rpc.publicnode.com";
 const MAX_EVIDENCE_BYTES = 20 * 1024 * 1024;
 const supabaseClient = supabase.createClient(
   SUPABASE_URL,
@@ -718,63 +719,356 @@ function fmtDataArtefato(value){
   const d=new Date(value);
   return Number.isNaN(d.getTime())?String(value):d.toLocaleString("pt-BR");
 }
-function abrirComprovanteCreTee(){
-  const docs=EVIDENCIAS_REMOTAS.slice().sort((a,b)=>String(a.submittedAt||"").localeCompare(String(b.submittedAt||"")));
-  if(!docs.length){toast("Ainda não há evidências para montar o comprovante.");return;}
-  const matched=docs.filter(e=>String(e.state||"").toUpperCase()==="MATCHED");
-  const txs=docs.filter(e=>txHashReal(e.matchTxHash));
-  const integrityOk=docs.filter(e=>e.evidenceHash).length;
-  const rows=docs.map((e,i)=>{
-    const tx=txHashReal(e.matchTxHash)?e.matchTxHash:"—";
-    const txHtml=tx!=="—"?'<a href="https://sepolia.etherscan.io/tx/'+escaparHtml(tx)+'" target="_blank" rel="noopener">'+escaparHtml(tx)+'</a>':'—';
-    return '<tr>'+ 
-      '<td>'+(i+1)+'</td>'+ 
-      '<td><b>'+escaparHtml(e.actorName||e.actorType||"Participante")+'</b><br><span>'+escaparHtml(e.originalFilename||"Documento")+'</span></td>'+ 
-      '<td><code>'+escaparHtml(e.evidenceId||"")+'</code></td>'+ 
-      '<td><code>'+escaparHtml(e.evidenceHash||"")+'</code></td>'+ 
-      '<td>'+escaparHtml(e.state||"PENDING")+'</td>'+ 
-      '<td><code>'+txHtml+'</code></td>'+ 
-      '<td>'+escaparHtml(fmtDataArtefato(e.matchedAt))+'</td>'+ 
-      '</tr>';
-  }).join("");
-  const faltando=matched.filter(e=>!txHashReal(e.matchTxHash)).length;
+function fmtUnixArtefato(value){
+  try{
+    const n=Number(value||0);
+    if(!n) return "—";
+    return new Date(n*1000).toLocaleString("pt-BR");
+  }catch(_){return "—";}
+}
+function statusEvidenceOnchain(value){
+  const n=Number(value);
+  return n===2?"MATCHED":n===1?"PENDING":n===0?"NONE":"UNKNOWN("+n+")";
+}
+function zeroBytes32(value){return /^0x0{64}$/i.test(String(value||""));}
+function igualHex(a,b){return String(a||"").toLowerCase()===String(b||"").toLowerCase();}
+function badgeAudit(text,kind){return '<span class="badge '+(kind||'')+'">'+escaparHtml(text)+'</span>';}
+
+const EXPLORERCHEM_AUDIT_ABI=[
+  "function getEvidence(bytes32 evidenceId) view returns (tuple(bytes32 evidenceId, bytes32 actorId, address submittedBy, bytes32 evidenceHash, uint8 status, uint64 createdAt, uint64 matchedAt))",
+  "function getActor(bytes32 actorId) view returns (tuple(bytes32 actorId, address controller, uint64 createdAt))",
+  "function verifyEvidenceHash(bytes32 evidenceId, bytes32 candidateHash) view returns (bool)",
+  "function isWalletAuthorized(bytes32 actorId,address wallet) view returns (bool)",
+  "function forwarder() view returns (address)",
+  "function expectedWorkflowId() view returns (bytes32)",
+  "function expectedBalanceWorkflowId() view returns (bytes32)",
+  "function EVIDENCE_TTL() view returns (uint64)",
+  "event EvidenceSubmitted(bytes32 indexed evidenceId, bytes32 indexed actorId, address indexed submittedBy, bytes32 evidenceHash, uint64 createdAt)",
+  "event EvidenceMatched(bytes32 indexed evidenceId, bytes32 indexed actorId, bytes32 workflowId, uint64 matchedAt)"
+];
+let _providerLeituraSepolia=null;
+async function providerLeituraSepolia(){
+  if(_providerLeituraSepolia) return _providerLeituraSepolia;
+  if(!window.ethers) throw new Error("Biblioteca ethers não carregou.");
+  try{
+    const p=new ethers.JsonRpcProvider(SEPOLIA_PUBLIC_RPC,SEPOLIA_CHAIN_ID_DECIMAL,{staticNetwork:true});
+    await p.getBlockNumber();
+    _providerLeituraSepolia=p;
+    return p;
+  }catch(publicError){
+    const injected=getWalletProvider();
+    if(injected){
+      const p=new ethers.BrowserProvider(injected);
+      const network=await p.getNetwork();
+      if(Number(network.chainId)===SEPOLIA_CHAIN_ID_DECIMAL){
+        _providerLeituraSepolia=p;
+        return p;
+      }
+    }
+    throw new Error("Não foi possível consultar a Sepolia pelo RPC público nem pela carteira: "+(publicError?.message||publicError));
+  }
+}
+async function hashBufferPorAlgoritmo(buffer,algorithm){
+  const alg=String(algorithm||"SHA-256").toUpperCase();
+  if(alg.includes("KECCAK")) return ethers.keccak256(new Uint8Array(buffer));
+  if(window.crypto&&window.crypto.subtle){
+    const digest=await window.crypto.subtle.digest("SHA-256",buffer);
+    return "0x"+Array.from(new Uint8Array(digest)).map(b=>b.toString(16).padStart(2,"0")).join("");
+  }
+  return ethers.sha256(new Uint8Array(buffer));
+}
+async function recalcularHashOriginal(e){
+  if(!e.storagePath) return {hash:null,error:"storage_path ausente"};
+  try{
+    const url=await urlAssinada(e.storageBucket||EVIDENCE_BUCKET,e.storagePath);
+    const response=await fetch(url,{cache:"no-store"});
+    if(!response.ok) throw new Error("HTTP "+response.status);
+    const buffer=await response.arrayBuffer();
+    return {hash:await hashBufferPorAlgoritmo(buffer,e.hashAlgorithm),sizeBytes:buffer.byteLength,error:null};
+  }catch(error){
+    return {hash:null,sizeBytes:null,error:error?.message||String(error)};
+  }
+}
+async function localizarEventoMaisRecente(contract,filter,fromBlock,toBlock){
+  let end=Number(toBlock);
+  const floor=Math.max(0,Number(fromBlock)||0);
+  let chunk=10000;
+  while(end>=floor){
+    const start=Math.max(floor,end-chunk+1);
+    try{
+      const logs=await contract.queryFilter(filter,start,end);
+      if(logs.length) return logs[logs.length-1];
+      end=start-1;
+    }catch(error){
+      if(chunk>1000){chunk=Math.floor(chunk/2);continue;}
+      throw error;
+    }
+  }
+  return null;
+}
+function parseEventFromReceipt(iface,receipt,eventName,evidenceId){
+  if(!receipt) return null;
+  for(const log of receipt.logs||[]){
+    try{
+      const parsed=iface.parseLog(log);
+      if(parsed?.name===eventName && igualHex(parsed.args?.evidenceId,evidenceId)) return {parsed,log};
+    }catch(_){ }
+  }
+  return null;
+}
+async function auditarEvidenciaHibrida(e,ctx){
+  const result={source:e,errors:[]};
+  try{
+    const chainEvidence=await ctx.contract.getEvidence(e.evidenceId);
+    result.chainEvidence=chainEvidence;
+    result.chainState=statusEvidenceOnchain(chainEvidence.status);
+    result.actorIdChain=chainEvidence.actorId;
+    result.submittedBy=chainEvidence.submittedBy;
+    result.evidenceHashChain=chainEvidence.evidenceHash;
+    result.createdAtChain=chainEvidence.createdAt;
+    result.matchedAtChain=chainEvidence.matchedAt;
+    result.actorIdMatches=!!e.actorId&&igualHex(e.actorId,chainEvidence.actorId);
+    result.dbHashMatchesChain=!!e.evidenceHash&&igualHex(e.evidenceHash,chainEvidence.evidenceHash);
+    try{result.dbHashVerifiedByContract=await ctx.contract.verifyEvidenceHash(e.evidenceId,e.evidenceHash);}catch(_){result.dbHashVerifiedByContract=result.dbHashMatchesChain;}
+
+    const actorKey=String(chainEvidence.actorId).toLowerCase();
+    let actor=ctx.actorCache.get(actorKey);
+    if(!actor){actor=await ctx.contract.getActor(chainEvidence.actorId);ctx.actorCache.set(actorKey,actor);}
+    result.actor=actor;
+    try{result.submittedWalletCurrentlyAuthorized=await ctx.contract.isWalletAuthorized(chainEvidence.actorId,chainEvidence.submittedBy);}catch(_){result.submittedWalletCurrentlyAuthorized=null;}
+
+    if(txHashReal(e.submissionTxHash)){
+      try{
+        result.submissionReceipt=await ctx.provider.getTransactionReceipt(e.submissionTxHash);
+        const parsed=parseEventFromReceipt(ctx.iface,result.submissionReceipt,"EvidenceSubmitted",e.evidenceId);
+        if(parsed){
+          result.submissionEvent=parsed.parsed;
+          result.submissionTxHashChain=result.submissionReceipt.hash||e.submissionTxHash;
+          result.submissionBlock=result.submissionReceipt.blockNumber;
+          result.submissionEventMatchesActor=igualHex(parsed.parsed.args.actorId,chainEvidence.actorId);
+          result.submissionEventMatchesHash=igualHex(parsed.parsed.args.evidenceHash,chainEvidence.evidenceHash);
+        }
+      }catch(error){result.errors.push("Tx de submissão: "+(error?.message||error));}
+    }
+
+    let fromBlock=result.submissionBlock;
+    if(fromBlock===undefined||fromBlock===null) fromBlock=Math.max(0,ctx.latestBlock-250000);
+    if(result.chainState==="MATCHED"){
+      try{
+        const matchLog=await localizarEventoMaisRecente(
+          ctx.contract,
+          ctx.contract.filters.EvidenceMatched(e.evidenceId),
+          fromBlock,
+          ctx.latestBlock
+        );
+        if(matchLog){
+          result.matchEvent=matchLog;
+          result.matchTxHash=matchLog.transactionHash;
+          result.matchBlock=matchLog.blockNumber;
+          result.matchWorkflowId=matchLog.args?.workflowId;
+          result.matchEventActorId=matchLog.args?.actorId;
+          result.matchEventMatchedAt=matchLog.args?.matchedAt;
+          result.matchEventMatchesActor=igualHex(result.matchEventActorId,chainEvidence.actorId);
+          result.workflowMatchesCurrentExpected=ctx.expectedWorkflowId?igualHex(result.matchWorkflowId,ctx.expectedWorkflowId):null;
+        }
+      }catch(error){result.errors.push("Evento EvidenceMatched: "+(error?.message||error));}
+    }
+
+    const original=await recalcularHashOriginal(e);
+    result.fileHash=original.hash;
+    result.fileBytes=original.sizeBytes;
+    result.fileHashError=original.error;
+    result.fileHashMatchesChain=!!original.hash&&igualHex(original.hash,chainEvidence.evidenceHash);
+    result.integrity=original.hash?(result.fileHashMatchesChain?"ÍNTEGRO":"FALHA DE INTEGRIDADE"):"NÃO VERIFICADO";
+    result.stateMatchesDb=String(e.state||"").toUpperCase()===result.chainState;
+    result.supabaseMatchTxIsStaleZero=!txHashReal(e.matchTxHash)&&String(e.state||"").toUpperCase()==="MATCHED";
+  }catch(error){
+    result.errors.push(error?.message||String(error));
+  }
+  return result;
+}
+function linkTx(tx){
+  if(!txHashReal(tx)) return "—";
+  const safe=escaparHtml(tx);
+  return '<a href="https://sepolia.etherscan.io/tx/'+safe+'" target="_blank" rel="noopener">'+safe+'</a>';
+}
+function linkBlock(block){
+  if(block===undefined||block===null) return "—";
+  return '<a href="https://sepolia.etherscan.io/block/'+Number(block)+'" target="_blank" rel="noopener">'+Number(block).toLocaleString("pt-BR")+'</a>';
+}
+function fmtBytes(value){
+  const n=Number(value||0); if(!Number.isFinite(n)||n<=0)return "—";
+  if(n<1024)return n+" B"; if(n<1024*1024)return (n/1024).toFixed(1)+" KB"; return (n/1024/1024).toFixed(2)+" MB";
+}
+function auditOk(v){return v===true?badgeAudit("OK","ok"):v===false?badgeAudit("DIVERGENTE","bad"):badgeAudit("—","muted");}
+
+async function abrirComprovanteCreTee(){
   const w=window.open("","_blank");
   if(!w){toast("O navegador bloqueou a janela do comprovante.");return;}
-  const generated=new Date().toLocaleString("pt-BR");
   w.document.open();
-  w.document.write(`<!DOCTYPE html><html lang="pt-BR"><head><meta charset="utf-8"><title>ExploreChem — Comprovante CRE/TEE</title>
-  <style>
-    @page{size:A4 landscape;margin:10mm}*{box-sizing:border-box}body{font-family:Arial,Helvetica,sans-serif;color:#14252D;margin:0;padding:24px;background:#fff}h1{margin:0 0 6px;font-size:24px}h2{font-size:15px;margin:22px 0 8px}.sub{color:#50656D;margin:0 0 16px}.meta{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin:18px 0}.card{border:1px solid #DCE8E8;border-radius:10px;padding:11px}.card b{display:block;font-size:20px;color:#087E83}.card span{font-size:11px;color:#68777D}.note{border-left:3px solid #0EA7A0;background:#F0FAF8;padding:10px 12px;margin:14px 0;font-size:11px;line-height:1.5}table{width:100%;border-collapse:collapse;font-size:9px;table-layout:fixed}th,td{border:1px solid #DCE8E8;padding:6px;vertical-align:top;word-break:break-all}th{background:#ECF3F3;text-align:left}.controls{display:flex;gap:8px;margin:0 0 18px}.controls button{padding:8px 12px;border:1px solid #087E83;border-radius:8px;background:#087E83;color:#fff;cursor:pointer}code{font-size:8px}a{color:#087E83;text-decoration:none}.foot{margin-top:14px;padding-top:10px;border-top:1px solid #DCE8E8;color:#68777D;font-size:9px}@media print{.controls{display:none}body{padding:0}}
-  </style></head><body>
-  <div class="controls"><button onclick="window.print()">Imprimir / Salvar PDF</button><button onclick="window.close()">Fechar</button></div>
-  <h1>ExploreChem — Comprovante de correlação CRE/TEE</h1>
-  <p class="sub">Artefato consultável da execução de correlação e das âncoras on-chain das evidências.</p>
-  <div class="meta"><div class="card"><b>${docs.length}</b><span>Evidências no conjunto</span></div><div class="card"><b>${matched.length}</b><span>Estado MATCHED</span></div><div class="card"><b>${txs.length}</b><span>TxHash de match reais</span></div><div class="card"><b>${integrityOk}/${docs.length}</b><span>evidenceHash disponíveis</span></div></div>
-  <div class="note"><b>Política da demonstração.</b> Novas evidências podem ser verificadas imediatamente por execução explícita para demo/retry. Relações MATCHED permanecem sujeitas à revalidação periódica semanal. O mesmo motor de validação de hash e correlação é usado nos dois modos.</div>
-  <div class="note"><b>Contexto de execução.</b> Workflow configurado com <code>handlerInTee</code> e alvo AWS Nitro em us-west-2. Este comprovante foi produzido a partir dos dados persistidos após uma execução do CRE Simulator com <code>--broadcast</code>; o próprio simulador informa que não é um TEE real. Os txHash abaixo comprovam as escritas aceitas na Sepolia, não constituem por si só uma atestação de enclave.</div>
-  ${faltando?`<div class="note"><b>Atenção:</b> ${faltando} evidência(s) estão MATCHED mas ainda não possuem <code>match_tx_hash</code> real carregado no frontend. Atualize a página antes de salvar o PDF.</div>`:""}
-  <h2>Execução</h2>
-  <table><tbody><tr><th>Gerado em</th><td>${generated}</td><th>Rede</th><td>Ethereum Sepolia</td></tr><tr><th>Contrato</th><td colspan="3"><code>${EXPLORERCHEM_CONTRACT_ADDRESS}</code></td></tr><tr><th>Verificação imediata</th><td>Disponível para demo/retry</td><th>Revalidação</th><td>Semanal</td></tr></tbody></table>
-  <h2>Evidências verificadas</h2>
-  <table><thead><tr><th style="width:3%">#</th><th style="width:16%">Participante / arquivo</th><th style="width:18%">evidenceId</th><th style="width:18%">evidenceHash</th><th style="width:7%">Estado</th><th style="width:28%">match txHash</th><th style="width:10%">MATCHED em</th></tr></thead><tbody>${rows}</tbody></table>
-  <div class="foot">O arquivo original de cada participante permanece separado deste comprovante e pode ser baixado para recálculo do evidenceHash. Este artefato não substitui o relatório de balanço elemental, que é gerado separadamente quando houver um resultado de balanço persistido e ancorado.</div>
-  </body></html>`);
+  w.document.write('<!DOCTYPE html><html lang="pt-BR"><head><meta charset="utf-8"><title>ExploreChem — Vistoria híbrida</title><style>body{font-family:Arial,Helvetica,sans-serif;padding:28px;color:#14252D}h1{margin:0 0 8px}.load{margin-top:18px;padding:14px;border-left:4px solid #0EA7A0;background:#F0FAF8}</style></head><body><h1>ExploreChem — Vistoria híbrida Supabase × Sepolia</h1><div class="load" id="auditProgress">Atualizando evidências e consultando a blockchain…</div></body></html>');
   w.document.close();
+  const progress=t=>{try{const el=w.document.getElementById("auditProgress");if(el)el.textContent=t;}catch(_){}};
+  try{
+    progress("Atualizando atores e evidências do Supabase…");
+    await carregarAtores();
+    await carregarDocumentosRemotos();
+    const docs=EVIDENCIAS_REMOTAS.slice().sort((a,b)=>String(a.submittedAt||"").localeCompare(String(b.submittedAt||"")));
+    if(!docs.length) throw new Error("Ainda não há evidências para montar o comprovante.");
+
+    progress("Conectando ao RPC público da Ethereum Sepolia…");
+    const provider=await providerLeituraSepolia();
+    const network=await provider.getNetwork();
+    const latestBlock=await provider.getBlockNumber();
+    const contract=new ethers.Contract(EXPLORERCHEM_CONTRACT_ADDRESS,EXPLORERCHEM_AUDIT_ABI,provider);
+    const iface=new ethers.Interface(EXPLORERCHEM_AUDIT_ABI);
+    const [forwarder,expectedWorkflowId,expectedBalanceWorkflowId,ttl]=await Promise.all([
+      contract.forwarder(),contract.expectedWorkflowId(),contract.expectedBalanceWorkflowId(),contract.EVIDENCE_TTL()
+    ]);
+    const ctx={provider,contract,iface,latestBlock,expectedWorkflowId,actorCache:new Map()};
+    const audits=[];
+    for(let i=0;i<docs.length;i++){
+      progress("Vistoriando evidência "+(i+1)+" de "+docs.length+" na Sepolia e recalculando o arquivo original…");
+      audits.push(await auditarEvidenciaHibrida(docs[i],ctx));
+    }
+
+    const chainFound=audits.filter(a=>a.chainEvidence).length;
+    const matchedChain=audits.filter(a=>a.chainState==="MATCHED").length;
+    const matchTxCount=audits.filter(a=>txHashReal(a.matchTxHash)).length;
+    const integrityOk=audits.filter(a=>a.fileHashMatchesChain).length;
+    const actorOk=audits.filter(a=>a.actorIdMatches).length;
+    const dbHashOk=audits.filter(a=>a.dbHashMatchesChain).length;
+    const generated=new Date().toLocaleString("pt-BR");
+    const ttlDays=(Number(ttl)/86400).toLocaleString("pt-BR");
+    const balanceWorkflow=zeroBytes32(expectedBalanceWorkflowId)?"Mesmo workflow primário":expectedBalanceWorkflowId;
+
+    const rows=audits.map((a,i)=>{
+      const e=a.source;
+      const integrity=a.integrity==="ÍNTEGRO"?badgeAudit("ÍNTEGRO","ok"):a.integrity==="FALHA DE INTEGRIDADE"?badgeAudit("FALHA DE INTEGRIDADE","bad"):badgeAudit("NÃO VERIFICADO","warn");
+      const state=a.chainState==="MATCHED"?badgeAudit("MATCHED","ok"):badgeAudit(a.chainState||"ERRO","warn");
+      return '<tr>'+ 
+        '<td>'+(i+1)+'</td>'+ 
+        '<td><b>'+escaparHtml(e.actorName||e.actorType||"Participante")+'</b><br><span class="small source-supabase">SUPABASE</span><br>'+escaparHtml(e.originalFilename||"Documento")+'</td>'+ 
+        '<td><code>'+escaparHtml(e.actorId||"—")+'</code><br>'+auditOk(a.actorIdMatches)+'</td>'+ 
+        '<td><code>'+escaparHtml(e.evidenceId||"")+'</code></td>'+ 
+        '<td>'+state+'</td>'+ 
+        '<td>'+integrity+'</td>'+ 
+        '<td><code>'+linkTx(a.matchTxHash)+'</code><br><span class="small source-chain">SEPOLIA · bloco '+(a.matchBlock??"—")+'</span></td>'+ 
+        '</tr>';
+    }).join("");
+
+    const details=audits.map((a,i)=>{
+      const e=a.source;
+      const cacheTx=txHashReal(e.matchTxHash)?e.matchTxHash:(e.matchTxHash||"—");
+      const cacheNote=a.supabaseMatchTxIsStaleZero?badgeAudit("cache off-chain não autoritativo / zero ignorado","warn"):"";
+      const errors=a.errors?.length?'<div class="errors"><b>Observações técnicas:</b><br>'+a.errors.map(escaparHtml).join('<br>')+'</div>':'';
+      return `<section class="evidence-card">
+        <h3>${i+1}. ${escaparHtml(e.actorName||e.actorType||"Participante")} — ${escaparHtml(e.originalFilename||"Documento")}</h3>
+        <div class="split">
+          <div><h4><span class="source-supabase">SUPABASE / STORAGE</span></h4>
+            <dl>
+              <dt>Nome do participante</dt><dd>${escaparHtml(e.actorName||"—")}</dd>
+              <dt>actorId declarado</dt><dd><code>${escaparHtml(e.actorId||"—")}</code></dd>
+              <dt>Arquivo original</dt><dd>${escaparHtml(e.originalFilename||"—")}</dd>
+              <dt>Algoritmo</dt><dd>${escaparHtml(e.hashAlgorithm||"SHA-256")}</dd>
+              <dt>evidenceHash no banco</dt><dd><code>${escaparHtml(e.evidenceHash||"—")}</code></dd>
+              <dt>Hash recalculado do arquivo</dt><dd><code>${escaparHtml(a.fileHash||"—")}</code></dd>
+              <dt>Tamanho recalculado</dt><dd>${fmtBytes(a.fileBytes)}</dd>
+              <dt>Estado em cache</dt><dd>${escaparHtml(e.state||"—")}</dd>
+              <dt>match_tx_hash em cache</dt><dd><code>${escaparHtml(cacheTx)}</code> ${cacheNote}</dd>
+            </dl>
+          </div>
+          <div><h4><span class="source-chain">ETHEREUM SEPOLIA</span></h4>
+            <dl>
+              <dt>evidenceId</dt><dd><code>${escaparHtml(e.evidenceId||"—")}</code></dd>
+              <dt>actorId on-chain</dt><dd><code>${escaparHtml(a.actorIdChain||"—")}</code></dd>
+              <dt>Controller do ator</dt><dd><code>${escaparHtml(a.actor?.controller||"—")}</code></dd>
+              <dt>Ator criado em</dt><dd>${fmtUnixArtefato(a.actor?.createdAt)}</dd>
+              <dt>Carteira que submeteu</dt><dd><code>${escaparHtml(a.submittedBy||"—")}</code></dd>
+              <dt>Carteira atualmente autorizada</dt><dd>${a.submittedWalletCurrentlyAuthorized===null?"—":a.submittedWalletCurrentlyAuthorized?"SIM":"NÃO"} <span class="small">(estado atual; não altera a validade histórica)</span></dd>
+              <dt>evidenceHash on-chain</dt><dd><code>${escaparHtml(a.evidenceHashChain||"—")}</code></dd>
+              <dt>Estado on-chain</dt><dd>${escaparHtml(a.chainState||"—")}</dd>
+              <dt>Criado on-chain</dt><dd>${fmtUnixArtefato(a.createdAtChain)}</dd>
+              <dt>MATCHED on-chain</dt><dd>${fmtUnixArtefato(a.matchedAtChain)}</dd>
+            </dl>
+          </div>
+        </div>
+        <h4>Provas transacionais</h4>
+        <table class="mini"><tbody>
+          <tr><th>EvidenceSubmitted tx</th><td><code>${linkTx(a.submissionTxHashChain||e.submissionTxHash)}</code></td><th>Bloco</th><td>${linkBlock(a.submissionBlock)}</td></tr>
+          <tr><th>EvidenceMatched tx</th><td><code>${linkTx(a.matchTxHash)}</code></td><th>Bloco</th><td>${linkBlock(a.matchBlock)}</td></tr>
+          <tr><th>workflowId do evento</th><td colspan="3"><code>${escaparHtml(a.matchWorkflowId||"—")}</code></td></tr>
+        </tbody></table>
+        <h4>Verificação cruzada</h4>
+        <div class="checks">
+          <div>${auditOk(a.actorIdMatches)} actorId Supabase = actorId on-chain</div>
+          <div>${auditOk(a.dbHashMatchesChain)} evidenceHash Supabase = evidenceHash on-chain</div>
+          <div>${a.fileHashMatchesChain?badgeAudit("OK","ok"):a.fileHash?badgeAudit("DIVERGENTE","bad"):badgeAudit("NÃO VERIFICADO","warn")} arquivo original recalculado = evidenceHash on-chain</div>
+          <div>${auditOk(a.stateMatchesDb)} estado Supabase = estado on-chain</div>
+          <div>${a.matchWorkflowId?auditOk(a.workflowMatchesCurrentExpected):badgeAudit("—","muted")} workflowId do MATCH = workflow esperado atual</div>
+        </div>
+        ${errors}
+      </section>`;
+    }).join("");
+
+    const staleCount=audits.filter(a=>a.supabaseMatchTxIsStaleZero).length;
+    w.document.open();
+    w.document.write(`<!DOCTYPE html><html lang="pt-BR"><head><meta charset="utf-8"><title>ExploreChem — Vistoria híbrida Supabase × Sepolia</title>
+      <style>
+      @page{size:A4 landscape;margin:9mm}*{box-sizing:border-box}body{font-family:Arial,Helvetica,sans-serif;color:#14252D;margin:0;padding:22px;background:#fff}h1{margin:0 0 5px;font-size:23px}h2{font-size:15px;margin:20px 0 8px}h3{font-size:14px;margin:0 0 10px}h4{font-size:10px;margin:12px 0 6px}.sub{color:#50656D;margin:0 0 14px}.controls{display:flex;gap:8px;margin-bottom:16px}.controls button{padding:8px 12px;border:1px solid #087E83;border-radius:8px;background:#087E83;color:#fff;cursor:pointer}.meta{display:grid;grid-template-columns:repeat(6,1fr);gap:8px;margin:14px 0}.card{border:1px solid #DCE8E8;border-radius:9px;padding:9px}.card b{display:block;font-size:18px;color:#087E83}.card span{font-size:9px;color:#68777D}.note{border-left:3px solid #0EA7A0;background:#F0FAF8;padding:9px 11px;margin:11px 0;font-size:10px;line-height:1.45}.warn-note{border-left-color:#C67C00;background:#FFF8E8}table{width:100%;border-collapse:collapse;font-size:8px;table-layout:fixed}th,td{border:1px solid #DCE8E8;padding:5px;vertical-align:top;word-break:break-word}th{background:#ECF3F3;text-align:left}code{font-size:7.3px;word-break:break-all}a{color:#087E83;text-decoration:none}.small{font-size:7.5px;color:#68777D}.source-supabase{font-weight:700;color:#5664D2}.source-chain{font-weight:700;color:#087E83}.badge{display:inline-block;padding:2px 5px;border-radius:999px;font-size:7.5px;font-weight:700}.badge.ok{background:#E0F5EC;color:#087A55}.badge.bad{background:#FCE8E8;color:#A52A2A}.badge.warn{background:#FFF2CF;color:#8A5A00}.badge.muted{background:#EDF1F2;color:#5B6A70}.evidence-card{border:1px solid #DCE8E8;border-radius:10px;padding:11px;margin:11px 0;break-inside:avoid}.split{display:grid;grid-template-columns:1fr 1fr;gap:14px}.split>div{min-width:0}dl{display:grid;grid-template-columns:145px 1fr;margin:0;font-size:8px}dt,dd{margin:0;padding:3px 0;border-bottom:1px solid #EEF3F3}dt{font-weight:700;color:#52666E}dd{word-break:break-word}.mini{font-size:8px}.checks{display:grid;grid-template-columns:repeat(2,1fr);gap:5px;font-size:8px}.checks>div{border:1px solid #E4ECEC;border-radius:7px;padding:6px}.errors{margin-top:8px;padding:7px;background:#FFF8E8;border-left:3px solid #C67C00;font-size:8px}.foot{margin-top:14px;padding-top:10px;border-top:1px solid #DCE8E8;color:#68777D;font-size:8px}@media print{.controls{display:none}body{padding:0}.evidence-card{break-inside:avoid}}
+      </style></head><body>
+      <div class="controls"><button onclick="window.print()">Imprimir / Salvar PDF</button><button onclick="window.close()">Fechar</button></div>
+      <h1>ExploreChem — Vistoria híbrida Supabase × Ethereum Sepolia</h1>
+      <p class="sub">Comprovante consultável que cruza o arquivo privado e a identidade legível do ExploreChem com o estado público e os eventos do contrato.</p>
+      <div class="meta">
+        <div class="card"><b>${docs.length}</b><span>Evidências atuais</span></div>
+        <div class="card"><b>${chainFound}/${docs.length}</b><span>Encontradas on-chain</span></div>
+        <div class="card"><b>${matchedChain}/${docs.length}</b><span>MATCHED on-chain</span></div>
+        <div class="card"><b>${matchTxCount}/${docs.length}</b><span>TxHash de MATCH pela Sepolia</span></div>
+        <div class="card"><b>${integrityOk}/${docs.length}</b><span>Arquivo íntegro vs hash on-chain</span></div>
+        <div class="card"><b>${actorOk}/${docs.length}</b><span>actorId cruzado</span></div>
+      </div>
+      <div class="note"><b>Atualização incremental.</b> Toda vez que este comprovante é aberto, o frontend atualiza a lista de evidências do Supabase e faz uma nova leitura da Sepolia. Uma nova evidência passa a aparecer automaticamente no próximo carregamento; se ainda estiver PENDING, ela será mostrada como PENDING até existir o evento on-chain de MATCH.</div>
+      <div class="note"><b>Fontes separadas.</b> Nome do participante, nome do arquivo e caminho privado vêm do Supabase/Storage. <code>actorId</code>, <code>evidenceId</code>, <code>evidenceHash</code>, carteira de submissão, estado, timestamps, <code>workflowId</code> e <code>transactionHash</code> são conferidos diretamente na Ethereum Sepolia. O arquivo original é baixado por URL assinada e seu hash é recalculado localmente para comparação com a âncora on-chain.</div>
+      ${staleCount?`<div class="note warn-note"><b>Cache off-chain detectado.</b> ${staleCount} linha(s) possuem <code>match_tx_hash</code> zero/ausente no Supabase. Este comprovante ignora esse cache para a prova e usa o <code>transactionHash</code> do evento <code>EvidenceMatched</code> recuperado diretamente da Sepolia.</div>`:""}
+      <h2>Contexto on-chain atual</h2>
+      <table><tbody>
+        <tr><th>Rede</th><td>Ethereum Sepolia · chainId ${Number(network.chainId)}</td><th>Último bloco consultado</th><td>${linkBlock(latestBlock)}</td></tr>
+        <tr><th>Contrato</th><td><code>${EXPLORERCHEM_CONTRACT_ADDRESS}</code></td><th>Forwarder atual</th><td><code>${escaparHtml(forwarder)}</code></td></tr>
+        <tr><th>Workflow esperado atual</th><td><code>${escaparHtml(expectedWorkflowId)}</code></td><th>Workflow de balanço</th><td><code>${escaparHtml(balanceWorkflow)}</code></td></tr>
+        <tr><th>TTL PENDING</th><td>${ttlDays} dias</td><th>Gerado em</th><td>${generated}</td></tr>
+      </tbody></table>
+      <h2>Resumo da vistoria</h2>
+      <table><thead><tr><th style="width:3%">#</th><th style="width:17%">Participante / arquivo</th><th style="width:19%">actorId Supabase ↔ chain</th><th style="width:19%">evidenceId</th><th style="width:8%">Estado chain</th><th style="width:12%">Integridade</th><th style="width:22%">EvidenceMatched tx · Sepolia</th></tr></thead><tbody>${rows}</tbody></table>
+      <h2>Detalhes por evidência</h2>
+      ${details}
+      <div class="foot">A blockchain não contém nomes empresariais, lotId, massa, teor, documentos ou relações privadas. O vínculo legível é feito pelo <code>actorId</code> opaco. Este artefato não afirma que o nome está on-chain; ele prova que o registro off-chain do participante aponta para o mesmo <code>actorId</code> retornado pelo contrato. Os txHash exibidos como prova de MATCH são obtidos do evento <code>EvidenceMatched</code> da Sepolia, não do campo <code>match_tx_hash</code> do Supabase.</div>
+      </body></html>`);
+    w.document.close();
+  }catch(error){
+    console.error(error);
+    try{
+      w.document.open();
+      w.document.write('<!DOCTYPE html><html lang="pt-BR"><head><meta charset="utf-8"><title>ExploreChem — Erro na vistoria</title></head><body style="font-family:Arial;padding:28px"><h1>Não foi possível concluir a vistoria híbrida</h1><p>'+escaparHtml(error?.message||String(error))+'</p><p>O conjunto do Supabase não foi alterado.</p></body></html>');
+      w.document.close();
+    }catch(_){ }
+    toast(error?.message||"Falha ao consultar a blockchain.");
+  }
 }
 
 async function carregarDocumentosRemotos(){
   carregarEvidenciasLocais();
   try{
     const {data,error}=await supabaseClient.from("explorerchem_evidences")
-      .select("id,evidence_id,display_code,actor_db_id,document_type,calculation_role,state,evidence_hash,storage_bucket,storage_path,original_filename,submission_tx_hash,match_tx_hash,matched_at,created_at")
+      .select("id,evidence_id,display_code,actor_db_id,document_type,calculation_role,state,evidence_hash,hash_algorithm,storage_bucket,storage_path,original_filename,mime_type,size_bytes,submission_tx_hash,match_tx_hash,matched_at,created_at")
       .order("created_at",{ascending:false}).limit(100);
     if(!error&&Array.isArray(data)){
       const remotos=data.map(e=>({
         dbId:e.id,evidenceId:e.evidence_id,displayCode:e.display_code,actorDbId:e.actor_db_id,
         actorId:ATORES.find(a=>a.dbId===e.actor_db_id)?.id,actorName:ATORES.find(a=>a.dbId===e.actor_db_id)?.nome,
         actorType:ATORES.find(a=>a.dbId===e.actor_db_id)?.papel,
-        documentType:e.document_type,calculationRole:e.calculation_role,state:e.state,evidenceHash:e.evidence_hash,
-        storageBucket:e.storage_bucket,storagePath:e.storage_path,originalFilename:e.original_filename,
+        documentType:e.document_type,calculationRole:e.calculation_role,state:e.state,evidenceHash:e.evidence_hash,hashAlgorithm:e.hash_algorithm,
+        storageBucket:e.storage_bucket,storagePath:e.storage_path,originalFilename:e.original_filename,mimeType:e.mime_type,sizeBytes:e.size_bytes,
         submissionTxHash:e.submission_tx_hash,matchTxHash:e.match_tx_hash,matchedAt:e.matched_at,submittedAt:e.created_at
       }));
       const byId=new Map(remotos.map(e=>[e.evidenceId,e]));
