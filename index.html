@@ -1381,8 +1381,9 @@ async function enviarEvidenciaReal(button){
         .trim()
         .normalize("NFD")
         .replace(/[\u0300-\u036f]/g,"")
-        .replace(/\s+/g," ")
-        .toLowerCase();
+        .toLowerCase()
+        .replace(/[^a-z0-9\s]/g,"")
+        .replace(/\s+/g," ");
 
       const originName=String(jsonData?.originActor||"").trim();
       const destinationName=String(jsonData?.destinationActor||"").trim();
