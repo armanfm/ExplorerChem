@@ -524,15 +524,13 @@ let SERIE=[];
 let EVIDENCIAS_REMOTAS=[];
 let RELATORIOS_REMOTOS=[];
 
-function persistirEvidenciasLocais(){
-  try{localStorage.setItem("explorechem_demo_evidences",JSON.stringify(EVIDENCIAS_REMOTAS));}catch(e){}
-}
-function carregarEvidenciasLocais(){
-  try{
-    const saved=JSON.parse(localStorage.getItem("explorechem_demo_evidences")||"[]");
-    if(Array.isArray(saved)) EVIDENCIAS_REMOTAS=saved;
-  }catch(e){}
-}
+// Supabase é a fonte de verdade para atores e evidências.
+// Remove caches antigos de versões anteriores do MVP para evitar dados órfãos
+// reaparecendo após um reset do banco.
+try{
+  localStorage.removeItem("explorechem_demo_evidences");
+  localStorage.removeItem("explorechem_demo_actors");
+}catch(_){ }
 function escaparHtml(value){
   return String(value??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[c]));
 }
@@ -1083,13 +1081,12 @@ async function abrirComprovanteCreTee(){
 }
 
 async function carregarDocumentosRemotos(){
-  carregarEvidenciasLocais();
   try{
     const {data,error}=await supabaseClient.from("explorerchem_evidences")
       .select("id,evidence_id,display_code,actor_db_id,document_type,calculation_role,state,evidence_hash,hash_algorithm,storage_bucket,storage_path,original_filename,mime_type,size_bytes,submission_tx_hash,match_tx_hash,matched_at,created_at")
       .order("created_at",{ascending:false}).limit(100);
     if(!error&&Array.isArray(data)){
-      const remotos=data.map(e=>({
+      EVIDENCIAS_REMOTAS=data.map(e=>({
         dbId:e.id,evidenceId:e.evidence_id,displayCode:e.display_code,actorDbId:e.actor_db_id,
         actorId:ATORES.find(a=>a.dbId===e.actor_db_id)?.id,actorName:ATORES.find(a=>a.dbId===e.actor_db_id)?.nome,
         actorType:ATORES.find(a=>a.dbId===e.actor_db_id)?.papel,
@@ -1097,9 +1094,6 @@ async function carregarDocumentosRemotos(){
         storageBucket:e.storage_bucket,storagePath:e.storage_path,originalFilename:e.original_filename,mimeType:e.mime_type,sizeBytes:e.size_bytes,
         submissionTxHash:e.submission_tx_hash,matchTxHash:e.match_tx_hash,matchedAt:e.matched_at,submittedAt:e.created_at
       }));
-      const byId=new Map(remotos.map(e=>[e.evidenceId,e]));
-      EVIDENCIAS_REMOTAS.forEach(e=>{if(!byId.has(e.evidenceId))byId.set(e.evidenceId,e);});
-      EVIDENCIAS_REMOTAS=Array.from(byId.values()); persistirEvidenciasLocais();
     } else if(error) console.warn("Não foi possível carregar evidências do Supabase:",error.message);
   }catch(error){console.warn("Falha ao carregar evidências:",error.message);}
   try{
@@ -1113,8 +1107,6 @@ async function carregarDocumentosRemotos(){
 }
 
 const actorTypeLabel={MINER:"Minerador",CARRIER:"Transportadora",LABORATORY:"Laboratório",PROCESSOR:"Processador",REFINER:"Purificador",RECYCLER:"Reciclador",MANUFACTURER:"Fabricante",OTHER:"Outro"};
-function persistirAtoresLocais(){try{localStorage.setItem("explorechem_demo_actors",JSON.stringify(ATORES));}catch(e){}}
-function carregarAtoresLocais(){try{const saved=JSON.parse(localStorage.getItem("explorechem_demo_actors")||"[]");if(Array.isArray(saved))ATORES=saved;}catch(e){}}
 
 /* Mapa papel → visão e persistência do ator ativo */
 const PAPEL_ROLE={
@@ -1158,12 +1150,17 @@ function aplicarSomenteLeitura(){
 }
 
 async function carregarAtores(){
-  carregarAtoresLocais();
   try{
-    const {data,error}=await supabaseClient.from("explorerchem_actors").select("id,actor_id,display_name,actor_type,country_code,created_at").order("created_at",{ascending:false});
+    const {data,error}=await supabaseClient.from("explorerchem_actors")
+      .select("id,actor_id,display_name,actor_type,country_code,created_at")
+      .eq("active",true)
+      .order("created_at",{ascending:false});
     if(!error&&Array.isArray(data)){
       ATORES=data.map(a=>({dbId:a.id,id:a.actor_id,nome:a.display_name,papel:actorTypeLabel[a.actor_type]||a.actor_type,praca:a.country_code||"—",carteiras:1,evid:0,desde:a.created_at?new Date(a.created_at).toLocaleDateString("pt-BR"):"—"}));
-      persistirAtoresLocais();
+      if(ATOR_ATIVO&&!ATORES.some(a=>a.id===ATOR_ATIVO)){
+        ATOR_ATIVO=null;
+        persistirAtorAtivo();
+      }
     } else if(error) console.warn("Não foi possível carregar atores do Supabase:",error.message);
   }catch(error){console.warn("Falha ao carregar atores:",error.message);}
   if(document.readyState!=="loading") render();
@@ -1421,21 +1418,12 @@ async function enviarEvidenciaReal(button){
       submission_tx_hash:txHash,chain_created_at:new Date().toISOString()
     };
     const {error:metadataError}=await supabaseClient.from("explorerchem_evidences").insert(payload);
-    const localItem={
-      dbId:null,evidenceId,displayCode:payload.display_code,actorDbId:esc.ator.dbId,actorId:esc.ator.id,
-      actorName:esc.ator.nome,actorType:esc.ator.papel,documentType:config.documentType,calculationRole:config.calculationRole,
-      state:"PENDING",evidenceHash,storageBucket:EVIDENCE_BUCKET,storagePath,originalFilename:file.name,
-      submissionTxHash:txHash,submittedAt:payload.chain_created_at
-    };
-    EVIDENCIAS_REMOTAS=[localItem,...EVIDENCIAS_REMOTAS.filter(e=>e.evidenceId!==evidenceId)];
-    persistirEvidenciasLocais();
     if(metadataError){
       console.error("Blockchain/Storage concluídos, mas os metadados falharam:",metadataError);
-      toast("PDF e blockchain concluídos, mas o Supabase recusou os metadados: "+metadataError.message);
-    }else{
-      toast("Evidência enviada como PENDING. Hash e transação registrados.");
+      throw new Error("PDF e blockchain concluídos, mas o Supabase recusou os metadados: "+metadataError.message);
     }
-    render();
+    await carregarDocumentosRemotos();
+    toast("Evidência enviada como PENDING. Hash e transação registrados.");
   }catch(error){
     console.error(error);
     toast(error.message||"Não foi possível enviar a evidência.");
@@ -2211,11 +2199,11 @@ function render(){
         active:true, onchain_registered_at:new Date().toISOString(), onchain_registration_tx:receipt.hash
       }).select("id,actor_id,display_name,actor_type").single();
       if(error) throw new Error("Blockchain confirmada, mas o Supabase recusou o cadastro: "+error.message);
-      novo.dbId=row.id; ATORES.push(novo); ATOR_ATIVO=null;
-      persistirAtoresLocais();
+      novo.dbId=row.id;
+      ATOR_ATIVO=null;
       persistirAtorAtivo();
+      await carregarAtores();
       toast("Ator cadastrado. Selecione-o em “Navegar como ator” para testar seu perfil.");
-      setTimeout(()=>render(),450);
     }catch(error){
       console.error(error); toast(error.message||"Não foi possível concluir o cadastro.");
       salvarAtor.disabled=false; salvarAtor.textContent="Cadastrar e assinar";
