@@ -708,11 +708,65 @@ function baixarSnapshotBalanco(){
   a.href=url; a.download="explorechem-balanco-snapshot.json"; a.click();
   setTimeout(()=>URL.revokeObjectURL(url),1000);
 }
+
+function txHashReal(value){
+  const v=String(value||"").trim();
+  return /^0x[0-9a-fA-F]{64}$/.test(v) && !/^0x0{64}$/i.test(v);
+}
+function fmtDataArtefato(value){
+  if(!value) return "—";
+  const d=new Date(value);
+  return Number.isNaN(d.getTime())?String(value):d.toLocaleString("pt-BR");
+}
+function abrirComprovanteCreTee(){
+  const docs=EVIDENCIAS_REMOTAS.slice().sort((a,b)=>String(a.submittedAt||"").localeCompare(String(b.submittedAt||"")));
+  if(!docs.length){toast("Ainda não há evidências para montar o comprovante.");return;}
+  const matched=docs.filter(e=>String(e.state||"").toUpperCase()==="MATCHED");
+  const txs=docs.filter(e=>txHashReal(e.matchTxHash));
+  const integrityOk=docs.filter(e=>e.evidenceHash).length;
+  const rows=docs.map((e,i)=>{
+    const tx=txHashReal(e.matchTxHash)?e.matchTxHash:"—";
+    const txHtml=tx!=="—"?'<a href="https://sepolia.etherscan.io/tx/'+escaparHtml(tx)+'" target="_blank" rel="noopener">'+escaparHtml(tx)+'</a>':'—';
+    return '<tr>'+ 
+      '<td>'+(i+1)+'</td>'+ 
+      '<td><b>'+escaparHtml(e.actorName||e.actorType||"Participante")+'</b><br><span>'+escaparHtml(e.originalFilename||"Documento")+'</span></td>'+ 
+      '<td><code>'+escaparHtml(e.evidenceId||"")+'</code></td>'+ 
+      '<td><code>'+escaparHtml(e.evidenceHash||"")+'</code></td>'+ 
+      '<td>'+escaparHtml(e.state||"PENDING")+'</td>'+ 
+      '<td><code>'+txHtml+'</code></td>'+ 
+      '<td>'+escaparHtml(fmtDataArtefato(e.matchedAt))+'</td>'+ 
+      '</tr>';
+  }).join("");
+  const faltando=matched.filter(e=>!txHashReal(e.matchTxHash)).length;
+  const w=window.open("","_blank");
+  if(!w){toast("O navegador bloqueou a janela do comprovante.");return;}
+  const generated=new Date().toLocaleString("pt-BR");
+  w.document.open();
+  w.document.write(`<!DOCTYPE html><html lang="pt-BR"><head><meta charset="utf-8"><title>ExploreChem — Comprovante CRE/TEE</title>
+  <style>
+    @page{size:A4 landscape;margin:10mm}*{box-sizing:border-box}body{font-family:Arial,Helvetica,sans-serif;color:#14252D;margin:0;padding:24px;background:#fff}h1{margin:0 0 6px;font-size:24px}h2{font-size:15px;margin:22px 0 8px}.sub{color:#50656D;margin:0 0 16px}.meta{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin:18px 0}.card{border:1px solid #DCE8E8;border-radius:10px;padding:11px}.card b{display:block;font-size:20px;color:#087E83}.card span{font-size:11px;color:#68777D}.note{border-left:3px solid #0EA7A0;background:#F0FAF8;padding:10px 12px;margin:14px 0;font-size:11px;line-height:1.5}table{width:100%;border-collapse:collapse;font-size:9px;table-layout:fixed}th,td{border:1px solid #DCE8E8;padding:6px;vertical-align:top;word-break:break-all}th{background:#ECF3F3;text-align:left}.controls{display:flex;gap:8px;margin:0 0 18px}.controls button{padding:8px 12px;border:1px solid #087E83;border-radius:8px;background:#087E83;color:#fff;cursor:pointer}code{font-size:8px}a{color:#087E83;text-decoration:none}.foot{margin-top:14px;padding-top:10px;border-top:1px solid #DCE8E8;color:#68777D;font-size:9px}@media print{.controls{display:none}body{padding:0}}
+  </style></head><body>
+  <div class="controls"><button onclick="window.print()">Imprimir / Salvar PDF</button><button onclick="window.close()">Fechar</button></div>
+  <h1>ExploreChem — Comprovante de correlação CRE/TEE</h1>
+  <p class="sub">Artefato consultável da execução de correlação e das âncoras on-chain das evidências.</p>
+  <div class="meta"><div class="card"><b>${docs.length}</b><span>Evidências no conjunto</span></div><div class="card"><b>${matched.length}</b><span>Estado MATCHED</span></div><div class="card"><b>${txs.length}</b><span>TxHash de match reais</span></div><div class="card"><b>${integrityOk}/${docs.length}</b><span>evidenceHash disponíveis</span></div></div>
+  <div class="note"><b>Política da demonstração.</b> Novas evidências podem ser verificadas imediatamente por execução explícita para demo/retry. Relações MATCHED permanecem sujeitas à revalidação periódica semanal. O mesmo motor de validação de hash e correlação é usado nos dois modos.</div>
+  <div class="note"><b>Contexto de execução.</b> Workflow configurado com <code>handlerInTee</code> e alvo AWS Nitro em us-west-2. Este comprovante foi produzido a partir dos dados persistidos após uma execução do CRE Simulator com <code>--broadcast</code>; o próprio simulador informa que não é um TEE real. Os txHash abaixo comprovam as escritas aceitas na Sepolia, não constituem por si só uma atestação de enclave.</div>
+  ${faltando?`<div class="note"><b>Atenção:</b> ${faltando} evidência(s) estão MATCHED mas ainda não possuem <code>match_tx_hash</code> real carregado no frontend. Atualize a página antes de salvar o PDF.</div>`:""}
+  <h2>Execução</h2>
+  <table><tbody><tr><th>Gerado em</th><td>${generated}</td><th>Rede</th><td>Ethereum Sepolia</td></tr><tr><th>Contrato</th><td colspan="3"><code>${EXPLORERCHEM_CONTRACT_ADDRESS}</code></td></tr><tr><th>Verificação imediata</th><td>Disponível para demo/retry</td><th>Revalidação</th><td>Semanal</td></tr></tbody></table>
+  <h2>Evidências verificadas</h2>
+  <table><thead><tr><th style="width:3%">#</th><th style="width:16%">Participante / arquivo</th><th style="width:18%">evidenceId</th><th style="width:18%">evidenceHash</th><th style="width:7%">Estado</th><th style="width:28%">match txHash</th><th style="width:10%">MATCHED em</th></tr></thead><tbody>${rows}</tbody></table>
+  <div class="foot">O arquivo original de cada participante permanece separado deste comprovante e pode ser baixado para recálculo do evidenceHash. Este artefato não substitui o relatório de balanço elemental, que é gerado separadamente quando houver um resultado de balanço persistido e ancorado.</div>
+  </body></html>`);
+  w.document.close();
+}
+
 async function carregarDocumentosRemotos(){
   carregarEvidenciasLocais();
   try{
     const {data,error}=await supabaseClient.from("explorerchem_evidences")
-      .select("id,evidence_id,display_code,actor_db_id,document_type,calculation_role,state,evidence_hash,storage_bucket,storage_path,original_filename,submission_tx_hash,created_at")
+      .select("id,evidence_id,display_code,actor_db_id,document_type,calculation_role,state,evidence_hash,storage_bucket,storage_path,original_filename,submission_tx_hash,match_tx_hash,matched_at,created_at")
       .order("created_at",{ascending:false}).limit(100);
     if(!error&&Array.isArray(data)){
       const remotos=data.map(e=>({
@@ -721,7 +775,7 @@ async function carregarDocumentosRemotos(){
         actorType:ATORES.find(a=>a.dbId===e.actor_db_id)?.papel,
         documentType:e.document_type,calculationRole:e.calculation_role,state:e.state,evidenceHash:e.evidence_hash,
         storageBucket:e.storage_bucket,storagePath:e.storage_path,originalFilename:e.original_filename,
-        submissionTxHash:e.submission_tx_hash,submittedAt:e.created_at
+        submissionTxHash:e.submission_tx_hash,matchTxHash:e.match_tx_hash,matchedAt:e.matched_at,submittedAt:e.created_at
       }));
       const byId=new Map(remotos.map(e=>[e.evidenceId,e]));
       EVIDENCIAS_REMOTAS.forEach(e=>{if(!byId.has(e.evidenceId))byId.set(e.evidenceId,e);});
@@ -1314,6 +1368,7 @@ T.evidencias=()=>{
   return '<div class="crumb">Lote <span class="mono">'+(LOTE?val(LOTE.lotId):semDado)+'</span></div>'+
   '<h1>Fila e correlação privada</h1><p class="sub">Cada documento entra como PENDING. O CRE/TEE '+
   'confirma o hash, extrai novamente os dados do documento e valida as relações antes de marcar MATCHED.</p>'+
+  '<div class="actions" style="margin-bottom:14px"><button class="btn ghost" data-print-cre-proof>Consultar artefato CRE/TEE</button></div>'+
   '<div class="stats" aria-label="Fila determinística">'+
   '<div><span class="n mono">EvidenceSubmitted</span><span class="l">Gatilho principal</span></div>'+
   '<div><span class="n">'+val(q.pendingCount,0)+'</span><span class="l">PENDING na fila</span></div>'+
@@ -1633,7 +1688,7 @@ function documentosClienteHtml(){
   return '<section class="panel pad" style="margin-top:14px"><div class="section-title"><div>'+
     '<span class="section-eyebrow">DOCUMENTOS PARA CONFERÊNCIA</span><h2>Arquivos usados na prova</h2>'+
     '<p>O arquivo original permite recalcular o evidenceHash. O relatório do balanço é um artefato separado dos documentos de cada participante.</p></div>'+
-    '<div class="actions">'+reportAction+'</div></div>'+
+    '<div class="actions">'+reportAction+'<button class="btn ghost" data-print-cre-proof>Comprovante CRE/TEE</button></div></div>'+
     (docs.length
       ? '<div class="panel scrollx"><table><thead><tr><th>Participante</th><th>Documento</th><th>Estado</th><th>evidenceHash</th><th class="num">Download</th></tr></thead><tbody>'+
         docs.map(e=>'<tr><td>'+escaparHtml(e.actorName||"Participante")+'</td><td>'+escaparHtml(e.originalFilename||"Documento")+
@@ -1886,6 +1941,11 @@ function render(){
     if(escopoAtor().somenteLeitura){toast("Perfil somente leitura nesta visão.");return;}
     toast("Exibindo laudos pendentes (simulação).");
   };
+
+  document.querySelectorAll("[data-print-cre-proof]").forEach(b=>b.onclick=function(e){
+    e.preventDefault();
+    abrirComprovanteCreTee();
+  });
 
   document.querySelectorAll("[data-download-evidence]").forEach(b=>b.onclick=async function(e){
     e.preventDefault();
