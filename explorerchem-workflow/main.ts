@@ -53,6 +53,8 @@ import { z } from "zod";
  *   - ONE Cron only.
  *   - Supabase is the discovery/index layer for PENDING/MATCHED candidates;
  *   - correlation does not pre-read getEvidence() before doing TEE work;
+ *   - correlation is EVENT/EVIDENCE-first: document actorId is not proof;
+ *     exact document bytes + evidenceHash + deterministic extraction are proof;
  *   - every indexed PENDING evidence is eligible on each cycle until MATCHED
  *     or the indexed 365-day PENDING TTL expires;
  *   - MATCHED younger than seven days is skipped;
@@ -66,15 +68,14 @@ import { z } from "zod";
  *     as a second physical mass stream.
  *
  * Balance policy implemented here:
- *   - there is no reconciliation t0/t1 window in the workflow input;
- *   - the unit of calculation is a correlated supply-chain component;
- *   - only canonical physical streams enter the arithmetic;
- *   - supporting/custody/composition evidence stays in verifiedEvidences and
- *     correlationEdges but does not become a mass stream;
- *   - elemental accounting is integer milligrams for Nd, Pr, Dy and Tb;
- *   - existing rational arithmetic, CUSUM and Pedersen proofs are preserved;
- *   - reportType 2 remains append-only through calculationVersion and
- *     previousResultId.
+ *   - only evidence whose final state is MATCHED enters the mass calculation;
+ *   - DIVERGENT is terminal and is never searched or calculated again;
+ *   - MATCHED remains reusable as a correlation counterpart and checkpoint;
+ *   - the TEE keeps the correlation graph private;
+ *   - one correlated operation produces ONE deterministic mass-proof hash;
+ *   - that proof is anchored once, with no actorId/evidenceId membership exposed;
+ *   - every involved participant receives the same resultHash and txHash off-chain;
+ *   - there is no per-actor/per-evidence salt in the shared mass proof.
  */
 
 const ELEMENTS = ["ND", "PR", "DY", "TB"] as const;
@@ -486,6 +487,13 @@ const EXPLORERCHEM_READ_ABI = [
   },
   {
     type: "function",
+    name: "expectedAuditWorkflowId",
+    stateMutability: "view",
+    inputs: [],
+    outputs: [{ name: "", type: "bytes32" }],
+  },
+  {
+    type: "function",
     name: "getEvidence",
     stateMutability: "view",
     inputs: [{ name: "evidenceId", type: "bytes32" }],
@@ -501,11 +509,13 @@ const EXPLORERCHEM_READ_ABI = [
           { name: "status", type: "uint8" },
           { name: "createdAt", type: "uint64" },
           { name: "matchedAt", type: "uint64" },
+          { name: "auditedAt", type: "uint64" },
         ],
       },
     ],
   },
 ] as const;
+
 
 type OnchainEvidence = {
   evidenceId: Hex;
@@ -515,6 +525,7 @@ type OnchainEvidence = {
   status: number;
   createdAt: bigint;
   matchedAt: bigint;
+  auditedAt: bigint;
 };
 
 function mod(value: bigint): bigint {
@@ -1317,7 +1328,7 @@ type SupabaseActorRow = z.infer<typeof supabaseActorRowSchema>;
 const supabaseEvidenceRowSchema = z.object({
   evidence_id: bytes32Schema,
   actor_db_id: z.string().uuid(),
-  state: z.enum(["PENDING", "MATCHED"]),
+  state: z.enum(["PENDING", "MATCHED", "VERIFIED", "DIVERGENT"]),
   evidence_hash: bytes32Schema,
   hash_algorithm: z.enum(["KECCAK256", "SHA-256", "SHA256", "KECCAK-256"]),
   storage_bucket: z.string().min(1),
@@ -1384,7 +1395,7 @@ function listEvidenceRows(
     "declared_lot_db_id",
     "verified_lot_db_id",
   ].join(",");
-  const path = `/rest/v1/explorerchem_evidences?select=${select}&state=in.(PENDING,MATCHED)&order=chain_created_at.asc,evidence_id.asc`;
+  const path = `/rest/v1/explorerchem_evidences?select=${select}&state=in.(PENDING,MATCHED,VERIFIED)&order=chain_created_at.asc,evidence_id.asc`;
   return z.array(supabaseEvidenceRowSchema).parse(
     supabaseJson<unknown>(runtime, serviceRoleKey, path),
   );
@@ -1520,6 +1531,42 @@ function eventTime(value: unknown): string | null {
   return Number.isFinite(parsed.getTime()) ? parsed.toISOString() : null;
 }
 
+class EvidenceDivergenceError extends Error {
+  readonly evidenceId: Hex;
+  readonly code: string;
+
+  constructor(evidenceId: Hex, code: string, message: string) {
+    super(`${evidenceId}: ${code}: ${message}`);
+    this.name = "EvidenceDivergenceError";
+    this.evidenceId = evidenceId;
+    this.code = code;
+  }
+}
+
+function isEvidenceDivergenceError(error: unknown): error is EvidenceDivergenceError {
+  return error instanceof EvidenceDivergenceError;
+}
+
+function allowedActorTypesForEvidenceType(value: unknown): ReadonlySet<z.infer<typeof actorTypeSchema>> | null {
+  if (typeof value !== "string") return null;
+  switch (value.trim().toUpperCase()) {
+    case "ORIGIN_AND_QUANTITY":
+      return new Set(["MINER"]);
+    case "TRANSPORT_CUSTODY":
+      return new Set(["CARRIER"]);
+    case "ELEMENTAL_ANALYSIS":
+      return new Set(["LABORATORY"]);
+    case "TRANSFORMATION_RECORD":
+      return new Set(["PROCESSOR", "REFINER"]);
+    case "MANUFACTURING_RECORD":
+      return new Set(["MANUFACTURER"]);
+    case "RECYCLING_RECOVERY":
+      return new Set(["RECYCLER"]);
+    default:
+      return null;
+  }
+}
+
 function canonicalizeEvidenceJson(
   rawValue: unknown,
   row: SupabaseEvidenceRow,
@@ -1529,10 +1576,40 @@ function canonicalizeEvidenceJson(
   const actor = actors.byDbId.get(row.actor_db_id);
   if (!actor) throw new Error(`${row.evidence_id}: actor_db_id não encontrado`);
 
-  const declaredActorId = actorIdFromValue(raw.actorId, actors);
-  if (declaredActorId && normalizeHex(declaredActorId) !== normalizeHex(actor.actor_id)) {
-    throw new Error(`${row.evidence_id}: actorId do documento diverge do cadastro`);
+  const declaredActorTypeRaw = nullableString(raw.actorType);
+  if (declaredActorTypeRaw !== null) {
+    const declaredActorType = actorTypeSchema.safeParse(declaredActorTypeRaw.trim().toUpperCase());
+    if (!declaredActorType.success) {
+      throw new EvidenceDivergenceError(
+        row.evidence_id,
+        "INVALID_ACTOR_TYPE",
+        `actorType do documento é inválido: ${declaredActorTypeRaw}`,
+      );
+    }
+    if (declaredActorType.data !== actor.actor_type) {
+      throw new EvidenceDivergenceError(
+        row.evidence_id,
+        "ACTOR_TYPE_MISMATCH",
+        `evento declara ${declaredActorType.data}, mas o vínculo atual da evidência é ${actor.actor_type}`,
+      );
+    }
   }
+
+  const allowedTypes = allowedActorTypesForEvidenceType(raw.evidenceType ?? row.document_type);
+  if (allowedTypes !== null && !allowedTypes.has(actor.actor_type)) {
+    throw new EvidenceDivergenceError(
+      row.evidence_id,
+      "EVENT_ROLE_MISMATCH",
+      `tipo de evento ${String(raw.evidenceType ?? row.document_type)} incompatível com ${actor.actor_type}`,
+    );
+  }
+
+  // Event-first correlation: an actorId embedded in the document is not
+  // authoritative correlation proof. The current submitter/actor context comes
+  // from row.actor_db_id -> explorerchem_actors, while the event itself is
+  // authenticated by the exact document bytes committed by evidenceHash.
+  // Older documents may therefore carry a historical actorId without making
+  // the new evidence/event invalid.
 
   const massBalance = recordOf(raw.massBalance);
   const custody = recordOf(raw.custody);
@@ -1593,7 +1670,11 @@ function canonicalizeEvidenceJson(
   let laboratoryReport: z.infer<typeof laboratoryReportSchema> | null = null;
   if (actor.actor_type === "LABORATORY") {
     if (sample.contributesToMassBalance === true) {
-      throw new Error(`${row.evidence_id}: amostra laboratorial não pode criar fluxo físico de massa`);
+      throw new EvidenceDivergenceError(
+        row.evidence_id,
+        "LAB_SAMPLE_PHYSICAL_FLOW",
+        "amostra laboratorial não pode criar fluxo físico de massa",
+      );
     }
     const method = nullableString(sample.analysisMethod);
     addNd2O3Measurement(
@@ -1702,7 +1783,16 @@ function loadEvidenceBundleDirect(
     );
   }
 
-  const raw = JSON.parse(new TextDecoder().decode(bytes));
+  let raw: unknown;
+  try {
+    raw = JSON.parse(new TextDecoder().decode(bytes));
+  } catch (error) {
+    throw new EvidenceDivergenceError(
+      row.evidence_id,
+      "INVALID_JSON",
+      error instanceof Error ? error.message : "JSON inválido",
+    );
+  }
   const normalized = canonicalizeEvidenceJson(raw, row, actors);
   const extractorVersion = row.extractor_version ?? "explorechem-json-canonicalizer-v1";
   const extractionHash = hashStable({
@@ -1733,6 +1823,7 @@ type DirectCorrelationSnapshot = {
   actors: ActorDirectory;
   bundles: Map<string, EvidenceBundle>;
   bundleErrors: Map<string, string>;
+  divergenceErrors: Map<string, string>;
 };
 
 function loadDirectCorrelationSnapshot(
@@ -1743,21 +1834,34 @@ function loadDirectCorrelationSnapshot(
   const rows = listEvidenceRows(runtime, serviceRoleKey);
   const bundles = new Map<string, EvidenceBundle>();
   const bundleErrors = new Map<string, string>();
+  const divergenceErrors = new Map<string, string>();
+  const firstEvidenceByHash = new Map<string, Hex>();
 
   for (const row of rows) {
+    const id = normalizeHex(row.evidence_id);
+    const hashKey = normalizeHex(row.evidence_hash);
+    const firstEvidenceId = firstEvidenceByHash.get(hashKey);
+    if (firstEvidenceId !== undefined && row.state === "PENDING") {
+      divergenceErrors.set(
+        id,
+        `${row.evidence_id}: DUPLICATE_DOCUMENT: evidenceHash idêntico ao evento anterior ${firstEvidenceId}`,
+      );
+      continue;
+    }
+    if (firstEvidenceId === undefined) firstEvidenceByHash.set(hashKey, row.evidence_id);
+
     try {
       bundles.set(
-        normalizeHex(row.evidence_id),
+        id,
         loadEvidenceBundleDirect(runtime, serviceRoleKey, row, actors),
       );
     } catch (error) {
-      bundleErrors.set(
-        normalizeHex(row.evidence_id),
-        error instanceof Error ? error.message : String(error),
-      );
+      const message = error instanceof Error ? error.message : String(error);
+      if (isEvidenceDivergenceError(error)) divergenceErrors.set(id, message);
+      else bundleErrors.set(id, message);
     }
   }
-  return { rows, actors, bundles, bundleErrors };
+  return { rows, actors, bundles, bundleErrors, divergenceErrors };
 }
 
 function loadBundlesByEvidenceIds(
@@ -1771,46 +1875,92 @@ function loadBundlesByEvidenceIds(
   for (const id of wanted) {
     const bundle = snapshot.bundles.get(id);
     if (!bundle) {
-      throw new Error(snapshot.bundleErrors.get(id) ?? `${id}: evidência não encontrada no Supabase`);
+      throw new Error(
+        snapshot.divergenceErrors.get(id) ?? snapshot.bundleErrors.get(id) ?? `${id}: evidência não encontrada no Supabase`,
+      );
     }
     bundles.push(bundle);
   }
   return bundles;
 }
 
-function confirmMatchInSupabase(
+function patchEvidenceStateInSupabase(
   runtime: TeeRuntime<Config>,
   serviceRoleKey: string,
-  evidence: OnchainEvidence,
-  transactionHash: Hex,
+  evidenceId: Hex,
+  patch: Record<string, unknown>,
 ): void {
-  if (normalizeHex(transactionHash) === normalizeHex(zeroHash)) {
-    throw new Error(`${evidence.evidenceId}: txHash zero não pode ser persistido como MATCHED`);
-  }
-  if (evidence.status !== 2 || evidence.matchedAt === 0n) {
-    throw new Error(`${evidence.evidenceId}: Supabase só pode espelhar MATCHED já confirmado on-chain`);
-  }
-
-  // Blockchain is authoritative. Do not require the off-chain cache to still be
-  // PENDING: an earlier simulator run may have left stale state in Supabase.
-  const path = `/rest/v1/explorerchem_evidences?evidence_id=eq.${encodeURIComponent(evidence.evidenceId)}`;
+  const path = `/rest/v1/explorerchem_evidences?evidence_id=eq.${encodeURIComponent(evidenceId)}`;
   const response = supabaseRequestRaw(
     runtime,
     serviceRoleKey,
     path,
     "PATCH",
-    {
-      state: "MATCHED",
-      matched_at: new Date(Number(evidence.matchedAt) * 1000).toISOString(),
-      match_tx_hash: transactionHash,
-    },
+    patch,
     { prefer: { values: ["return=representation"] } },
   );
-
   const raw = text(response);
   const updated = raw.length === 0 ? [] : JSON.parse(raw);
   if (!Array.isArray(updated) || updated.length !== 1) {
-    throw new Error(`${evidence.evidenceId}: PATCH do Supabase atualizou ${Array.isArray(updated) ? updated.length : 0} linha(s)`);
+    throw new Error(`${evidenceId}: PATCH do Supabase atualizou ${Array.isArray(updated) ? updated.length : 0} linha(s)`);
+  }
+}
+
+function reconcileMatchedInSupabase(
+  runtime: TeeRuntime<Config>,
+  serviceRoleKey: string,
+  evidence: OnchainEvidence,
+  transactionHash?: Hex,
+): void {
+  if (evidence.status !== 2 || evidence.matchedAt === 0n) {
+    throw new Error(`${evidence.evidenceId}: Supabase só pode espelhar MATCHED já confirmado on-chain`);
+  }
+  const patch: Record<string, unknown> = {
+    state: "MATCHED",
+    matched_at: new Date(Number(evidence.matchedAt) * 1000).toISOString(),
+  };
+  if (transactionHash && normalizeHex(transactionHash) !== normalizeHex(zeroHash)) {
+    patch.match_tx_hash = transactionHash;
+  }
+  patchEvidenceStateInSupabase(runtime, serviceRoleKey, evidence.evidenceId, patch);
+}
+
+function patchMatchedAfterReceiverSuccess(
+  runtime: TeeRuntime<Config>,
+  serviceRoleKey: string,
+  row: SupabaseEvidenceRow,
+  transactionHash: Hex,
+): void {
+  if (normalizeHex(transactionHash) === normalizeHex(zeroHash)) return;
+  const matchedAt = new Date(runtime.now()).toISOString();
+  patchEvidenceStateInSupabase(runtime, serviceRoleKey, row.evidence_id, {
+    state: "MATCHED",
+    matched_at: matchedAt,
+    match_tx_hash: transactionHash,
+  });
+  row.state = "MATCHED";
+  row.matched_at = matchedAt;
+}
+
+function patchDivergentInSupabaseBestEffort(
+  runtime: TeeRuntime<Config>,
+  serviceRoleKey: string,
+  evidenceId: Hex,
+  transactionHash?: Hex,
+): void {
+  try {
+    const patch: Record<string, unknown> = { state: "DIVERGENT" };
+    // Reuse the existing state-transition tx column in the MVP. The state tells
+    // the UI whether this tx represents MATCHED or DIVERGENT.
+    if (transactionHash && normalizeHex(transactionHash) !== normalizeHex(zeroHash)) {
+      patch.match_tx_hash = transactionHash;
+    }
+    patchEvidenceStateInSupabase(runtime, serviceRoleKey, evidenceId, patch);
+  } catch (error) {
+    runtime.log(
+      `${evidenceId}: aviso: não foi possível espelhar DIVERGENT no Supabase; ` +
+      `${error instanceof Error ? error.message : String(error)}`,
+    );
   }
 }
 
@@ -1826,7 +1976,7 @@ function getNetworkOrThrow(runtime: TeeRuntime<Config>) {
 
 function readExpectedWorkflowId(
   runtime: TeeRuntime<Config>,
-  reportType: 1 | 2,
+  reportType: 1 | 2 | 3,
 ): Hex {
   const network = getNetworkOrThrow(runtime);
   const donRuntime = runtime.usingTheDons();
@@ -1875,6 +2025,28 @@ function readExpectedWorkflowId(
     });
   };
 
+  const readAuditWorkflowId = (): Hex => {
+    const callData = encodeFunctionData({
+      abi: EXPLORERCHEM_READ_ABI,
+      functionName: "expectedAuditWorkflowId",
+    });
+    const response = new EVMClient(network.chainSelector.selector)
+      .callContract(donRuntime, {
+        call: encodeCallMsg({
+          from: zeroAddress,
+          to: runtime.config.contractAddress as Address,
+          data: callData,
+        }),
+        blockNumber: LATEST_BLOCK_NUMBER,
+      })
+      .result();
+    return decodeFunctionResult({
+      abi: EXPLORERCHEM_READ_ABI,
+      functionName: "expectedAuditWorkflowId",
+      data: bytesToHex(response.data),
+    });
+  };
+
   const correlationWorkflowId = readCorrelationWorkflowId();
   const expected = reportType === 2
     ? (() => {
@@ -1883,13 +2055,22 @@ function readExpectedWorkflowId(
           ? correlationWorkflowId
           : balanceWorkflowId;
       })()
-    : correlationWorkflowId;
+    : reportType === 3
+      ? (() => {
+          const auditWorkflowId = readAuditWorkflowId();
+          return normalizeHex(auditWorkflowId) === normalizeHex(zeroHash)
+            ? correlationWorkflowId
+            : auditWorkflowId;
+        })()
+      : correlationWorkflowId;
 
   if (normalizeHex(expected) === normalizeHex(zeroHash)) {
     throw new Error(
       reportType === 1
         ? "ExploreChemRegistry.expectedWorkflowId está zero; configure o workflow CRE autorizado antes do broadcast"
-        : "workflow de balanço não configurado; defina expectedWorkflowId ou expectedBalanceWorkflowId antes do broadcast",
+        : reportType === 2
+          ? "workflow de balanço não configurado; defina expectedWorkflowId ou expectedBalanceWorkflowId antes do broadcast"
+          : "workflow de auditoria não configurado; defina expectedWorkflowId ou expectedAuditWorkflowId antes do broadcast",
     );
   }
 
@@ -1933,6 +2114,7 @@ function readOnchainEvidence(
     status: Number(decoded.status),
     createdAt: decoded.createdAt,
     matchedAt: decoded.matchedAt,
+    auditedAt: decoded.auditedAt,
   };
 }
 
@@ -2110,9 +2292,10 @@ function indexedEvidenceFromSupabase(
     actorId: bundle.actorId,
     submittedBy: zeroAddress,
     evidenceHash: row.evidence_hash,
-    status: row.state === "PENDING" ? 1 : 2,
+    status: row.state === "PENDING" ? 1 : row.state === "MATCHED" ? 2 : row.state === "VERIFIED" ? 3 : 4,
     createdAt: BigInt(Math.floor(createdAtMs / 1000)),
     matchedAt: row.matched_at === null ? 0n : BigInt(Math.floor(matchedAtMs / 1000)),
+    auditedAt: 0n,
   };
 }
 
@@ -2131,18 +2314,31 @@ function verifyBundleForCorrelation(
     evidenceId: bundle.evidenceId,
     actorId: bundle.actorId,
     // In the Supabase-first correlation path this is the indexed/reference hash.
-    // The authoritative on-chain anchor is checked after a real receiver write.
+    // The authoritative on-chain anchor is checked before any receiver write.
     anchoredHash: bundle.evidenceHash,
     recomputedHash,
     hashMatches:
       normalizeHex(recomputedHash) === normalizeHex(bundle.evidenceHash) &&
       normalizeHex(bundle.evidenceHash) === normalizeHex(row.evidence_hash),
-    // actorId is resolved from row.actor_db_id -> explorerchem_actors.actor_id.
-    // The authoritative on-chain actorId is checked after a real receiver write.
     actorMatches: normalizeHex(bundle.actorId) === normalizeHex(indexed.actorId),
     extractionHashMatches: normalizedResult.extractionHashMatches,
     normalizationMode: normalizedResult.mode,
   };
+
+  if (!integrity.hashMatches) {
+    throw new EvidenceDivergenceError(
+      bundle.evidenceId,
+      "HASH_MISMATCH",
+      "bytes do documento não reproduzem o evidenceHash indexado",
+    );
+  }
+  if (!integrity.extractionHashMatches) {
+    throw new EvidenceDivergenceError(
+      bundle.evidenceId,
+      "EXTRACTION_MISMATCH",
+      "extração canônica não reproduz o extractionHash",
+    );
+  }
 
   return {
     bundle,
@@ -2208,8 +2404,18 @@ function relationship(
   return { fromEvidenceId: from.bundle.evidenceId, toEvidenceId: to.bundle.evidenceId, relationType, reasonCodes };
 }
 
-function validForRelationship(item: VerifiedBundle): boolean {
-  return item.integrity.hashMatches && item.integrity.actorMatches && item.integrity.extractionHashMatches;
+function validForCorrelation(item: VerifiedBundle): boolean {
+  // Correlation is event-first: the evidence/document must be authentic and its
+  // deterministic extraction reproducible. actorId is contextual metadata and
+  // does not decide whether two events can be correlated.
+  return item.integrity.hashMatches && item.integrity.extractionHashMatches;
+}
+
+function validForBalance(item: VerifiedBundle): boolean {
+  // Balance anchoring is different: the contract binds each balance result to
+  // the actorId stored on-chain for the owning evidence, so actor consistency is
+  // still required on this path.
+  return validForCorrelation(item) && item.integrity.actorMatches;
 }
 
 function validateDirectedRelationship(
@@ -2217,7 +2423,7 @@ function validateDirectedRelationship(
   to: VerifiedBundle,
 ): RelationshipCandidate | null {
   if (normalizeHex(from.bundle.evidenceId) === normalizeHex(to.bundle.evidenceId)) return null;
-  if (!validForRelationship(from) || !validForRelationship(to)) return null;
+  if (!validForCorrelation(from) || !validForCorrelation(to)) return null;
 
   const a = from.normalized;
   const b = to.normalized;
@@ -2328,7 +2534,7 @@ function verifyFocusRelationships(
   const focus = verified.find(
     (item) => normalizeHex(item.bundle.evidenceId) === normalizeHex(focusEvidenceId),
   );
-  if (!focus || !validForRelationship(focus)) return [];
+  if (!focus || !validForCorrelation(focus)) return [];
   const result = new Map<string, VerifiedEdge>();
 
   for (const other of verified) {
@@ -2361,10 +2567,22 @@ function encodeEvidenceMatchReport(evidenceId: Hex): Hex {
   return encoded;
 }
 
+function encodeEvidenceDivergentReport(evidenceId: Hex): Hex {
+  // EvidenceStatus.DIVERGENT = 4 in ExploreChemRegistry.
+  const encoded = encodeAbiParameters(
+    parseAbiParameters(
+      "uint8 reportType, bytes32 evidenceId, bytes32 resultId, bytes32 actorId, bytes32 resultHash, bytes32 previousResultId, bytes32 aggregateInputHash, uint8 balanceStatus, uint32 calculationVersion",
+    ),
+    [3, evidenceId, zeroHash, zeroHash, zeroHash, zeroHash, zeroHash, 4, 0],
+  );
+  if ((encoded.length - 2) / 2 !== 288) throw new Error("CREReport de auditoria não possui 288 bytes");
+  return encoded;
+}
+
 function writeReport(
   runtime: TeeRuntime<Config>,
   encodedReport: Hex,
-  reportType: 1 | 2,
+  reportType: 1 | 2 | 3,
   preflightWorkflowId = true,
 ): Hex {
   // Correlation can deliberately skip this preflight to keep the flow
@@ -2427,6 +2645,39 @@ function writeReport(
   return bytesToHex(writeResult.txHash ?? new Uint8Array(32)) as Hex;
 }
 
+function markEvidenceDivergent(
+  runtime: TeeRuntime<Config>,
+  serviceRoleKey: string,
+  row: SupabaseEvidenceRow,
+): { transactionHash: Hex | null; alreadyDivergent: boolean } {
+  const onchain = readOnchainEvidence(runtime, row.evidence_id, LATEST_BLOCK_NUMBER);
+
+  if (onchain.status === 4) {
+    patchDivergentInSupabaseBestEffort(runtime, serviceRoleKey, row.evidence_id);
+    return { transactionHash: null, alreadyDivergent: true };
+  }
+
+  // Direct PENDING -> DIVERGENT is intentionally supported by the revised
+  // receiver contract. MATCHED may also be audited to DIVERGENT later.
+  if (onchain.status !== 1 && onchain.status !== 2 && onchain.status !== 3) {
+    throw new Error(
+      `${row.evidence_id}: estado on-chain ${onchain.status} não pode ser marcado DIVERGENT`,
+    );
+  }
+
+  const transactionHash = writeReport(
+    runtime,
+    encodeEvidenceDivergentReport(row.evidence_id),
+    3,
+    true,
+  );
+
+  if (normalizeHex(transactionHash) !== normalizeHex(zeroHash)) {
+    patchDivergentInSupabaseBestEffort(runtime, serviceRoleKey, row.evidence_id, transactionHash);
+  }
+  return { transactionHash, alreadyDivergent: false };
+}
+
 type MassContinuityCheck = {
   fromEvidenceId: Hex;
   toEvidenceId: Hex;
@@ -2463,6 +2714,207 @@ type CorrelatedMassSnapshot = {
   status: "CONFORME" | "DIVERGENTE" | "NAO_ATESTADO";
 };
 
+const correlatedMassSnapshotSchema = z.object({
+  schema: z.literal("ExploreChem/CorrelatedMassSnapshot/v1"),
+  correlationPolicyVersion: z.string().min(1),
+  evidenceIds: z.array(bytes32Schema),
+  correlationEdges: z.array(z.object({
+    fromEvidenceId: bytes32Schema,
+    toEvidenceId: bytes32Schema,
+    relationType: relationTypeSchema,
+    verificationHash: bytes32Schema,
+  })),
+  continuityChecks: z.array(z.object({
+    fromEvidenceId: bytes32Schema,
+    toEvidenceId: bytes32Schema,
+    relationType: relationTypeSchema,
+    leftMassMg: z.string().nullable(),
+    rightMassMg: z.string().nullable(),
+    deltaMg: z.string().nullable(),
+    consistent: z.boolean(),
+  })),
+  transformationChecks: z.array(z.object({
+    evidenceId: bytes32Schema,
+    actorId: bytes32Schema,
+    actorType: actorTypeSchema,
+    element: z.enum(ELEMENTS),
+    inputMg: z.string().nullable(),
+    accountedOutputMg: z.string().nullable(),
+    deltaMg: z.string().nullable(),
+    consistent: z.boolean().nullable(),
+  })),
+  status: z.enum(["CONFORME", "DIVERGENTE", "NAO_ATESTADO"]),
+});
+
+type MassCheckpoint = {
+  resultId: Hex;
+  calculationVersion: number;
+  snapshot: CorrelatedMassSnapshot;
+};
+
+function loadLatestMassCheckpointForEvidence(
+  runtime: TeeRuntime<Config>,
+  serviceRoleKey: string,
+  evidenceId: Hex,
+): MassCheckpoint | null {
+  // Step 1: find this participant/evidence's private link to the shared proof.
+  const linkPath =
+    `/rest/v1/explorerchem_balance_results?select=result_id,summary,anchored_at` +
+    `&summary->>sourceEvidenceId=eq.${encodeURIComponent(evidenceId)}` +
+    `&order=anchored_at.desc&limit=1`;
+  const linkRows = supabaseJson<unknown[]>(runtime, serviceRoleKey, linkPath);
+  if (!Array.isArray(linkRows) || linkRows.length === 0) return null;
+
+  const linkRow = recordOf(linkRows[0]);
+  const linkSummary = recordOf(linkRow.summary);
+  const sharedProofResultIdRaw = linkSummary.sharedProofResultId;
+  if (typeof sharedProofResultIdRaw !== "string" || !/^0x[0-9a-fA-F]{64}$/.test(sharedProofResultIdRaw)) {
+    return null;
+  }
+  const sharedProofResultId = sharedProofResultIdRaw as Hex;
+
+  // Step 2: load the private checkpoint row for that shared public proof.
+  const checkpointPath =
+    `/rest/v1/explorerchem_balance_results?select=result_id,calculation_version,summary` +
+    `&result_id=eq.${encodeURIComponent(sharedProofResultId)}&limit=1`;
+  const checkpointRows = supabaseJson<unknown[]>(runtime, serviceRoleKey, checkpointPath);
+  if (!Array.isArray(checkpointRows) || checkpointRows.length === 0) return null;
+
+  const checkpointRow = recordOf(checkpointRows[0]);
+  const checkpointSummary = recordOf(checkpointRow.summary);
+  const parsed = correlatedMassSnapshotSchema.safeParse(checkpointSummary.checkpoint);
+  if (!parsed.success) {
+    runtime.log(`${evidenceId}: checkpoint privado não reutilizável; será usado fallback de recálculo`);
+    return null;
+  }
+
+  const versionRaw = checkpointRow.calculation_version;
+  const calculationVersion = typeof versionRaw === "number" ? versionRaw : Number(versionRaw);
+  return {
+    resultId: sharedProofResultId,
+    calculationVersion: Number.isFinite(calculationVersion) ? calculationVersion : 1,
+    snapshot: parsed.data,
+  };
+}
+
+function massStatusRank(value: CorrelatedMassSnapshot["status"]): number {
+  return value === "DIVERGENTE" ? 3 : value === "CONFORME" ? 2 : 1;
+}
+
+function mergeCheckpointSnapshots(
+  checkpoints: MassCheckpoint[],
+  newItems: VerifiedBundle[],
+  component: VerifiedBundle[],
+  edges: VerifiedEdge[],
+  correlationPolicyVersion: string,
+): CorrelatedMassSnapshot {
+  if (checkpoints.length === 0) {
+    return buildCorrelatedMassSnapshot(component, edges, correlationPolicyVersion);
+  }
+
+  const byId = new Map(component.map((item) => [normalizeHex(item.bundle.evidenceId), item] as const));
+  const evidenceIds = new Set<string>();
+  const edgeMap = new Map<string, CorrelatedMassSnapshot["correlationEdges"][number]>();
+  const continuityMap = new Map<string, MassContinuityCheck>();
+  const transformationMap = new Map<string, TransformationMassCheck>();
+  let inheritedStatus: CorrelatedMassSnapshot["status"] = "NAO_ATESTADO";
+
+  for (const checkpoint of checkpoints) {
+    const snapshot = checkpoint.snapshot;
+    if (massStatusRank(snapshot.status) > massStatusRank(inheritedStatus)) inheritedStatus = snapshot.status;
+    for (const id of snapshot.evidenceIds) evidenceIds.add(normalizeHex(id));
+    for (const edge of snapshot.correlationEdges) edgeMap.set(edgeKey(edge), edge);
+    for (const check of snapshot.continuityChecks) {
+      continuityMap.set(`${edgeKey(check)}|${check.leftMassMg}|${check.rightMassMg}`, check);
+    }
+    for (const check of snapshot.transformationChecks) {
+      transformationMap.set(`${normalizeHex(check.evidenceId)}|${check.element}`, check);
+    }
+  }
+
+  const newIds = new Set(newItems.map((item) => normalizeHex(item.bundle.evidenceId)));
+  for (const item of newItems) evidenceIds.add(normalizeHex(item.bundle.evidenceId));
+
+  for (const edge of edges) {
+    const key = edgeKey(edge);
+    const isNewEdge = !edgeMap.has(key);
+    if (!isNewEdge) continue;
+    edgeMap.set(key, {
+      fromEvidenceId: edge.fromEvidenceId,
+      toEvidenceId: edge.toEvidenceId,
+      relationType: edge.relationType,
+      verificationHash: edge.verificationHash,
+    });
+
+    // A checkpoint already attests the old history. Only calculate continuity
+    // for an edge that touches a newly matched event.
+    if (!newIds.has(normalizeHex(edge.fromEvidenceId)) && !newIds.has(normalizeHex(edge.toEvidenceId))) continue;
+    const from = byId.get(normalizeHex(edge.fromEvidenceId));
+    const to = byId.get(normalizeHex(edge.toEvidenceId));
+    if (!from || !to) continue;
+    const { left, right } = continuityMasses(from, to, edge.relationType);
+    const delta = left !== null && right !== null ? left - right : null;
+    const check: MassContinuityCheck = {
+      fromEvidenceId: edge.fromEvidenceId,
+      toEvidenceId: edge.toEvidenceId,
+      relationType: edge.relationType,
+      leftMassMg: left?.toString() ?? null,
+      rightMassMg: right?.toString() ?? null,
+      deltaMg: delta?.toString() ?? null,
+      consistent: delta === null ? true : delta === 0n,
+    };
+    continuityMap.set(`${key}|${check.leftMassMg}|${check.rightMassMg}`, check);
+  }
+
+  for (const item of newItems) {
+    const n = item.normalized;
+    for (const element of ELEMENTS) {
+      const input = n.elementalInputMg[element] !== undefined ? BigInt(n.elementalInputMg[element]!) : null;
+      const directOutput = n.elementalOutputMg[element] !== undefined ? BigInt(n.elementalOutputMg[element]!) : null;
+      const scrap = n.elementalScrapMg[element] !== undefined ? BigInt(n.elementalScrapMg[element]!) : null;
+      const recovered = n.elementalRecoveredMg[element] !== undefined ? BigInt(n.elementalRecoveredMg[element]!) : null;
+      let accountedOutput: bigint | null = null;
+      if (directOutput !== null || scrap !== null) accountedOutput = (directOutput ?? 0n) + (scrap ?? 0n);
+      else if (recovered !== null) accountedOutput = recovered;
+      if (input === null && accountedOutput === null) continue;
+      const delta = input !== null && accountedOutput !== null ? input - accountedOutput : null;
+      transformationMap.set(`${normalizeHex(item.bundle.evidenceId)}|${element}`, {
+        evidenceId: item.bundle.evidenceId,
+        actorId: item.bundle.actorId,
+        actorType: n.actorType,
+        element,
+        inputMg: input?.toString() ?? null,
+        accountedOutputMg: accountedOutput?.toString() ?? null,
+        deltaMg: delta?.toString() ?? null,
+        consistent: delta === null ? null : delta === 0n,
+      });
+    }
+  }
+
+  const continuityChecks = [...continuityMap.values()];
+  const transformationChecks = [...transformationMap.values()];
+  const newContradiction = continuityChecks.some((x) => x.consistent === false) ||
+    transformationChecks.some((x) => x.consistent === false);
+  const attested = continuityChecks.some((x) => x.deltaMg !== null) ||
+    transformationChecks.some((x) => x.consistent !== null);
+  const status: CorrelatedMassSnapshot["status"] =
+    inheritedStatus === "DIVERGENTE" || newContradiction
+      ? "DIVERGENTE"
+      : inheritedStatus === "CONFORME" || attested
+        ? "CONFORME"
+        : "NAO_ATESTADO";
+
+  return {
+    schema: "ExploreChem/CorrelatedMassSnapshot/v1",
+    correlationPolicyVersion,
+    evidenceIds: [...evidenceIds].sort() as Hex[],
+    correlationEdges: [...edgeMap.values()].sort((a, b) => edgeKey(a).localeCompare(edgeKey(b))),
+    continuityChecks,
+    transformationChecks,
+    status,
+  };
+}
+
 type CycleStats = {
   scanned: number;
   firstPending: Hex | null;
@@ -2472,51 +2924,20 @@ type CycleStats = {
   alreadyMatchedUsed: Hex[];
   waitingCounterpart: number;
   integrityRejected: number;
+  divergentThisRun: Hex[];
+  alreadyDivergent: Hex[];
+  divergenceTransactions: Array<{ evidenceId: Hex; transactionHash: Hex }>;
+  divergenceFailures: Array<{ evidenceId: Hex; error: string }>;
   simulatedMatches: number;
   matchTransactions: Array<{ evidenceId: Hex; transactionHash: Hex }>;
   massStatus: "CONFORME" | "DIVERGENTE" | "NAO_ATESTADO" | null;
   massResults: Array<{
-    evidenceId: Hex;
-    actorId: Hex;
-    salt: Hex;
     resultId: Hex;
     resultHash: Hex;
-    aggregateInputHash: Hex;
     transactionHash: Hex;
+    participantEvidenceIds: Hex[];
   }>;
 };
-
-function patchOffchainMatchedAfterReceiverSuccess(
-  runtime: TeeRuntime<Config>,
-  serviceRoleKey: string,
-  row: SupabaseEvidenceRow,
-  transactionHash: Hex,
-): void {
-  if (normalizeHex(transactionHash) === normalizeHex(zeroHash)) return;
-  const matchedAt = new Date(runtime.now()).toISOString();
-  const path = `/rest/v1/explorerchem_evidences?evidence_id=eq.${encodeURIComponent(row.evidence_id)}`;
-  const response = supabaseRequestRaw(
-    runtime,
-    serviceRoleKey,
-    path,
-    "PATCH",
-    {
-      state: "MATCHED",
-      matched_at: matchedAt,
-      match_tx_hash: transactionHash,
-    },
-    { prefer: { values: ["return=representation"] } },
-  );
-  const raw = text(response);
-  const updated = raw.length === 0 ? [] : JSON.parse(raw);
-  if (!Array.isArray(updated) || updated.length !== 1) {
-    throw new Error(
-      `${row.evidence_id}: PATCH MATCHED atualizou ${Array.isArray(updated) ? updated.length : 0} linha(s)`,
-    );
-  }
-  row.state = "MATCHED";
-  row.matched_at = matchedAt;
-}
 
 function continuityMasses(
   from: VerifiedBundle,
@@ -2639,29 +3060,110 @@ function buildCorrelatedMassSnapshot(
   };
 }
 
-function persistEvidenceMassResult(
+type SharedMassProofPayload = {
+  schema: "ExploreChem/SharedMassProofPayload/v1";
+  status: CorrelatedMassSnapshot["status"];
+  continuity: Array<{
+    leftMassMg: string | null;
+    rightMassMg: string | null;
+    deltaMg: string | null;
+    consistent: boolean;
+  }>;
+  transformations: Array<{
+    element: Element;
+    inputMg: string | null;
+    accountedOutputMg: string | null;
+    deltaMg: string | null;
+    consistent: boolean | null;
+  }>;
+};
+
+function buildSharedMassProofPayload(snapshot: CorrelatedMassSnapshot): SharedMassProofPayload {
+  // Deliberately strips evidenceId, actorId, actorType, relation endpoints and
+  // every membership field before hashing. This is what prevents the public
+  // resultHash from becoming a correlation commitment.
+  const continuity = snapshot.continuityChecks.map((check) => ({
+    leftMassMg: check.leftMassMg,
+    rightMassMg: check.rightMassMg,
+    deltaMg: check.deltaMg,
+    consistent: check.consistent,
+  })).sort((a, b) => stableJson(a).localeCompare(stableJson(b)));
+
+  const transformations = snapshot.transformationChecks.map((check) => ({
+    element: check.element,
+    inputMg: check.inputMg,
+    accountedOutputMg: check.accountedOutputMg,
+    deltaMg: check.deltaMg,
+    consistent: check.consistent,
+  })).sort((a, b) => stableJson(a).localeCompare(stableJson(b)));
+
+  return {
+    schema: "ExploreChem/SharedMassProofPayload/v1",
+    status: snapshot.status,
+    continuity,
+    transformations,
+  };
+}
+
+function encodeSharedMassProofReport(
+  resultId: Hex,
+  resultHash: Hex,
+  revision = 1,
+): Hex {
+  // Public mass proof intentionally carries NO actorId, evidenceId, membership,
+  // correlation group, Merkle root or public balance verdict. The report stays
+  // nine static ABI words so the CRE transport format remains simple.
+  //
+  // IMPORTANT: the receiver contract must use the matching shared-proof
+  // semantics for reportType 2 (evidenceId/actorId/other unused fields = zero).
+  const encoded = encodeAbiParameters(
+    parseAbiParameters(
+      "uint8 reportType, bytes32 evidenceId, bytes32 resultId, bytes32 actorId, bytes32 resultHash, bytes32 previousResultId, bytes32 aggregateInputHash, uint8 balanceStatus, uint32 calculationVersion",
+    ),
+    [
+      2,
+      zeroHash,
+      resultId,
+      zeroHash,
+      resultHash,
+      zeroHash,
+      zeroHash,
+      0,
+      revision,
+    ],
+  );
+  if ((encoded.length - 2) / 2 !== 288) {
+    throw new Error("CREReport de prova de massa compartilhada não possui 288 bytes");
+  }
+  return encoded;
+}
+
+function persistSharedMassProofForParticipants(
   runtime: TeeRuntime<Config>,
   serviceRoleKey: string,
-  row: SupabaseEvidenceRow,
+  participantRows: SupabaseEvidenceRow[],
   result: {
     resultId: Hex;
     resultHash: Hex;
-    aggregateInputHash: Hex;
-    salt: Hex;
-    status: "CONFORME" | "DIVERGENTE" | "NAO_ATESTADO";
     transactionHash: Hex;
-    summary: unknown;
+    checkpoint: CorrelatedMassSnapshot;
+    proofPayload: SharedMassProofPayload;
   },
 ): void {
-  const lotDbId = row.verified_lot_db_id ?? row.declared_lot_db_id;
-  if (!lotDbId) {
-    throw new Error(`${row.evidence_id}: resultado de massa exige lot_db_id off-chain`);
-  }
   if (normalizeHex(result.transactionHash) === normalizeHex(zeroHash)) return;
+  if (participantRows.length === 0) return;
 
-  // The current public table has no dedicated private-salt column. For this MVP
-  // the evidence-specific salt is kept off-chain inside summary. The blockchain
-  // only receives the salted commitments (resultHash / aggregateInputHash).
+  const anchoredAt = new Date(runtime.now()).toISOString();
+  const rowsWithLot = participantRows.filter(
+    (row) => (row.verified_lot_db_id ?? row.declared_lot_db_id) !== null,
+  );
+  if (rowsWithLot.length === 0) {
+    throw new Error("prova de massa compartilhada exige ao menos um lot_db_id off-chain");
+  }
+
+  // One internal checkpoint row mirrors the ONE public proof. Membership stays
+  // off-chain; the public transaction contains only resultId/resultHash.
+  const checkpointOwner = rowsWithLot[0]!;
   supabaseRequestRaw(
     runtime,
     serviceRoleKey,
@@ -2669,129 +3171,109 @@ function persistEvidenceMassResult(
     "POST",
     {
       result_id: result.resultId,
-      lot_db_id: lotDbId,
-      actor_db_id: row.actor_db_id,
+      lot_db_id: checkpointOwner.verified_lot_db_id ?? checkpointOwner.declared_lot_db_id,
+      actor_db_id: checkpointOwner.actor_db_id,
       result_hash: result.resultHash,
       previous_result_db_id: null,
-      status: result.status,
+      status: result.checkpoint.status,
       calculation_version: 1,
       summary: {
-        ...(result.summary as Record<string, unknown>),
-        sourceEvidenceId: row.evidence_id,
-        evidenceSalt: result.salt,
-        aggregateInputHash: result.aggregateInputHash,
+        schema: "ExploreChem/SharedMassProofCheckpoint/v1",
+        sharedProofResultId: result.resultId,
+        sharedResultHash: result.resultHash,
+        participantCount: participantRows.length,
+        publicMembershipCommitted: false,
+        proofPayload: result.proofPayload,
+        checkpoint: result.checkpoint,
       },
       anchor_tx_hash: result.transactionHash,
-      anchored_at: new Date(runtime.now()).toISOString(),
+      anchored_at: anchoredAt,
     },
     { prefer: { values: ["resolution=merge-duplicates,return=representation"] } },
   );
+
+  // Give every involved evidence its own private/off-chain pointer to the SAME
+  // resultHash and SAME txHash. These link row ids are not blockchain ids.
+  for (const row of participantRows) {
+    const lotDbId = row.verified_lot_db_id ?? row.declared_lot_db_id;
+    if (!lotDbId) {
+      runtime.log(`${row.evidence_id}: sem lot_db_id; link da prova compartilhada não foi persistido`);
+      continue;
+    }
+    const participantLinkId = hashText(
+      `ExploreChem/SharedMassProofParticipantLink/v1|${result.resultId}|${row.evidence_id}`,
+    );
+    supabaseRequestRaw(
+      runtime,
+      serviceRoleKey,
+      "/rest/v1/explorerchem_balance_results?on_conflict=result_id",
+      "POST",
+      {
+        result_id: participantLinkId,
+        lot_db_id: lotDbId,
+        actor_db_id: row.actor_db_id,
+        result_hash: result.resultHash,
+        previous_result_db_id: null,
+        status: result.checkpoint.status,
+        calculation_version: 1,
+        summary: {
+          schema: "ExploreChem/SharedMassProofParticipant/v1",
+          sourceEvidenceId: row.evidence_id,
+          sharedProofResultId: result.resultId,
+          sharedResultHash: result.resultHash,
+          sharedTransactionHash: result.transactionHash,
+          publicMembershipCommitted: false,
+          proofPayload: result.proofPayload,
+        },
+        anchor_tx_hash: result.transactionHash,
+        anchored_at: anchoredAt,
+      },
+      { prefer: { values: ["resolution=merge-duplicates,return=representation"] } },
+    );
+  }
 }
 
-function anchorMassResultForEvidence(
+function anchorSharedMassProof(
   runtime: TeeRuntime<Config>,
   serviceRoleKey: string,
-  row: SupabaseEvidenceRow,
-  evidence: VerifiedBundle,
+  participantRows: SupabaseEvidenceRow[],
   massSnapshot: CorrelatedMassSnapshot,
-  masterKey: string,
 ): {
-  evidenceId: Hex;
-  actorId: Hex;
-  salt: Hex;
   resultId: Hex;
   resultHash: Hex;
-  aggregateInputHash: Hex;
   transactionHash: Hex;
+  participantEvidenceIds: Hex[];
 } {
-  const componentFingerprint = hashStable({
-    domain: "ExploreChem/CorrelatedMassComponent/v1",
-    value: massSnapshot,
-  });
+  const participantEvidenceIds = participantRows
+    .map((row) => row.evidence_id)
+    .sort((a, b) => a.localeCompare(b));
 
-  // Unique private salt per evidence/result. It is deterministic from a secret
-  // master key so DON executions remain deterministic while different evidence
-  // records never share the same salt.
-  const salt = hashText(
-    `ExploreChem/EvidenceMassSalt/v1|${masterKey}|${evidence.bundle.evidenceId}|${componentFingerprint}`,
-  );
-  const aggregateInputHash = hashText(stableJson({
-    domain: "ExploreChem/EvidenceMassInput/v1",
-    salt,
-    evidenceId: evidence.bundle.evidenceId,
-    actorId: evidence.bundle.actorId,
-    component: massSnapshot,
-  }));
-  const privateManifest = {
-    schema: "ExploreChem/EvidenceMassResult/v1",
-    sourceEvidenceId: evidence.bundle.evidenceId,
-    actorId: evidence.bundle.actorId,
-    evidenceHash: evidence.bundle.evidenceHash,
-    salt,
-    aggregateInputHash,
-    mass: massSnapshot,
-  };
+  // No per-actor salt. The public commitment hashes only the canonical mass
+  // proof payload, with all participant/evidence/correlation identifiers
+  // stripped first. Therefore resultHash is shared but is NOT a membership hash.
+  const proofPayload = buildSharedMassProofPayload(massSnapshot);
   const resultHash = hashText(stableJson({
-    domain: "ExploreChem/EvidenceMassResultHash/v1",
-    salt,
-    value: privateManifest,
+    domain: "ExploreChem/SharedMassProofHash/v1",
+    value: proofPayload,
   }));
-  const resultId = hashText(
-    `ExploreChem/EvidenceMassResultId/v1|${evidence.bundle.actorId}|${evidence.bundle.evidenceId}|${resultHash}`,
-  );
-  const balanceStatus = massSnapshot.status === "CONFORME" ? 1 : massSnapshot.status === "DIVERGENTE" ? 2 : 3;
-  const encodedReport = encodeAbiParameters(
-    parseAbiParameters(
-      "uint8 reportType, bytes32 evidenceId, bytes32 resultId, bytes32 actorId, bytes32 resultHash, bytes32 previousResultId, bytes32 aggregateInputHash, uint8 balanceStatus, uint32 calculationVersion",
-    ),
-    [
-      2,
-      // Current ExploreChemRegistry requires reportType 2 evidenceId == 0.
-      // The source evidenceId is committed inside resultId/resultHash and kept
-      // explicitly in the private/off-chain summary.
-      zeroHash,
-      resultId,
-      evidence.bundle.actorId,
-      resultHash,
-      zeroHash,
-      aggregateInputHash,
-      balanceStatus,
-      1,
-    ],
-  );
-  if ((encodedReport.length - 2) / 2 !== 288) {
-    throw new Error(`${evidence.bundle.evidenceId}: CREReport de massa não possui 288 bytes`);
-  }
+  const resultId = hashText(`ExploreChem/SharedMassProofId/v1|${resultHash}`);
 
-  const transactionHash = writeReport(runtime, encodedReport, 2);
-  persistEvidenceMassResult(runtime, serviceRoleKey, row, {
+  const transactionHash = writeReport(
+    runtime,
+    encodeSharedMassProofReport(resultId, resultHash, 1),
+    2,
+    true,
+  );
+
+  persistSharedMassProofForParticipants(runtime, serviceRoleKey, participantRows, {
     resultId,
     resultHash,
-    aggregateInputHash,
-    salt,
-    status: massSnapshot.status,
     transactionHash,
-    summary: {
-      schema: "ExploreChem/AuthorizedEvidenceMassSummary/v1",
-      actorId: evidence.bundle.actorId,
-      sourceEvidenceId: evidence.bundle.evidenceId,
-      status: massSnapshot.status,
-      componentEvidenceIds: massSnapshot.evidenceIds,
-      continuityChecks: massSnapshot.continuityChecks,
-      transformationChecks: massSnapshot.transformationChecks,
-      resultHash,
-    },
+    checkpoint: massSnapshot,
+    proofPayload,
   });
 
-  return {
-    evidenceId: evidence.bundle.evidenceId,
-    actorId: evidence.bundle.actorId,
-    salt,
-    resultId,
-    resultHash,
-    aggregateInputHash,
-    transactionHash,
-  };
+  return { resultId, resultHash, transactionHash, participantEvidenceIds };
 }
 
 function runCorrelationCycle(
@@ -2799,23 +3281,73 @@ function runCorrelationCycle(
   _mode: CorrelationRunMode,
 ): string {
   const serviceRoleKey = getSupabaseServiceRoleKey(runtime);
-  const masterKey = getCommitmentMasterKey(runtime);
   const snapshot = loadDirectCorrelationSnapshot(runtime, serviceRoleKey);
   const verifiedById = new Map<string, VerifiedBundle>();
   const rowsById = new Map(
     snapshot.rows.map((row) => [normalizeHex(row.evidence_id), row] as const),
   );
+  const preExistingMatched = new Set(
+    snapshot.rows.filter((row) => row.state === "MATCHED" || row.state === "VERIFIED").map((row) => normalizeHex(row.evidence_id)),
+  );
 
-  // MASS workflow starts in the API/Supabase. No getEvidence() chain pre-read is
-  // used to discover PENDING. The upload already created the evidence anchor;
-  // this workflow uses the off-chain queue to choose what must be correlated.
+  // Discovery remains Supabase-first. Integrity and event-role problems are
+  // separated from transient infrastructure failures so only deterministic
+  // evidence problems can become DIVERGENT.
   for (const [id, bundle] of snapshot.bundles) {
     try {
       const row = rowsById.get(id);
       if (!row) throw new Error(`${bundle.evidenceId}: linha Supabase não encontrada`);
       verifiedById.set(id, verifyBundleForCorrelation(runtime, serviceRoleKey, bundle, row));
     } catch (error) {
-      snapshot.bundleErrors.set(id, error instanceof Error ? error.message : String(error));
+      const message = error instanceof Error ? error.message : String(error);
+      if (isEvidenceDivergenceError(error)) snapshot.divergenceErrors.set(id, message);
+      else snapshot.bundleErrors.set(id, message);
+    }
+  }
+
+  // MATCHED is not terminal. Every run re-opens/re-hashes its document above
+  // and now rechecks the immutable on-chain anchor before allowing it to act as
+  // a counterpart or mass checkpoint. DIVERGENT is the only terminal state.
+  for (const row of snapshot.rows) {
+    if (row.state !== "MATCHED" && row.state !== "VERIFIED") continue;
+    const id = normalizeHex(row.evidence_id);
+    const item = verifiedById.get(id);
+    if (!item) continue;
+    try {
+      const authoritative = readOnchainEvidence(runtime, row.evidence_id, LATEST_BLOCK_NUMBER);
+      if (authoritative.status === 4) {
+        snapshot.divergenceErrors.set(
+          id,
+          `${row.evidence_id}: ONCHAIN_DIVERGENT: evidência já está DIVERGENT no contrato`,
+        );
+        verifiedById.delete(id);
+        continue;
+      }
+      if (authoritative.status !== 2 && authoritative.status !== 3) {
+        snapshot.bundleErrors.set(
+          id,
+          `${row.evidence_id}: Supabase está MATCHED, mas estado on-chain é ${authoritative.status}`,
+        );
+        verifiedById.delete(id);
+        continue;
+      }
+      if (normalizeHex(authoritative.evidenceHash) !== normalizeHex(item.integrity.recomputedHash)) {
+        snapshot.divergenceErrors.set(
+          id,
+          `${row.evidence_id}: HASH_MISMATCH_ONCHAIN: documento revalidado diverge da âncora`,
+        );
+        verifiedById.delete(id);
+        continue;
+      }
+      item.onchain = authoritative;
+      item.integrity.anchoredHash = authoritative.evidenceHash;
+      item.integrity.hashMatches = true;
+    } catch (error) {
+      snapshot.bundleErrors.set(
+        id,
+        `${row.evidence_id}: falha técnica ao revalidar MATCHED on-chain: ${error instanceof Error ? error.message : String(error)}`,
+      );
+      verifiedById.delete(id);
     }
   }
 
@@ -2828,15 +3360,47 @@ function runCorrelationCycle(
     alreadyMatchedUsed: [],
     waitingCounterpart: 0,
     integrityRejected: snapshot.bundleErrors.size,
+    divergentThisRun: [],
+    alreadyDivergent: [],
+    divergenceTransactions: [],
+    divergenceFailures: [],
     simulatedMatches: 0,
     matchTransactions: [],
     massStatus: null,
     massResults: [],
   };
-  const correlationPolicyVersion = "explorechem-correlation-v1";
+  const correlationPolicyVersion = "explorechem-correlation-v2-event-first";
+
+  // Deterministic bad evidence does not block the queue. Mark it DIVERGENT and
+  // continue. Technical RPC/Storage/Supabase failures remain retryable and are
+  // never converted into a business verdict.
+  for (const [id, reason] of snapshot.divergenceErrors) {
+    const row = rowsById.get(id);
+    if (!row) continue;
+    try {
+      const outcome = markEvidenceDivergent(runtime, serviceRoleKey, row);
+      if (outcome.alreadyDivergent) {
+        stats.alreadyDivergent.push(row.evidence_id);
+      } else if (outcome.transactionHash !== null) {
+        if (normalizeHex(outcome.transactionHash) === normalizeHex(zeroHash)) {
+          runtime.log(`${row.evidence_id}: DIVERGENT simulado · ${reason}`);
+        } else {
+          stats.divergentThisRun.push(row.evidence_id);
+          stats.divergenceTransactions.push({ evidenceId: row.evidence_id, transactionHash: outcome.transactionHash });
+        }
+      }
+    } catch (error) {
+      stats.divergenceFailures.push({
+        evidenceId: row.evidence_id,
+        error: `${reason} · audit=${error instanceof Error ? error.message : String(error)}`,
+      });
+    }
+  }
 
   const firstPendingRow = snapshot.rows.find((row) =>
-    row.state === "PENDING" && verifiedById.has(normalizeHex(row.evidence_id))
+    row.state === "PENDING" &&
+    !snapshot.divergenceErrors.has(normalizeHex(row.evidence_id)) &&
+    verifiedById.has(normalizeHex(row.evidence_id))
   );
   if (!firstPendingRow) {
     return JSON.stringify({
@@ -2844,10 +3408,13 @@ function runCorrelationCycle(
       execution: {
         workflow: "MASS",
         discovery: "SUPABASE_API_FIRST",
-        chainPendingPreRead: false,
+        correlation: "EVIDENCE_CENTRIC_GRAPH",
         tee: "AWS_NITRO_US_WEST_2",
       },
-      message: "nenhuma evidência PENDING off-chain encontrada",
+      message: snapshot.divergenceErrors.size > 0
+        ? "não restou evidência PENDING válida após auditoria de divergências"
+        : "nenhuma evidência PENDING off-chain encontrada",
+      divergenceErrors: [...snapshot.divergenceErrors.entries()].map(([evidenceId, error]) => ({ evidenceId, error })),
       bundleErrors: [...snapshot.bundleErrors.entries()].map(([evidenceId, error]) => ({ evidenceId, error })),
       ...stats,
     });
@@ -2864,7 +3431,7 @@ function runCorrelationCycle(
     const focusId = queue.shift()!;
     const focus = verifiedById.get(focusId);
     const row = rowsById.get(focusId);
-    if (!focus || !row || !validForRelationship(focus)) {
+    if (!focus || !row || !validForCorrelation(focus)) {
       stats.integrityRejected += 1;
       continue;
     }
@@ -2893,10 +3460,65 @@ function runCorrelationCycle(
       }
     }
 
-    // One evidence, one MATCH. A PENDING counterpart is not matched early; it
-    // stays PENDING until its own turn in the queue. An existing MATCHED record
-    // is only reused in the graph and never receives another reportType 1.
     if (row.state === "PENDING") {
+      // Idempotency gate: the queue is off-chain, but before spending gas we
+      // reconcile this exact evidenceId with the receiver. A previous run may
+      // have succeeded on-chain and crashed before PATCHing Supabase.
+      let authoritative: OnchainEvidence;
+      try {
+        authoritative = readOnchainEvidence(runtime, focus.bundle.evidenceId, LATEST_BLOCK_NUMBER);
+      } catch (error) {
+        stats.divergenceFailures.push({
+          evidenceId: focus.bundle.evidenceId,
+          error: `não foi possível reconciliar getEvidence antes do MATCH: ${error instanceof Error ? error.message : String(error)}`,
+        });
+        continue;
+      }
+
+      if (authoritative.status === 4) {
+        patchDivergentInSupabaseBestEffort(runtime, serviceRoleKey, focus.bundle.evidenceId);
+        stats.alreadyDivergent.push(focus.bundle.evidenceId);
+        continue;
+      }
+
+      if (authoritative.status === 2) {
+        reconcileMatchedInSupabase(runtime, serviceRoleKey, authoritative);
+        focus.onchain = authoritative;
+        row.state = "MATCHED";
+        row.matched_at = new Date(Number(authoritative.matchedAt) * 1000).toISOString();
+        preExistingMatched.add(focusId);
+        // Supabase was behind an already successful MATCH. Treat it as newly
+        // available for the shared mass proof so an interrupted prior run can
+        // recover without resending reportType 1.
+        newlyMatched.add(focusId);
+        stats.alreadyMatchedUsed.push(focus.bundle.evidenceId);
+        continue;
+      }
+
+      if (authoritative.status !== 1) {
+        stats.divergenceFailures.push({
+          evidenceId: focus.bundle.evidenceId,
+          error: `estado on-chain inesperado antes do MATCH: ${authoritative.status}`,
+        });
+        continue;
+      }
+
+      if (normalizeHex(authoritative.evidenceHash) !== normalizeHex(focus.integrity.recomputedHash)) {
+        try {
+          const outcome = markEvidenceDivergent(runtime, serviceRoleKey, row);
+          if (outcome.transactionHash && normalizeHex(outcome.transactionHash) !== normalizeHex(zeroHash)) {
+            stats.divergentThisRun.push(row.evidence_id);
+            stats.divergenceTransactions.push({ evidenceId: row.evidence_id, transactionHash: outcome.transactionHash });
+          }
+        } catch (error) {
+          stats.divergenceFailures.push({
+            evidenceId: row.evidence_id,
+            error: `HASH_MISMATCH_ONCHAIN · ${error instanceof Error ? error.message : String(error)}`,
+          });
+        }
+        continue;
+      }
+
       const transactionHash = writeReport(
         runtime,
         encodeEvidenceMatchReport(focus.bundle.evidenceId),
@@ -2908,20 +3530,27 @@ function runCorrelationCycle(
       if (normalizeHex(transactionHash) === normalizeHex(zeroHash)) {
         stats.simulatedMatches += 1;
       } else {
-        patchOffchainMatchedAfterReceiverSuccess(runtime, serviceRoleKey, row, transactionHash);
-        focus.onchain.status = 2;
-        focus.onchain.matchedAt = BigInt(Math.floor(new Date(runtime.now()).getTime() / 1000));
+        // writeReport already checks txStatus and receiverContractExecutionStatus.
+        // Avoid a fragile immediate read-after-write; if this PATCH is ever
+        // interrupted, the next run reconciles getEvidence before writing again.
+        patchMatchedAfterReceiverSuccess(runtime, serviceRoleKey, row, transactionHash);
+        focus.onchain = {
+          ...authoritative,
+          status: 2,
+         matchedAt: BigInt(
+  Math.floor(new Date(runtime.now()).getTime() / 1000)
+        };
         newlyMatched.add(focusId);
         stats.matchedThisRun.push(focus.bundle.evidenceId);
       }
-    } else {
+    } else if (row.state === "MATCHED" || row.state === "VERIFIED") {
       stats.alreadyMatchedUsed.push(focus.bundle.evidenceId);
     }
   }
 
   const componentItems = [...component]
     .map((id) => verifiedById.get(id))
-    .filter((item): item is VerifiedBundle => item !== undefined && validForRelationship(item));
+    .filter((item): item is VerifiedBundle => item !== undefined && validForCorrelation(item));
   const componentEdges = [...edgeMap.values()].filter((edge) =>
     component.has(normalizeHex(edge.fromEvidenceId)) && component.has(normalizeHex(edge.toEvidenceId))
   );
@@ -2929,33 +3558,98 @@ function runCorrelationCycle(
   stats.correlatedEvidenceIds = componentItems.map((item) => item.bundle.evidenceId).sort();
   stats.correlationEdges = componentEdges.length;
 
-  // Only after the whole correlated component has been assembled do we perform
-  // the mass calculation. The same calculation is committed separately for
-  // each evidence newly matched in this run, with a unique private salt and a
-  // separate transaction/resultHash for that evidence's owner.
-  if (componentItems.length > 1 && componentEdges.length > 0) {
-    const massSnapshot = buildCorrelatedMassSnapshot(
-      componentItems,
-      componentEdges,
-      correlationPolicyVersion,
+  // FINAL MASS RULE:
+  //   - MATCHED/VERIFIED enter the mass calculation;
+  //   - PENDING does not enter yet;
+  //   - DIVERGENT is the only terminal state and is not returned by discovery.
+  const matchedComponentItems = componentItems.filter((item) => {
+    const row = rowsById.get(normalizeHex(item.bundle.evidenceId));
+    return row?.state === "MATCHED" || row?.state === "VERIFIED";
+  });
+  const matchedIds = new Set(
+    matchedComponentItems.map((item) => normalizeHex(item.bundle.evidenceId)),
+  );
+  const matchedComponentEdges = componentEdges.filter((edge) =>
+    matchedIds.has(normalizeHex(edge.fromEvidenceId)) &&
+    matchedIds.has(normalizeHex(edge.toEvidenceId))
+  );
+  const newlyMatchedItems = [...newlyMatched]
+    .map((id) => verifiedById.get(id))
+    .filter((item): item is VerifiedBundle =>
+      item !== undefined && matchedIds.has(normalizeHex(item.bundle.evidenceId))
     );
-    stats.massStatus = massSnapshot.status;
 
-    for (const id of newlyMatched) {
-      const evidence = verifiedById.get(id);
-      const row = rowsById.get(id);
-      if (!evidence || !row) continue;
-      stats.massResults.push(
-        anchorMassResultForEvidence(
+  if (
+    newlyMatchedItems.length > 0 &&
+    matchedComponentItems.length > 1 &&
+    matchedComponentEdges.length > 0
+  ) {
+    // A pre-existing MATCHED can provide the previous private checkpoint. We
+    // still revalidated its document in this run before it was allowed into the
+    // active graph. If a historical checkpoint contains any evidence that is no
+    // longer MATCHED (for example it later became DIVERGENT), that checkpoint is
+    // discarded and the active MATCHED component is recalculated instead.
+    const checkpointsByResult = new Map<string, MassCheckpoint>();
+    for (const id of preExistingMatched) {
+      if (!matchedIds.has(id)) continue;
+      const item = verifiedById.get(id);
+      if (!item) continue;
+      try {
+        const checkpoint = loadLatestMassCheckpointForEvidence(
           runtime,
           serviceRoleKey,
-          row,
-          evidence,
-          massSnapshot,
-          masterKey,
-        ),
-      );
+          item.bundle.evidenceId,
+        );
+        if (!checkpoint) continue;
+        const checkpointStillActive = checkpoint.snapshot.evidenceIds.every((evidenceId) =>
+          matchedIds.has(normalizeHex(evidenceId))
+        );
+        if (!checkpointStillActive) {
+          runtime.log(`${item.bundle.evidenceId}: checkpoint antigo contém evidência fora do conjunto MATCHED; ignorado`);
+          continue;
+        }
+        checkpointsByResult.set(normalizeHex(checkpoint.resultId), checkpoint);
+      } catch (error) {
+        runtime.log(`${item.bundle.evidenceId}: checkpoint indisponível: ${error instanceof Error ? error.message : String(error)}`);
+      }
     }
+
+    const checkpoints = [...checkpointsByResult.values()];
+    const massSnapshot = checkpoints.length > 0
+      ? mergeCheckpointSnapshots(
+          checkpoints,
+          newlyMatchedItems,
+          matchedComponentItems,
+          matchedComponentEdges,
+          correlationPolicyVersion,
+        )
+      : buildCorrelatedMassSnapshot(
+          matchedComponentItems,
+          matchedComponentEdges,
+          correlationPolicyVersion,
+        );
+
+    // IMPORTANT: a DIVERGENTE mass result is NOT an evidence-integrity verdict.
+    // No evidence is changed to DIVERGENT here. Evidence DIVERGENT happens only
+    // in the integrity/audit path and never enters this calculation.
+    stats.massStatus = massSnapshot.status;
+
+    const participantRows = matchedComponentItems
+      .map((item) => rowsById.get(normalizeHex(item.bundle.evidenceId)))
+      .filter((row): row is SupabaseEvidenceRow =>
+        row !== undefined && (row.state === "MATCHED" || row.state === "VERIFIED")
+      );
+
+    // ONE operation -> ONE deterministic hash -> ONE blockchain tx. The same
+    // resultHash/txHash is then linked privately to every involved participant.
+    stats.massResults.push(
+      anchorSharedMassProof(
+        runtime,
+        serviceRoleKey,
+        participantRows,
+        massSnapshot,
+      ),
+    );
   }
 
   return JSON.stringify({
@@ -2963,24 +3657,30 @@ function runCorrelationCycle(
     execution: {
       workflow: "MASS",
       discovery: "SUPABASE_API_FIRST",
-      pendingAuthority: "OFFCHAIN_QUEUE",
-      chainPendingPreRead: false,
+      pendingAuthority: "OFFCHAIN_QUEUE_WITH_ONCHAIN_IDEMPOTENCY_GATE",
       correlation: "EVIDENCE_CENTRIC_GRAPH",
-      matchTiming: "IMMEDIATE_PER_EVIDENCE_WHEN_ITS_TURN_IS_CORRELATED",
-      massTiming: "AFTER_COMPLETE_CORRELATED_COMPONENT",
-      massAnchor: "ONE_SALTED_RESULT_PER_NEWLY_MATCHED_EVIDENCE",
+      matchTiming: "IMMEDIATE_PER_VALID_EVIDENCE",
+      massTiming: "CHECKPOINT_INCREMENTAL_AFTER_NEW_MATCH",
+      massAnchor: "ONE_SHARED_UNSALTED_PROOF_PER_CORRELATED_OPERATION",
+      divergence: "DETERMINISTIC_EVIDENCE_ERROR_TO_REPORT_TYPE_3",
       tee: "AWS_NITRO_US_WEST_2",
     },
     policy: {
       firstPendingComesFromSupabase: true,
-      pendingCounterpartWaitsForOwnTurn: true,
-      matchedEvidenceCanBeReusedWithoutNewMatch: true,
-      oneMatchTransactionPerEvidence: true,
-      onePrivateSaltPerEvidenceMassResult: true,
-      oneMassTransactionPerEvidenceMassResult: true,
-      sourceEvidenceIdCommittedInsideResultHash: true,
-      sourceEvidenceIdReportFieldIsZeroForCurrentContractCompatibility: true,
+      actorIdInsideDocumentIsNotCorrelationProof: true,
+      noCounterpartMeansStayPending: true,
+      deterministicBadEvidenceBecomesDivergent: true,
+      technicalFailureNeverBecomesDivergent: true,
+      pendingIsReconciledOnchainBeforeNewMatchTransaction: true,
+      matchedEvidenceUsesLatestMassCheckpointWhenAvailable: true,
+      oldMatchedHistoryIsNotRecalculatedWhenCheckpointExists: true,
+      divergentNeverEntersMassCalculation: true,
+      matchedAndVerifiedRemainReusableForFutureCorrelation: true,
+      oneSharedMassProofForAllParticipants: true,
+      perEvidenceSaltRemoved: true,
+      reportType2ExposesNoActorOrEvidenceMembership: true,
     },
+    divergenceErrors: [...snapshot.divergenceErrors.entries()].map(([evidenceId, error]) => ({ evidenceId, error })),
     bundleErrors: [...snapshot.bundleErrors.entries()].map(([evidenceId, error]) => ({ evidenceId, error })),
     ...stats,
   });
@@ -3107,8 +3807,8 @@ function verifyBalanceEvidenceGraph(
     if (item.onchain.status !== 2) {
       throw new Error(`${expected.evidenceId}: balanço exige evidência MATCHED on-chain`);
     }
-    if (!validForRelationship(item)) {
-      throw new Error(`${expected.evidenceId}: integridade/extração não validada para o balanço`);
+    if (!validForBalance(item)) {
+      throw new Error(`${expected.evidenceId}: integridade/extração/ator não validados para o balanço`);
     }
     if (normalizeHex(item.onchain.actorId) !== normalizeHex(expected.actorId)) {
       throw new Error(`${expected.evidenceId}: actorId diverge do contrato`);
@@ -3613,215 +4313,21 @@ function persistBalanceResult(
   );
 }
 
-function processBalance(
-  runtime: TeeRuntime<Config>,
-  input: WorkflowInput,
-  evidenceBundles?: EvidenceBundle[],
-): string {
-  if (input.chain.calculationVersion === 1 && input.chain.previousResultId !== null) {
-    throw new Error("versão 1 não pode ter resultado anterior");
-  }
-  if (input.chain.calculationVersion > 1 && input.chain.previousResultId === null) {
-    throw new Error("revisão posterior exige previousResultId");
-  }
-
-  validateBalanceGraph(input);
-
-  const masterKey = getCommitmentMasterKey(runtime);
-  const serviceRoleKey = getSupabaseServiceRoleKey(runtime);
-  const bundles = evidenceBundles ?? loadBundlesByEvidenceIds(
-    runtime,
-    serviceRoleKey,
-    input.verifiedEvidences.map((item) => item.evidenceId),
-  );
-  const verifiedBundles = verifyBalanceEvidenceGraph(runtime, serviceRoleKey, input, bundles);
-  const analyticalResolution = applyAnalyticalEvidenceToBalanceInput(input, verifiedBundles);
-  input = analyticalResolution.input;
-  const calculatedAt = new Date(runtime.now()).toISOString();
-  const calculation = calculateBalance(input);
-  const cusum = calculateCusum(input, calculation.totals);
-  const { statusByElement, aggregateStatusByElement, statusByNode, overallStatus } =
-    determineStatuses(input, calculation);
-  const cryptography = buildCryptography(
-    input,
-    masterKey,
-    calculation,
-    aggregateStatusByElement,
-    statusByNode,
-  );
-
-  const canonicalInputs = {
-    chain: input.chain,
-    parameters: input.parameters,
-    verifiedEvidences: [...input.verifiedEvidences].sort((a, b) => a.evidenceId.localeCompare(b.evidenceId)),
-    streams: [...input.streams].sort((a, b) => a.streamId.localeCompare(b.streamId)),
-    correlationEdges: [...input.correlationEdges].sort((a, b) => edgeKey(a).localeCompare(edgeKey(b))),
-  };
-
-  const inputSalt = hashText(`ExploreChem/InputSalt/v2|${masterKey}|${input.chain.chainId}|${input.chain.nodeActorId}|${input.chain.calculationVersion}`);
-  const resultSalt = hashText(`ExploreChem/ResultSalt/v2|${masterKey}|${input.chain.chainId}|${input.chain.nodeActorId}|${input.chain.calculationVersion}`);
-  const aggregateInputHash = hashText(stableJson({
-    domain: "ExploreChem/AggregateInput/Chain/v2",
-    salt: inputSalt,
-    value: canonicalInputs,
-  }));
-
-  const physicalFlows = calculation.streamValues.map((stream) => {
-    const sourceStream = input.streams.find((item) => item.streamId === stream.streamId)!;
-    return {
-      canonicalFlowKey: canonicalFlowKey(sourceStream),
-      streamId: stream.streamId,
-      primaryEvidenceId: stream.evidenceId,
-      measurementPoint: stream.measurementPoint,
-      direction: stream.type === "ENTRADA" ? "INPUT" : "OUTPUT",
-      type: stream.type,
-      supportingEvidenceIds: sourceStream.supportingEvidenceIds,
-      valuesMg: Object.fromEntries(
-        ELEMENTS.map((element) => [element, stream.valuesMg[element].toString()]),
-      ),
-    };
-  });
-
-  // These keys intentionally match the canonical_manifest contract already
-  // enforced by explorerchem_private.validate_result_manifest in the existing
-  // migration. No new table/RPC is required.
-  const privateManifest = {
-    schema: "ExploreChem/PrivateChainBalanceManifest/v2",
-    correlationGroupId: input.chain.chainId,
-    evidenceIds: input.verifiedEvidences.map((item) => item.evidenceId).sort(),
-    edges: canonicalInputs.correlationEdges,
-    actorId: input.chain.nodeActorId,
-    physicalFlows,
-    analyticalEvidence: {
-      appliedAssays: analyticalResolution.appliedAssays,
-      comparisons: analyticalResolution.comparisons,
-      laboratoryReports: analyticalResolution.laboratoryReports,
-      evidenceIntegrity: analyticalResolution.evidenceIntegrity,
-      rule: "PREVIOUS_OUTGOING_LAB_THEN_CURRENT_RECEIVING_LAB_THEN_DECLARED",
-    },
-    correlationPolicyVersion: input.chain.correlationPolicyVersion,
-    calculationPolicyVersion: input.chain.calculationPolicyVersion,
-    calculationVersion: input.chain.calculationVersion,
-    result: {
-      aggregateInputHash,
-      statusByElement,
-      aggregateStatusByElement,
-      statusByNode,
-      aggregateTotalsMg: serializableTotals(calculation.totals),
-      transformationTotalsMg: serializableNodeTotals(calculation.nodeTotals),
-      cusum: serializableCusum(cusum),
-      cryptography,
-    },
-    status: overallStatus,
-    timestamp: calculatedAt,
-    chain: input.chain,
-  };
-  const resultHash = hashText(stableJson({
-    domain: "ExploreChem/Result/Chain/v2",
-    salt: resultSalt,
-    value: privateManifest,
-  }));
-  const resultId = hashText(`ExploreChem/ResultId/Chain/v2|${input.chain.nodeActorId}|${input.chain.chainId}|${input.chain.calculationVersion}|${resultHash}`);
-
-  const balanceStatus = overallStatus === "CONFORME" ? 1 : overallStatus === "DIVERGENTE" ? 2 : 3;
-  const encodedReport = encodeAbiParameters(
-    parseAbiParameters(
-      "uint8 reportType, bytes32 evidenceId, bytes32 resultId, bytes32 actorId, bytes32 resultHash, bytes32 previousResultId, bytes32 aggregateInputHash, uint8 balanceStatus, uint32 calculationVersion",
-    ),
-    [
-      2,
-      zeroHash,
-      resultId,
-      input.chain.nodeActorId,
-      resultHash,
-      input.chain.previousResultId ?? zeroHash,
-      aggregateInputHash,
-      balanceStatus,
-      input.chain.calculationVersion,
-    ],
-  );
-  if ((encodedReport.length - 2) / 2 !== 288) throw new Error("CREReport de balanço não possui 288 bytes");
-
-  const transactionHash = writeReport(runtime, encodedReport, 2);
-  const summary = {
-    schema: "ExploreChem/AuthorizedBalanceSummary/v2",
-    chainId: input.chain.chainId,
-    actorId: input.chain.nodeActorId,
-    calculationVersion: input.chain.calculationVersion,
-    status: overallStatus,
-    statusByElement,
-    aggregateStatusByElement,
-    statusByNode,
-    aggregateTotalsMg: serializableTotals(calculation.totals),
-    transformationTotalsMg: serializableNodeTotals(calculation.nodeTotals),
-    cusumAlarm: ELEMENTS.some((element) => cusum[element].alarm),
-    physicalFlowCount: physicalFlows.length,
-    transformationCount: Object.keys(calculation.nodeTotals).length,
-    evidenceCount: input.verifiedEvidences.length,
-    analyticalRule: "PREVIOUS_OUTGOING_LAB_THEN_CURRENT_RECEIVING_LAB_THEN_DECLARED",
-    appliedAssays: analyticalResolution.appliedAssays,
-    analyticalComparisons: analyticalResolution.comparisons,
-    laboratoryReports: analyticalResolution.laboratoryReports,
-    evidenceIntegrity: analyticalResolution.evidenceIntegrity,
-    calculatedAt,
-    resultHash,
-  };
-
-  persistBalanceResult(runtime, serviceRoleKey, input, {
-    resultId,
-    resultHash,
-    aggregateInputHash,
-    status: overallStatus,
-    statusByElement,
-    aggregateStatusByElement,
-    statusByNode,
-    totals: calculation.totals,
-    streamValues: calculation.streamValues,
-    summary,
-    privateManifest,
-    transactionHash,
-    anchoredAt: calculatedAt,
-  });
-
-  return JSON.stringify({
-    chainId: input.chain.chainId,
-    resultId,
-    resultHash,
-    aggregateInputHash,
-    status: overallStatus,
-    cusumAlarm: ELEMENTS.some((element) => cusum[element].alarm),
-    transactionHash,
-  });
-}
-
 function onHttpTrigger(runtime: TeeRuntime<Config>, payload: HTTPPayload): string {
   if (!payload.input || payload.input.length === 0) {
-    // MVP DEMO: "Run again" performs an immediate correlation check so the
-    // operator can demonstrate PENDING -> MATCHED without waiting one week.
-    // It uses the same verification rules as the scheduled workflow.
     return runCorrelationCycle(runtime, "IMMEDIATE_MATCH");
   }
 
   const decoded = decodeJson(payload.input);
   const action = actionRequestSchema.safeParse(decoded);
-  if (action.success) {
-    if (action.data.action === "RUN_CORRELATION") {
-      // Explicit immediate verification for demo/retry. Existing MATCHED
-      // evidence can still serve as a counterpart, but active revalidation of
-      // MATCHED relationships is left to the weekly scheduled run.
-      return runCorrelationCycle(runtime, "IMMEDIATE_MATCH");
-    }
-    if (!action.data.input) {
-      throw new Error(
-        "CALCULATE_CHAIN_BALANCE exige input neste MVP; o workflow não depende de URL global de API",
-      );
-    }
-    return processBalance(runtime, action.data.input);
+  if (!action.success) {
+    throw new Error("payload inválido: use RUN_CORRELATION; o balanço compartilhado é automático após novos MATCHED");
   }
 
-  // Compatibility for local simulation: a direct ChainBalanceInput can still
-  // be posted without an action wrapper.
-  return processBalance(runtime, workflowInputSchema.parse(decoded));
+  // Backward compatibility: CALCULATE_CHAIN_BALANCE no longer accepts a
+  // separate actor-scoped input. The unified cycle performs discovery,
+  // correlation, evidence-state writes and ONE shared mass proof automatically.
+  return runCorrelationCycle(runtime, "IMMEDIATE_MATCH");
 }
 
 function onCronTrigger(runtime: TeeRuntime<Config>, _payload: CronPayload): string {
@@ -3858,4 +4364,3 @@ export async function main() {
 }
 
 await main();
-
