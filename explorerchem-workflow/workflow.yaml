@@ -17,18 +17,18 @@
 # ==========================================================================
 staging-settings:
   user-workflow:
-    workflow-name: "explorerchem-workflow-staging"
-    deployment-registry: "onchain:ethereum-mainnet"
+    workflow-name: "explorerchem-worflow-staging"
+    deployment-registry: "private"
   workflow-artifacts:
     workflow-path: "./main.ts"
     config-path: "./config.staging.json"
-    secrets-path: ""
+    secrets-path: "../secrets.yaml"
 
 
 # ==========================================================================
 production-settings:
   user-workflow:
-    workflow-name: "explorerchem-workflow-production"
+    workflow-name: "explorerchem-worflow-staging"
     deployment-registry: "onchain:ethereum-mainnet"
   workflow-artifacts:
     workflow-path: "./main.ts"
