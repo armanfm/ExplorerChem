@@ -1121,7 +1121,7 @@ The current contract is deployed on the Ethereum Sepolia testnet:
 
 | Contract | Address | Explorer |
 |---|---|---|
-| ExploreChemRegistry | `0xAfbE9a85bc94A7C895AE33e22B268049A7ea59F2` | [Sepolia Etherscan](https://sepolia.etherscan.io/address/0xAfbE9a85bc94A7C895AE33e22B268049A7ea59F2) |
+| ExploreChemRegistry | `0xB30d10835dDC1Ffa3D7E0582DABf5969917F6b23` | [Sepolia Etherscan](https://sepolia.etherscan.io/tx/0xe618b943a0db6364321b611760441a906f389ffe99e247b9d387aa763a977a58) |
 
 The frontend and staging CRE configuration use this address for testnet
 interactions. The contract was deployed with the Chainlink KeystoneForwarder
