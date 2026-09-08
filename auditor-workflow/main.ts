@@ -1668,10 +1668,7 @@ function run(runtime: TeeRuntime<Config>): string {
   }
 
   const verdict: "VERIFIED" | "DIVERGENT" =
-    allErrors.length === 0 &&
-    massAudit.expectedOverallStatus === "CONFORME"
-      ? "VERIFIED"
-      : "DIVERGENT";
+    allErrors.length === 0 ? "VERIFIED" : "DIVERGENT";
 
   const auditTxHash = writeAudit(
     runtime,
