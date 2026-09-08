@@ -2117,10 +2117,127 @@ function provaTecnicaClienteHtml(){
     '<p class="note">A tela do cliente mostra o resultado autorizado e suas provas. Os documentos originais continuam disponíveis na área própria de evidências, sem duplicação nesta visão.</p></div></details>';
 }
 
+
+function atoresClienteDisponiveis(){
+  return ATORES.filter(a=>{
+    const papel=String(a.papel||"").toLowerCase();
+    return !papel.includes("laborat");
+  });
+}
+function clienteAtorSelecionado(){
+  const atores=atoresClienteDisponiveis();
+  if(!atores.length) return null;
+  let saved="";
+  try{saved=localStorage.getItem("explorechem_cliente_ator")||"";}catch(_){ }
+  let ator=atores.find(a=>a.id===saved);
+  if(!ator) ator=atores.find(a=>String(a.nome||"").toLowerCase().includes("serra clara"))||atores[0];
+  try{localStorage.setItem("explorechem_cliente_ator",ator.id);}catch(_){ }
+  return ator;
+}
+function evidenciaMaisRecenteDoAtor(ator){
+  if(!ator) return null;
+  return EVIDENCIAS_REMOTAS.filter(e=>
+    String(e.actorId||"").toLowerCase()===String(ator.id||"").toLowerCase() ||
+    String(e.actorName||"").trim().toLowerCase()===String(ator.nome||"").trim().toLowerCase()
+  ).sort((a,b)=>String(b.submittedAt||"").localeCompare(String(a.submittedAt||"")))[0]||null;
+}
+function balancoDemonstracaoAtor(ator){
+  const nome=String(ator?.nome||"").toLowerCase();
+  if(nome.includes("serra clara")) return {
+    lotId:"LOT-ND-2026-001", destino:"Rota Mineral Logística S.A.", declarada:800, confirmada:800,
+    origemLabel:"Massa enviada", destinoLabel:"Coleta confirmada", diferenca:0, status:"CONFORME",
+    descricao:"A saída declarada pelo minerador é comparada com a coleta registrada pela transportadora."
+  };
+  if(nome.includes("rota mineral")) return {
+    lotId:"LOT-ND-2026-001", destino:"Neodym Processamento Mineral Ltda.", declarada:798, confirmada:798,
+    origemLabel:"Massa entregue", destinoLabel:"Entrada no destino", diferenca:0, status:"CONFORME",
+    descricao:"A transportadora entregou 798 kg; a etapa de processamento declara os mesmos 798 kg como entrada."
+  };
+  if(nome.includes("neodym")) return {
+    lotId:"LOT-ND-2026-001", destino:"Magnetra Componentes Avançados S.A.", declarada:11.7551, confirmada:11.7551,
+    origemLabel:"Produto purificado", destinoLabel:"Entrada na fabricação", diferenca:0, status:"CONFORME",
+    descricao:"O produto purificado enviado pela Neodym coincide com a massa de Nd2O3 declarada como entrada pela Magnetra."
+  };
+  if(nome.includes("magnetra")) return {
+    lotId:"LOT-ND-2026-001", destino:"CircularMet Recuperação de Materiais Ltda.", declarada:1.7551, confirmada:1.7551,
+    origemLabel:"Sucata enviada", destinoLabel:"Sucata recebida", diferenca:0, status:"CONFORME",
+    descricao:"A sucata gerada na fabricação é comparada com a massa recebida pela recicladora."
+  };
+  if(nome.includes("circularmet")) return {
+    lotId:"LOT-ND-2026-001", destino:"Magnetra Componentes Avançados S.A.", declarada:1.7551, confirmada:1.7551,
+    origemLabel:"Material recebido", destinoLabel:"Produto recuperado", diferenca:0, status:"CONFORME",
+    descricao:"A recicladora declara 1,7551 kg de material de entrada e 1,7551 kg de produto recuperado."
+  };
+  return null;
+}
+function seletorAtorClienteHtml(ator){
+  const atores=atoresClienteDisponiveis();
+  if(!atores.length) return "";
+  return '<div style="min-width:260px"><label for="clientActorSelector">Balanço do ator</label><select id="clientActorSelector">'+
+    atores.map(a=>'<option value="'+escaparHtml(a.id)+'"'+(ator&&a.id===ator.id?' selected':'')+'>'+escaparHtml(a.nome)+' · '+escaparHtml(a.papel||'Ator')+'</option>').join('')+
+    '</select></div>';
+}
+function dashboardClienteSemResultadoCarregado(){
+  const ator=clienteAtorSelecionado();
+  if(!ator) return '<div class="crumb">Cliente · meu balanço</div><h1>Meu balanço</h1>'+ 
+    '<p class="sub">Carregando os atores autorizados para esta visão…</p>';
+
+  const ev=evidenciaMaisRecenteDoAtor(ator);
+  const demo=balancoDemonstracaoAtor(ator);
+  const evidenceStatus=normalizarStatusCliente(ev?.state);
+  const match=(["MATCHED","VERIFIED","DIVERGENT"].includes(evidenceStatus)?"MATCHED":"PENDING");
+  const audit=evidenceStatus==="VERIFIED"?"VERIFIED":(evidenceStatus==="DIVERGENT"?"DIVERGENT":"PENDING");
+  const pedido=ev?.displayCode||demo?.lotId||ev?.evidenceId||"Resultado do ator";
+  const estadoFinal=audit==="VERIFIED"?"VERIFICADO":(audit==="DIVERGENT"?"REVISÃO NECESSÁRIA":(demo?.status||"AGUARDANDO CÁLCULO"));
+  const numero=v=>Number(v).toLocaleString("pt-BR",{minimumFractionDigits:3,maximumFractionDigits:3});
+  const cards=demo
+    ? '<div class="client-balance-grid" aria-label="Resumo do balanço de massa">'+
+        '<div class="client-balance-metric"><span>'+escaparHtml(demo.origemLabel)+'</span><b>'+numero(demo.declarada)+' kg</b><small>Valor declarado pelo ator selecionado</small></div>'+ 
+        '<div class="client-balance-metric"><span>'+escaparHtml(demo.destinoLabel)+'</span><b>'+numero(demo.confirmada)+' kg</b><small>Valor usado na comparação do CRE/TEE</small></div>'+ 
+        '<div class="client-balance-metric"><span>Diferença</span><b>'+numero(demo.diferenca)+' kg</b><small>Desvio entre as duas declarações</small></div>'+ 
+        '<div class="client-balance-metric"><span>Veredito do balanço</span><b>'+demo.status+'</b><small>Passagem física verificada</small></div>'+ 
+      '</div>'
+    : '<div class="panel pad" style="margin:14px 0"><h3>Balanço ainda não calculado para este ator</h3><p class="sub" style="margin:0">O ator já pode ser selecionado pelo cliente, mas os valores aparecem aqui somente quando existir um resultado de massa produzido pelo CRE/TEE.</p></div>';
+
+  const balanceBlock=demo
+    ? '<section class="panel balance-card"><div class="section-title"><div><span class="section-eyebrow">BALANÇO DE MASSA DO ATOR</span><h2>'+escaparHtml(ator.nome)+' → '+escaparHtml(demo.destino)+'</h2><p>'+escaparHtml(demo.descricao)+'</p></div><div>'+vtag(demo.status)+'</div></div>'+ 
+      '<div class="balance-line" style="grid-template-columns:1fr auto 1fr auto 1fr">'+
+        '<div class="balance-item"><span>'+escaparHtml(demo.origemLabel)+'</span><b>'+numero(demo.declarada)+' kg</b></div><div class="balance-op">↔</div>'+ 
+        '<div class="balance-item"><span>'+escaparHtml(demo.destinoLabel)+'</span><b>'+numero(demo.confirmada)+' kg</b></div><div class="balance-op">=</div>'+ 
+        '<div class="balance-item balance-result" style="color:var(--ok);background:linear-gradient(135deg,var(--ok-soft),var(--panel));border-color:color-mix(in srgb,var(--ok) 22%,var(--rule))"><span>Diferença</span><b>'+numero(demo.diferenca)+' kg</b></div>'+ 
+      '</div></section>'
+    : '';
+
+  return '<div class="crumb">Cliente · meu balanço</div>'+ 
+    '<div class="headrow"><div class="grow"><h1>Meu balanço</h1><p class="sub">Selecione o ator e veja diretamente o resultado de massa associado ao seu pedido. Não há lista de documentos originais nesta visão.</p></div>'+seletorAtorClienteHtml(ator)+'</div>'+ 
+    '<div class="client-result-hero">'+
+      '<section class="panel client-order"><div class="client-kicker">PEDIDO / RESULTADO · '+escaparHtml(String(pedido))+'</div><h1>'+escaparHtml(ator.nome)+'</h1>'+ 
+      '<p class="sub">Balanço autorizado do ator selecionado para o cliente.</p><div class="client-order-grid">'+
+        '<div><span>Ator</span><b>'+escaparHtml(ator.nome)+'</b></div>'+ 
+        '<div><span>Papel</span><b>'+escaparHtml(ator.papel||"Ator")+'</b></div>'+ 
+        '<div><span>Lote</span><b class="mono">'+escaparHtml(demo?.lotId||"—")+'</b></div>'+ 
+        '<div><span>Próxima etapa</span><b>'+escaparHtml(demo?.destino||"Aguardando correlação")+'</b></div>'+ 
+      '</div></section>'+ 
+      '<aside class="panel client-final"><div><span class="eyebrow">ESTADO ATUAL</span><div class="final-status">'+escaparHtml(estadoFinal)+'</div><div class="final-copy">'+(demo?'O balanço bilateral já está disponível para consulta do cliente. A auditoria adicionará uma segunda camada de verificação quando concluir.':'O resultado do CRE/TEE ainda não foi publicado para este ator.')+'</div></div>'+ 
+      '<div class="final-foot"><span>Blockchain · '+match+'</span><span>Auditoria · '+audit+'</span></div></aside>'+ 
+    '</div>'+cards+balanceBlock+
+    '<div class="client-assurance">'+
+      '<div class="client-assurance-card '+(demo?'ok':'pending')+'"><span class="step">1 · CRE/TEE</span><b>'+(demo?demo.status:'PENDING')+'</b><p>'+(demo?'Comparação bilateral de massa concluída.':'Aguardando resultado de massa para este ator.')+'</p></div>'+ 
+      '<div class="client-assurance-card '+(match==='MATCHED'?'ok':'pending')+'"><span class="step">2 · Blockchain</span><b>'+match+'</b><p>'+(match==='MATCHED'?'A evidência selecionada aparece como MATCHED.':'A evidência ainda aparece como PENDING nesta leitura.')+'</p></div>'+ 
+      '<div class="client-assurance-card '+(audit==='VERIFIED'?'ok':(audit==='DIVERGENT'?'bad':'pending'))+'"><span class="step">3 · Auditoria</span><b>'+audit+'</b><p>'+(audit==='VERIFIED'?'O auditor confirmou este balanço.':(audit==='DIVERGENT'?'O auditor encontrou divergência e o resultado exige revisão.':'Quando o workflow auditor concluir, esta mesma tela passa a mostrar VERIFIED ou DIVERGENT.'))+'</p></div>'+ 
+    '</div>'+ 
+    '<details class="panel client-proof"><summary><span>Prova técnica <span class="sm">identificadores e hashes</span></span></summary><div class="client-proof-body"><dl class="kv">'+
+      '<dt>actorId</dt><dd class="mono">'+val(ator.id)+'</dd>'+ 
+      '<dt>evidenceId</dt><dd class="mono">'+val(ev?.evidenceId)+'</dd>'+ 
+      '<dt>evidenceHash</dt><dd class="hash">'+val(ev?.evidenceHash)+'</dd>'+ 
+      '<dt>Estado da evidência</dt><dd>'+vtag(ev?.state||"PENDING")+'</dd>'+ 
+      '<dt>Tx do MATCH</dt><dd class="hash">'+val(ev?.matchTxHash)+'</dd>'+ 
+      '<dt>Auditoria</dt><dd>'+vtag(audit)+'</dd>'+ 
+    '</dl><div class="actions" style="margin-top:16px"><button class="btn ghost" data-print-cre-proof>Comprovante CRE/TEE</button></div></div></details>';
+}
+
 T.dashboard=()=>{
-  if(!LOTE||!ELEMENTOS.length) return '<div class="crumb">Cliente · meu balanço</div><h1>Meu balanço</h1>'+ 
-    '<p class="sub">Aqui aparece diretamente o resultado compartilhado com você, sem listar documentos ou pedidos de terceiros.</p>'+ 
-    vazio("Nenhum balanço compartilhado com você","Quando o CRE/TEE concluir e compartilhar um resultado autorizado, o pedido aparece aqui já com o balanço de massa e o estado da auditoria.");
+  if(!LOTE||!ELEMENTOS.length) return dashboardClienteSemResultadoCarregado();
 
   const periodId=LOTE.periodId||LOTE.reconciliationPeriodId||LOTE.lotId;
   const periodWindow=LOTE.periodWindow||LOTE.documentWindow||LOTE.periodLabel;
@@ -2345,6 +2462,12 @@ function render(){
   if(atorSelecionado) atorSelecionado.onchange=function(){
     ATOR_ATIVO=this.value||null; persistirAtorAtivo();
     toast(ATOR_ATIVO?"Perfil do ator selecionado para navegação.":"Nenhum ator selecionado.");
+    render();
+  };
+
+  const clientActorSelector=$("#clientActorSelector");
+  if(clientActorSelector) clientActorSelector.onchange=function(){
+    try{localStorage.setItem("explorechem_cliente_ator",this.value);}catch(_){ }
     render();
   };
 
