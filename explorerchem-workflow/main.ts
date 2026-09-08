@@ -33,28 +33,33 @@ import {
 import { z } from "zod";
 
 /**
- * ExploreChem — MASS bilateral / blockchain-first
+ * ExploreChem — cadeia completa por lotId + origem/destino estritos
  *
  * REGRA DESTA VERSAO
  * ------------------------------------------------------------
- * 1. Blockchain escolhe UM PENDING com getNextPending().
- * 2. Somente depois o TEE consulta Supabase/Storage.
- * 3. O TEE baixa o documento original e confere o evidenceHash.
- * 4. originActor / destinationActor / lotId sao extraidos do JSON
- *    comprometido; os campos auxiliares do banco NAO sao prova.
- * 5. A correlacao e procurada nos dois sentidos:
- *      focus -> other
- *      other -> focus
- * 6. Para transferencia fisica, a relacao exige:
- *      mesmo lotId
- *      from.destinationActorId == to.ownerActorId
- *      to.originActorId == from.ownerActorId
- * 7. Massa NAO decide correlacao.
- *    Primeiro correlaciona; depois compara a massa das duas partes.
- * 8. Cada execucao ancora apenas o resultado local do PENDING escolhido.
- *    Nao existe soma global, grafo global, CUSUM ou Pedersen aqui.
- * 9. A contraparte nao recebe MATCH antecipado. Ela continua com seu
- *    proprio estado ate ser escolhida pela blockchain em outra execucao.
+ * 1. A blockchain e consultada primeiro com getNextPending().
+ * 2. Em execucao real, esse PENDING avanca naturalmente apos cada MATCH.
+ * 3. Em SIMULATION, como o writeReport nao persiste o estado on-chain entre
+ *    execucoes, o espelho MATCHED do Supabase e usado SOMENTE como progresso
+ *    de simulacao para nao repetir o mesmo foco. O status on-chain PENDING
+ *    continua obrigatorio para o novo foco escolhido.
+ * 4. O TEE baixa o JSON original e confere o evidenceHash.
+ * 5. lotId e o token logico de correlacao do MVP. O Supabase mantem apenas
+ *    lot_reference como INDICE de descoberta; o TEE sempre reabre o JSON e
+ *    confirma o lotId comprometido pelo evidenceHash antes de aceitar o candidato.
+ * 6. Nao existe mais varredura global de explorerchem_evidences: depois de
+ *    verificar o foco, o workflow consulta somente linhas indexadas no mesmo lote.
+ * 7. Uma aresta fisica exige ESTRITAMENTE:
+ *      from.lotId             == to.lotId
+ *      from.destinationActor  == ator dono de to
+ *      to.originActor         == ator dono de from
+ * 8. Nao existe janela temporal nesta versao. Timestamp nao decide correlacao.
+ * 9. A cadeia e expandida nos dois sentidos por BFS ate nao haver novos elos.
+ *    A cada novo JSON encontrado, os campos dele passam a orientar a proxima busca.
+ * 10. Evidencia de laboratorio pode ser anexada como LAB_ANALYSIS quando pertence
+ *     ao mesmo lotId e aponta para o ator de destino. Ela nao cria fluxo de massa.
+ * 11. Massa NAO decide correlacao. Cada elo fisico e calculado de dois em dois.
+ * 12. Cada execucao ancora somente o resultado do NOVO PENDING foco.
  */
 
 const DEFAULT_SCHEDULE = "0 0 0 * * 0";
@@ -79,8 +84,6 @@ type ActorType = z.infer<typeof actorTypeSchema>;
 type Status = "CONFORME" | "DIVERGENTE" | "NAO_ATESTADO";
 
 type RelationType = "PHYSICAL_HANDOFF" | "LAB_ANALYSIS";
-
-type FocusDirection = "FORWARD" | "BACKWARD";
 
 const configSchema = z.object({
   supabaseUrl: z.string().min(1),
@@ -116,6 +119,7 @@ const evidenceRowSchema = z.object({
   storage_bucket: z.string().min(1),
   storage_path: z.string().min(1),
   mime_type: z.string().min(1),
+  lot_reference: z.string().min(1).nullable(),
   chain_created_at: z.string().nullable().optional(),
 });
 
@@ -170,34 +174,58 @@ type MassEndpoint = {
   field: string;
 };
 
-type PairCandidate = {
+type CorrelationEdge = {
   from: VerifiedEvidence;
   to: VerifiedEvidence;
   relationType: RelationType;
-  focusDirection: FocusDirection;
   lotReference: string;
   left: MassEndpoint;
   right: MassEndpoint;
 };
 
-type BilateralMassResult = {
-  schema: "ExploreChem/BilateralMassResult/v1";
+type CorrelationComponent = {
+  evidences: VerifiedEvidence[];
+  edges: CorrelationEdge[];
+};
+
+type PairMassResult = {
   pairId: Hex;
-  focusEvidenceId: Hex;
-  counterpartEvidenceId: Hex;
-  focusDirection: FocusDirection;
   relationType: RelationType;
-  lotReference: string;
   fromEvidenceId: Hex;
   toEvidenceId: Hex;
   fromActorId: Hex;
   toActorId: Hex;
+  lotReference: string;
   leftMassMg: string | null;
   rightMassMg: string | null;
   leftMassField: string;
   rightMassField: string;
   deltaMg: string | null;
   status: Status;
+};
+
+type ComponentMassResult = {
+  schema: "ExploreChem/LotCorrelatedPairwiseMassResult/v4";
+  focusEvidenceId: Hex;
+  lotReference: string;
+  evidenceIds: Hex[];
+  correlationEdges: Array<{
+    fromEvidenceId: Hex;
+    toEvidenceId: Hex;
+    relationType: RelationType;
+    lotReference: string;
+  }>;
+  massPairs: PairMassResult[];
+  status: Status;
+};
+
+type PendingSelection = {
+  initialBlockchainPendingId: Hex;
+  row: EvidenceRow;
+  onchain: OnchainEvidence;
+  mode:
+    | "CHAIN_GET_NEXT_PENDING"
+    | "SIMULATION_PROGRESS_FALLBACK";
 };
 
 /* ============================================================
@@ -246,6 +274,7 @@ const EVIDENCE_SELECT = [
   "storage_bucket",
   "storage_path",
   "mime_type",
+  "lot_reference",
   "chain_created_at",
 ].join(",");
 
@@ -297,6 +326,17 @@ function nullableString(value: unknown): string | null {
   return typeof value === "string" && value.trim().length > 0
     ? value.trim()
     : null;
+}
+
+function sameLot(
+  left: NormalizedEvidence,
+  right: NormalizedEvidence,
+): boolean {
+  return (
+    left.lotReference !== null &&
+    right.lotReference !== null &&
+    left.lotReference === right.lotReference
+  );
 }
 
 function decimalString(value: unknown): string | null {
@@ -499,13 +539,42 @@ function loadOneEvidenceRow(
   return rows[0];
 }
 
-function loadAllEvidenceRows(
+function loadEvidenceRowsByLot(
   runtime: TeeRuntime<Config>,
   key: string,
+  lotReference: string,
 ): EvidenceRow[] {
+  /*
+   * Descoberta indexada: esta consulta nao prova correlacao. Ela so reduz o
+   * universo de candidatos. Cada linha retornada ainda tera blockchain + JSON
+   * verificados pelo TEE antes de participar da BFS.
+   */
   const path =
     `/rest/v1/explorerchem_evidences?select=${EVIDENCE_SELECT}` +
+    `&lot_reference=eq.${encodeURIComponent(lotReference)}` +
     `&order=chain_created_at.asc,evidence_id.asc`;
+
+  return z.array(evidenceRowSchema).parse(
+    getJson<unknown>(runtime, key, path),
+  );
+}
+
+function loadSimulationPendingRows(
+  runtime: TeeRuntime<Config>,
+  key: string,
+  excludedEvidenceId: Hex,
+): EvidenceRow[] {
+  /*
+   * Fallback EXCLUSIVO da simulacao: nao varre todas as evidencias. Busca apenas
+   * um pequeno lote de linhas ainda PENDING no espelho e confirma status=1
+   * on-chain antes de escolher qualquer uma.
+   */
+  const path =
+    `/rest/v1/explorerchem_evidences?select=${EVIDENCE_SELECT}` +
+    `&state=eq.PENDING` +
+    `&evidence_id=neq.${encodeURIComponent(excludedEvidenceId)}` +
+    `&order=chain_created_at.asc,evidence_id.asc` +
+    `&limit=32`;
 
   return z.array(evidenceRowSchema).parse(
     getJson<unknown>(runtime, key, path),
@@ -671,6 +740,90 @@ function readEvidence(
   };
 }
 
+/**
+ * Seleciona o foco efetivo sem perder a regra "blockchain first".
+ *
+ * A PRIMEIRA consulta sempre e getNextPending() on-chain.
+ *
+ * Em rede real:
+ *   - o id retornado deve estar PENDING tambem no espelho Supabase;
+ *   - ele e usado diretamente.
+ *
+ * Em SIMULATION:
+ *   - writeReport nao persiste o status para a proxima execucao;
+ *   - o Supabase, porem, pode ja ter sido espelhado como MATCHED;
+ *   - nesse caso varremos somente linhas ainda PENDING no Supabase e
+ *     CONFIRMAMOS on-chain que o candidato escolhido continua status=1.
+ *
+ * Assim a simulacao consegue avancar E1 -> E2 -> E3 sem transformar
+ * Supabase em autoridade: nenhum foco e aceito sem status PENDING on-chain.
+ */
+function selectEffectivePending(
+  runtime: TeeRuntime<Config>,
+  key: string,
+  initialBlockchainPendingId: Hex,
+): PendingSelection | null {
+  /*
+   * Caminho normal: consulta pontual pelo evidenceId que veio da blockchain.
+   * Nenhuma lista global e carregada.
+   */
+  try {
+    const initialRow = loadOneEvidenceRow(
+      runtime,
+      key,
+      initialBlockchainPendingId,
+    );
+    const initialOnchain = readEvidence(
+      runtime,
+      initialBlockchainPendingId,
+    );
+
+    if (
+      initialOnchain.status === 1 &&
+      initialRow.state.trim().toUpperCase() === "PENDING"
+    ) {
+      return {
+        initialBlockchainPendingId,
+        row: initialRow,
+        onchain: initialOnchain,
+        mode: "CHAIN_GET_NEXT_PENDING",
+      };
+    }
+  } catch {
+    // Em SIMULATION pode existir divergencia de espelho; segue ao fallback.
+  }
+
+  /*
+   * Fallback controlado da SIMULATION. O Supabase serve apenas como cursor de
+   * progresso. Nenhum candidato e aceito sem readEvidence(...).status === 1.
+   */
+  const pendingRows = loadSimulationPendingRows(
+    runtime,
+    key,
+    initialBlockchainPendingId,
+  );
+
+  for (const row of pendingRows) {
+    try {
+      const onchain = readEvidence(runtime, row.evidence_id);
+      if (onchain.status !== 1) {
+        continue;
+      }
+
+      return {
+        initialBlockchainPendingId,
+        row,
+        onchain,
+        mode: "SIMULATION_PROGRESS_FALLBACK",
+      };
+    } catch {
+      // indice sem evidencia legivel on-chain: ignora e continua
+    }
+  }
+
+  return null;
+}
+
 /* ============================================================
  * Documento -> atores / lote / massa
  * ============================================================
@@ -706,16 +859,11 @@ function normalizeEvidence(
 
   /*
    * O actorId do JSON nao e a autoridade sobre o dono da evidencia.
-   * Depois de recadastro/redeploy ele pode ser um identificador antigo, embora
-   * o documento original e seu evidenceHash continuem validos.
-   *
-   * A identidade autoritativa do dono vem de:
+   * A identidade autoritativa vem de:
    *   row.actor_db_id -> explorerchem_actors.actor_id -> blockchain actorId.
-   * Essa cadeia continua sendo verificada em loadVerifiedEvidence().
    *
-   * Para correlacao usamos do documento comprometido apenas os campos de
-   * relacao (originActor/destinationActor/lotId etc.), nunca document.actorId
-   * como autoridade de propriedade.
+   * Para correlacao usamos apenas campos comprometidos no documento:
+   * lotId, originActor e destinationActor.
    */
 
   if (typeof document.actorType === "string") {
@@ -752,8 +900,7 @@ function normalizeEvidence(
     ),
     originSite: nullableString(document.originSite),
     destinationSite: nullableString(document.destinationSite),
-    lotReference:
-      nullableString(document.lotId) ?? nullableString(document.lotReference),
+    lotReference: nullableString(document.lotId ?? document.lotReference),
     grossMassKg: decimalString(
       massBalance.grossMassKg ?? document.grossMassKg ?? document.massKg,
     ),
@@ -844,20 +991,9 @@ function loadVerifiedEvidence(
 }
 
 /* ============================================================
- * Correlacao BILATERAL
+ * Correlacao temporal + origem/destino
  * ============================================================
  */
-
-function sameRequiredLot(
-  left: NormalizedEvidence,
-  right: NormalizedEvidence,
-): boolean {
-  if (left.lotReference === null || right.lotReference === null) {
-    return false;
-  }
-
-  return canonicalName(left.lotReference) === canonicalName(right.lotReference);
-}
 
 function outgoingMass(
   from: VerifiedEvidence,
@@ -872,7 +1008,10 @@ function outgoingMass(
   if (n.actorType === "MINER") {
     return {
       massMg: kgToMg(n.outputMassKg ?? n.grossMassKg),
-      field: n.outputMassKg !== null ? "outputMassKg" : "grossMassKg",
+      field:
+        n.outputMassKg !== null
+          ? "outputMassKg"
+          : "massBalance.grossMassKg",
     };
   }
 
@@ -880,7 +1019,9 @@ function outgoingMass(
     return {
       massMg: kgToMg(n.deliveredMassKg ?? n.outputMassKg),
       field:
-        n.deliveredMassKg !== null ? "custody.massDeliveredKg" : "outputMassKg",
+        n.deliveredMassKg !== null
+          ? "custody.massDeliveredKg"
+          : "outputMassKg",
     };
   }
 
@@ -892,7 +1033,10 @@ function outgoingMass(
   }
 
   if (n.actorType === "MANUFACTURER") {
-    if (to.normalized.actorType === "RECYCLER" && n.scrapMassKg !== null) {
+    if (
+      to.normalized.actorType === "RECYCLER" &&
+      n.scrapMassKg !== null
+    ) {
       return {
         massMg: kgToMg(n.scrapMassKg),
         field: "transformation.scrapMassKg",
@@ -901,7 +1045,10 @@ function outgoingMass(
 
     return {
       massMg: kgToMg(n.outputMassKg ?? n.scrapMassKg),
-      field: n.outputMassKg !== null ? "outputMassKg" : "transformation.scrapMassKg",
+      field:
+        n.outputMassKg !== null
+          ? "outputMassKg"
+          : "transformation.scrapMassKg",
     };
   }
 
@@ -937,13 +1084,17 @@ function incomingMass(to: VerifiedEvidence): MassEndpoint {
 
   if (n.actorType === "CARRIER") {
     return {
-      massMg: kgToMg(n.collectedMassKg ?? n.inputMassKg ?? n.grossMassKg),
+      massMg: kgToMg(
+        n.collectedMassKg ??
+          n.inputMassKg ??
+          n.grossMassKg,
+      ),
       field:
         n.collectedMassKg !== null
           ? "custody.massCollectedKg"
           : n.inputMassKg !== null
             ? "inputMassKg"
-            : "grossMassKg",
+            : "massBalance.grossMassKg",
     };
   }
 
@@ -954,340 +1105,488 @@ function incomingMass(to: VerifiedEvidence): MassEndpoint {
     n.actorType === "RECYCLER"
   ) {
     return {
-      massMg: kgToMg(n.inputMassKg ?? n.grossMassKg ?? n.collectedMassKg),
+      massMg: kgToMg(
+        n.inputMassKg ??
+          n.grossMassKg ??
+          n.collectedMassKg,
+      ),
       field:
         n.inputMassKg !== null
           ? "transformation.inputMassKg"
           : n.grossMassKg !== null
-            ? "grossMassKg"
+            ? "massBalance.grossMassKg"
             : "custody.massCollectedKg",
     };
   }
 
   return {
-    massMg: kgToMg(n.inputMassKg ?? n.collectedMassKg ?? n.grossMassKg),
+    massMg: kgToMg(
+      n.inputMassKg ??
+        n.collectedMassKg ??
+        n.grossMassKg,
+    ),
     field: "bestAvailableIncomingMass",
   };
 }
 
-function sitesCompatible(left: string | null, right: string | null): boolean {
-  if (left === null || right === null) {
-    return true;
-  }
-
-  return canonicalName(left) === canonicalName(right);
-}
-
-function physicalPair(
+function edgeCandidate(
   from: VerifiedEvidence,
   to: VerifiedEvidence,
-  focusDirection: FocusDirection,
-  lotReference: string,
-): PairCandidate {
+  relationType: RelationType,
+): CorrelationEdge {
+  const lotReference = from.normalized.lotReference;
+
+  if (lotReference === null || !sameLot(from.normalized, to.normalized)) {
+    throw new Error("edgeCandidate chamado sem lotId comum");
+  }
+
+  if (relationType === "LAB_ANALYSIS") {
+    return {
+      from,
+      to,
+      relationType,
+      lotReference,
+      left: {
+        massMg: null,
+        field: "NO_PHYSICAL_MASS",
+      },
+      right: {
+        massMg: null,
+        field: "NO_PHYSICAL_MASS",
+      },
+    };
+  }
+
   return {
     from,
     to,
-    relationType: "PHYSICAL_HANDOFF",
-    focusDirection,
+    relationType,
     lotReference,
     left: outgoingMass(from, to),
     right: incomingMass(to),
   };
 }
 
+/**
+ * REGRA CENTRAL.
+ *
+ * PHYSICAL_HANDOFF exige, sem fallback:
+ *
+ *   from.lotId              == to.lotId
+ *   from.destinationActorId == to.actorId
+ *   to.originActorId        == from.actorId
+ *
+ * Timestamp NAO participa da correlacao nesta versao.
+ * Massa tambem NAO participa da descoberta.
+ *
+ * LAB_ANALYSIS nao representa transferencia fisica. O laudo so pode ser
+ * anexado quando pertence ao mesmo lotId e aponta para o ator alvo.
+ */
 function directedRelation(
   from: VerifiedEvidence,
   to: VerifiedEvidence,
-  focusDirection: FocusDirection,
-): PairCandidate | null {
-  if (lower(from.row.evidence_id) === lower(to.row.evidence_id)) {
+): CorrelationEdge | null {
+  if (
+    lower(from.row.evidence_id) ===
+    lower(to.row.evidence_id)
+  ) {
     return null;
   }
 
   const a = from.normalized;
   const b = to.normalized;
 
-  if (!sameRequiredLot(a, b)) {
+  if (!sameLot(a, b)) {
     return null;
   }
 
-  const lotReference = a.lotReference!;
-
   /*
-   * LABORATORIO -> ESTADO DE MATERIAL DO DESTINO
-   *
-   * O laboratorio apenas qualifica o material. Nao cria corrente fisica.
+   * Laboratorio: evidencia analitica, nao fluxo fisico.
    */
-  if (
-    a.actorType === "LABORATORY" &&
-    b.actorType !== "LABORATORY" &&
-    b.actorType !== "CARRIER"
-  ) {
+  if (a.actorType === "LABORATORY") {
     if (
-      !idEquals(a.destinationActorId, to.onchain.actorId) ||
-      !sitesCompatible(a.destinationSite, b.originSite)
+      !idEquals(
+        a.destinationActorId,
+        to.onchain.actorId,
+      )
     ) {
       return null;
     }
 
-    return {
+    return edgeCandidate(
       from,
       to,
-      relationType: "LAB_ANALYSIS",
-      focusDirection,
-      lotReference,
-      left: { massMg: null, field: "NO_PHYSICAL_MASS" },
-      right: { massMg: null, field: "NO_PHYSICAL_MASS" },
-    };
+      "LAB_ANALYSIS",
+    );
   }
 
   /*
-   * MINERADOR -> TRANSPORTADORA
-   *
-   * O documento da transportadora cobre a coleta no minerador e a entrega
-   * no proximo no. Por isso a ORIGEM da evidencia da transportadora aponta
-   * para o minerador, enquanto a propria evidencia pertence ao CARRIER.
+   * Nenhum evento fisico termina "no laboratorio" neste modelo.
    */
-  if (a.actorType === "MINER" && b.actorType === "CARRIER") {
-    const originMatches = idEquals(b.originActorId, from.onchain.actorId);
-    const carrierMatches =
-      idEquals(a.destinationActorId, to.onchain.actorId) ||
-      idEquals(b.carrierActorId, to.onchain.actorId);
-
-    if (!originMatches || !carrierMatches) {
-      return null;
-    }
-
-    return physicalPair(from, to, focusDirection, lotReference);
+  if (b.actorType === "LABORATORY") {
+    return null;
   }
 
   /*
-   * TRANSPORTADORA -> PROCESSADOR/PURIFICADOR
+   * CORRELACAO FISICA ESTRITA.
    *
-   * Aqui o elo e o DESTINO declarado pela transportadora contra o ator dono
-   * da evidencia receptora. O documento do purificador pode declarar a
-   * propria planta como originActor; por isso nao exigimos b.origin == carrier.
+   * Nao aceitamos:
+   *   - lotId diferente ou ausente;
+   *   - destino aproximado;
+   *   - originActor ausente;
+   *   - originActor igual ao proprio receptor como fallback;
+   *   - massa como criterio de match;
+   *   - timestamp como criterio de match.
    */
+  const destinationMatches =
+    idEquals(
+      a.destinationActorId,
+      to.onchain.actorId,
+    );
+
+  const originMatches =
+    idEquals(
+      b.originActorId,
+      from.onchain.actorId,
+    );
+
   if (
-    a.actorType === "CARRIER" &&
-    (b.actorType === "PROCESSOR" || b.actorType === "REFINER")
+    !destinationMatches ||
+    !originMatches
   ) {
-    if (
-      !idEquals(a.destinationActorId, to.onchain.actorId) ||
-      !sitesCompatible(a.destinationSite, b.originSite)
-    ) {
-      return null;
-    }
-
-    return physicalPair(from, to, focusDirection, lotReference);
+    return null;
   }
 
-  /* PROCESSADOR/PURIFICADOR -> FABRICANTE */
-  if (
-    (a.actorType === "PROCESSOR" || a.actorType === "REFINER") &&
-    b.actorType === "MANUFACTURER"
-  ) {
-    if (
-      !idEquals(a.destinationActorId, to.onchain.actorId) ||
-      !sitesCompatible(a.destinationSite, b.originSite)
-    ) {
-      return null;
-    }
-
-    return physicalPair(from, to, focusDirection, lotReference);
-  }
-
-  /* FABRICANTE -> RECICLADOR */
-  if (a.actorType === "MANUFACTURER" && b.actorType === "RECYCLER") {
-    if (
-      !idEquals(a.destinationActorId, to.onchain.actorId) ||
-      !sitesCompatible(a.destinationSite, b.originSite)
-    ) {
-      return null;
-    }
-
-    return physicalPair(from, to, focusDirection, lotReference);
-  }
-
-  /* RECICLADOR -> NOVO RECEPTOR */
-  if (
-    a.actorType === "RECYCLER" &&
-    (b.actorType === "MANUFACTURER" ||
-      b.actorType === "PROCESSOR" ||
-      b.actorType === "REFINER")
-  ) {
-    if (
-      !idEquals(a.destinationActorId, to.onchain.actorId) ||
-      !sitesCompatible(a.destinationSite, b.originSite)
-    ) {
-      return null;
-    }
-
-    return physicalPair(from, to, focusDirection, lotReference);
-  }
-
-  /*
-   * FALLBACK CONTROLADO
-   *
-   * Para tipos OTHER ou uma evolucao de papel ainda nao especializada:
-   * mesmo lote + destino de A igual ao ator dono de B + origem de B
-   * consistente com A ou com o proprio B.
-   *
-   * A massa continua fora da prova de correlacao.
-   */
-  if (a.actorType === "OTHER" || b.actorType === "OTHER") {
-    const destinationMatches = idEquals(a.destinationActorId, to.onchain.actorId);
-    const originConsistent =
-      b.originActorId === null ||
-      idEquals(b.originActorId, from.onchain.actorId) ||
-      idEquals(b.originActorId, to.onchain.actorId);
-
-    if (destinationMatches && originConsistent) {
-      return physicalPair(from, to, focusDirection, lotReference);
-    }
-  }
-
-  return null;
+  return edgeCandidate(
+    from,
+    to,
+    "PHYSICAL_HANDOFF",
+  );
 }
 
-function candidateKey(candidate: PairCandidate): string {
+function edgeKey(
+  edge: CorrelationEdge,
+): string {
   return [
-    lower(candidate.from.row.evidence_id),
-    lower(candidate.to.row.evidence_id),
-    candidate.relationType,
+    lower(edge.from.row.evidence_id),
+    lower(edge.to.row.evidence_id),
+    edge.relationType,
+    edge.lotReference,
   ].join("|");
 }
 
-function findPairsForFocus(
+/**
+ * Expande a cadeia COMPLETA por BFS.
+ *
+ * O lotId define o universo logico da cadeia.
+ * Para cada evidencia encontrada:
+ *   - abre/usa o JSON daquele novo no;
+ *   - testa current -> other;
+ *   - testa other -> current;
+ *   - exige o mesmo lotId em cada conexao;
+ *   - exige origem/destino estritos;
+ *   - cada novo no entra na fila e passa a orientar a proxima busca.
+ */
+function buildCorrelatedComponent(
   focus: VerifiedEvidence,
-  others: VerifiedEvidence[],
-): PairCandidate[] {
-  const result = new Map<string, PairCandidate>();
+  candidates: VerifiedEvidence[],
+): CorrelationComponent {
+  const all = [focus, ...candidates].filter(
+    (item) => sameLot(focus.normalized, item.normalized),
+  );
 
-  for (const other of others) {
-    if (lower(other.row.evidence_id) === lower(focus.row.evidence_id)) {
+  const byId = new Map(
+    all.map(
+      (item) =>
+        [
+          lower(item.row.evidence_id),
+          item,
+        ] as const,
+    ),
+  );
+
+  byId.set(
+    lower(focus.row.evidence_id),
+    focus,
+  );
+
+  const seen = new Set<string>([
+    lower(focus.row.evidence_id),
+  ]);
+
+  const queue: string[] = [
+    lower(focus.row.evidence_id),
+  ];
+
+  const edges =
+    new Map<string, CorrelationEdge>();
+
+  while (queue.length > 0) {
+    const currentId =
+      queue.shift()!;
+
+    const current =
+      byId.get(currentId);
+
+    if (!current) {
       continue;
     }
 
-    const forward = directedRelation(focus, other, "FORWARD");
-    if (forward) {
-      result.set(candidateKey(forward), forward);
-    }
+    for (
+      const other of
+      byId.values()
+    ) {
+      const otherId =
+        lower(
+          other.row.evidence_id,
+        );
 
-    const backward = directedRelation(other, focus, "BACKWARD");
-    if (backward) {
-      result.set(candidateKey(backward), backward);
+      if (
+        otherId === currentId
+      ) {
+        continue;
+      }
+
+      const forward =
+        directedRelation(
+          current,
+          other,
+        );
+
+      if (forward) {
+        edges.set(
+          edgeKey(forward),
+          forward,
+        );
+
+        if (!seen.has(otherId)) {
+          seen.add(otherId);
+          queue.push(otherId);
+        }
+      }
+
+      const backward =
+        directedRelation(
+          other,
+          current,
+        );
+
+      if (backward) {
+        edges.set(
+          edgeKey(backward),
+          backward,
+        );
+
+        if (!seen.has(otherId)) {
+          seen.add(otherId);
+          queue.push(otherId);
+        }
+      }
     }
   }
 
-  return [...result.values()].sort((a, b) =>
-    candidateKey(a).localeCompare(candidateKey(b)),
-  );
-}
-
-/**
- * O foco pode ter um elo anterior e um posterior.
- * Para manter "1 PENDING -> 1 contraparte -> 1 resultado":
- *   1) prefere o elo fisico PARA FRENTE;
- *   2) se nao houver, usa o elo fisico PARA TRAS;
- *   3) depois laboratorio para frente/tras.
- *
- * Se houver mais de uma opcao no mesmo nivel, nao escolhe silenciosamente:
- * retorna ambiguidade e mantem o PENDING.
- */
-function selectPair(pairs: PairCandidate[]): PairCandidate | null {
-  const groups: PairCandidate[][] = [
-    pairs.filter(
-      (pair) =>
-        pair.relationType === "PHYSICAL_HANDOFF" &&
-        pair.focusDirection === "FORWARD",
-    ),
-    pairs.filter(
-      (pair) =>
-        pair.relationType === "PHYSICAL_HANDOFF" &&
-        pair.focusDirection === "BACKWARD",
-    ),
-    pairs.filter(
-      (pair) =>
-        pair.relationType === "LAB_ANALYSIS" &&
-        pair.focusDirection === "FORWARD",
-    ),
-    pairs.filter(
-      (pair) =>
-        pair.relationType === "LAB_ANALYSIS" &&
-        pair.focusDirection === "BACKWARD",
-    ),
-  ];
-
-  for (const group of groups) {
-    if (group.length > 1) {
-      throw new Error(
-        `correlacao ambigua: ${group.length} contrapartes validas no mesmo nivel`,
+  const evidences =
+    [...seen]
+      .map((id) =>
+        byId.get(id),
+      )
+      .filter(
+        (
+          item,
+        ): item is VerifiedEvidence =>
+          item !== undefined,
+      )
+      .sort((a, b) =>
+        a.row.evidence_id.localeCompare(
+          b.row.evidence_id,
+        ),
       );
-    }
 
-    if (group.length === 1) {
-      return group[0];
-    }
-  }
+  const componentEdges =
+    [...edges.values()]
+      .filter(
+        (edge) =>
+          seen.has(
+            lower(
+              edge.from.row
+                .evidence_id,
+            ),
+          ) &&
+          seen.has(
+            lower(
+              edge.to.row
+                .evidence_id,
+            ),
+          ),
+      )
+      .sort((a, b) =>
+        edgeKey(a).localeCompare(
+          edgeKey(b),
+        ),
+      );
 
-  return null;
+  return {
+    evidences,
+    edges: componentEdges,
+  };
 }
 
 /* ============================================================
- * Massa bilateral
+ * Massa: toda a cadeia, mas SEM soma global
+ * Cada PHYSICAL_HANDOFF e calculado de dois em dois.
  * ============================================================
  */
 
-function calculateBilateralMass(
-  focus: VerifiedEvidence,
-  pair: PairCandidate,
-): BilateralMassResult {
-  const left = pair.left.massMg;
-  const right = pair.right.massMg;
-  const delta = left !== null && right !== null ? left - right : null;
+function calculatePairMass(
+  edge: CorrelationEdge,
+): PairMassResult | null {
+  if (
+    edge.relationType !==
+    "PHYSICAL_HANDOFF"
+  ) {
+    return null;
+  }
+
+  const left = edge.left.massMg;
+  const right = edge.right.massMg;
+
+  const delta =
+    left !== null &&
+    right !== null
+      ? left - right
+      : null;
 
   const status: Status =
-    delta === null ? "NAO_ATESTADO" : delta === 0n ? "CONFORME" : "DIVERGENTE";
+    delta === null
+      ? "NAO_ATESTADO"
+      : delta === 0n
+        ? "CONFORME"
+        : "DIVERGENTE";
 
-  const counterpartEvidenceId =
-    pair.focusDirection === "FORWARD"
-      ? pair.to.row.evidence_id
-      : pair.from.row.evidence_id;
-
-  const pairId = hashText(
-    stableJson({
-      domain: "ExploreChem/BilateralPair/v1",
-      lotReference: pair.lotReference,
-      fromEvidenceId: pair.from.row.evidence_id,
-      toEvidenceId: pair.to.row.evidence_id,
-      relationType: pair.relationType,
-    }),
-  );
+  const pairId =
+    hashText(
+      stableJson({
+        domain:
+          "ExploreChem/LotPairwiseMassPair/v4",
+        lotReference:
+          edge.lotReference,
+        fromEvidenceId:
+          edge.from.row.evidence_id,
+        toEvidenceId:
+          edge.to.row.evidence_id,
+        relationType:
+          edge.relationType,
+      }),
+    );
 
   return {
-    schema: "ExploreChem/BilateralMassResult/v1",
     pairId,
-    focusEvidenceId: focus.row.evidence_id,
-    counterpartEvidenceId,
-    focusDirection: pair.focusDirection,
-    relationType: pair.relationType,
-    lotReference: pair.lotReference,
-    fromEvidenceId: pair.from.row.evidence_id,
-    toEvidenceId: pair.to.row.evidence_id,
-    fromActorId: pair.from.onchain.actorId,
-    toActorId: pair.to.onchain.actorId,
-    leftMassMg: left?.toString() ?? null,
-    rightMassMg: right?.toString() ?? null,
-    leftMassField: pair.left.field,
-    rightMassField: pair.right.field,
-    deltaMg: delta?.toString() ?? null,
+    relationType:
+      edge.relationType,
+    fromEvidenceId:
+      edge.from.row.evidence_id,
+    toEvidenceId:
+      edge.to.row.evidence_id,
+    fromActorId:
+      edge.from.onchain.actorId,
+    toActorId:
+      edge.to.onchain.actorId,
+    lotReference:
+      edge.lotReference,
+    leftMassMg:
+      left?.toString() ?? null,
+    rightMassMg:
+      right?.toString() ?? null,
+    leftMassField:
+      edge.left.field,
+    rightMassField:
+      edge.right.field,
+    deltaMg:
+      delta?.toString() ?? null,
+    status,
+  };
+}
+
+function calculateComponentMass(
+  focus: VerifiedEvidence,
+  component: CorrelationComponent,
+): ComponentMassResult {
+  const lotReference =
+    focus.normalized.lotReference;
+
+  if (lotReference === null) {
+    throw new Error(
+      `${focus.row.evidence_id}: lotId ausente no foco`,
+    );
+  }
+
+  const massPairs =
+    component.edges
+      .map(calculatePairMass)
+      .filter(
+        (
+          pair,
+        ): pair is PairMassResult =>
+          pair !== null,
+      );
+
+  let status: Status;
+
+  if (
+    massPairs.some(
+      (pair) =>
+        pair.status ===
+        "DIVERGENTE",
+    )
+  ) {
+    status = "DIVERGENTE";
+  } else if (
+    massPairs.length > 0 &&
+    massPairs.every(
+      (pair) =>
+        pair.status ===
+        "CONFORME",
+    )
+  ) {
+    status = "CONFORME";
+  } else {
+    status = "NAO_ATESTADO";
+  }
+
+  return {
+    schema:
+      "ExploreChem/LotCorrelatedPairwiseMassResult/v4",
+    focusEvidenceId:
+      focus.row.evidence_id,
+    lotReference,
+    evidenceIds:
+      component.evidences
+        .map(
+          (item) =>
+            item.row.evidence_id,
+        ),
+    correlationEdges:
+      component.edges.map(
+        (edge) => ({
+          fromEvidenceId:
+            edge.from.row
+              .evidence_id,
+          toEvidenceId:
+            edge.to.row
+              .evidence_id,
+          relationType:
+            edge.relationType,
+          lotReference:
+            edge.lotReference,
+        }),
+      ),
+    massPairs,
     status,
   };
 }
 
 /* ============================================================
- * Commitment privado do resultado local
+ * Fingerprint deterministico + commitment privado para blockchain
  * ============================================================
  */
 
@@ -1295,56 +1594,93 @@ function commitment(
   runtime: TeeRuntime<Config>,
   master: string,
   focus: OnchainEvidence,
-  result: BilateralMassResult,
+  result: ComponentMassResult,
 ) {
-  const resultPlainHash = hashText(stableJson(result));
+  /*
+   * SEM SALT:
+   * identifica deterministicamente o mesmo calculo privado.
+   * Nao e enviado para a blockchain como compromisso publico.
+   */
+  const resultPlainHash =
+    hashText(
+      stableJson(result),
+    );
+
+  const relationFingerprint =
+    hashText(
+      stableJson({
+        domain:
+          "ExploreChem/LotRelationFingerprint/v4",
+        lotReference:
+          result.lotReference,
+        evidenceIds:
+          result.evidenceIds,
+        correlationEdges:
+          result.correlationEdges,
+        massPairs:
+          result.massPairs,
+      }),
+    );
 
   /*
-   * CRE/Javy nao fornece crypto.getRandomValues().
-   * O salt e derivado por hash com uma chave privada forte do Vault,
-   * dados unicos da dupla e o tempo deterministico da execucao.
-   * Sem o master, o observador da blockchain nao consegue precomputar o salt.
+   * COM SALT:
+   * estes sao os compromissos destinados ao resultado on-chain.
    */
-  const salt = hashText(
-    stableJson({
-      domain: "ExploreChem/BilateralPrivateSalt/v1",
-      master,
-      executionTime: runtime.now(),
-      focusEvidenceId: focus.evidenceId,
-      focusEvidenceHash: focus.evidenceHash,
-      pairId: result.pairId,
-      resultPlainHash,
-    }),
-  );
+  const salt =
+    hashText(
+      stableJson({
+        domain:
+          "ExploreChem/LotComponentPrivateSalt/v4",
+        master,
+        executionTime:
+          runtime.now(),
+        focusEvidenceId:
+          focus.evidenceId,
+        focusEvidenceHash:
+          focus.evidenceHash,
+        relationFingerprint,
+        resultPlainHash,
+      }),
+    );
 
-  const aggregateInputHash = hashText(
-    stableJson({
-      domain: "ExploreChem/BilateralInput/v1",
-      salt,
-      focusEvidenceId: focus.evidenceId,
-      pairId: result.pairId,
-      fromEvidenceId: result.fromEvidenceId,
-      toEvidenceId: result.toEvidenceId,
-      fromActorId: result.fromActorId,
-      toActorId: result.toActorId,
-      lotReference: result.lotReference,
-    }),
-  );
+  const aggregateInputHash =
+    hashText(
+      stableJson({
+        domain:
+          "ExploreChem/LotComponentInput/v4",
+        salt,
+        focusEvidenceId:
+          focus.evidenceId,
+        lotReference:
+          result.lotReference,
+        evidenceIds:
+          result.evidenceIds,
+        correlationEdges:
+          result.correlationEdges,
+      }),
+    );
 
-  const resultHash = hashText(
-    stableJson({
-      domain: "ExploreChem/BilateralResult/v1",
-      salt,
-      result,
-    }),
-  );
+  const resultHash =
+    hashText(
+      stableJson({
+        domain:
+          "ExploreChem/LotComponentResult/v4",
+        salt,
+        relationFingerprint,
+        result,
+      }),
+    );
 
-  const resultId = hashText(
-    `ExploreChem/BilateralResultId/v1|${focus.actorId}|${focus.evidenceId}|${result.pairId}|${resultHash}`,
-  );
+  const resultId =
+    hashText(
+      `ExploreChem/LotComponentResultId/v4|${focus.actorId}|${focus.evidenceId}|${relationFingerprint}|${resultHash}`,
+    );
 
   return {
     salt,
+    relationFingerprint,
+    componentFingerprint:
+      relationFingerprint,
     resultPlainHash,
     aggregateInputHash,
     resultHash,
@@ -1450,192 +1786,389 @@ function write(runtime: TeeRuntime<Config>, payload: Hex): Hex {
  * ============================================================
  */
 
-function run(runtime: TeeRuntime<Config>): string {
+function run(
+  runtime: TeeRuntime<Config>,
+): string {
   /*
    * 1) BLOCKCHAIN PRIMEIRO.
-   * Nenhuma consulta ao Supabase ocorre antes disto.
    */
-  const pendingId = getNextPending(runtime);
-
-  if (lower(pendingId) === lower(zeroHash)) {
-    return JSON.stringify({
-      workflow: "BILATERAL_MASS",
-      discovery: "BLOCKCHAIN_FIRST",
-      pendingAuthority: "BLOCKCHAIN",
-      message: "nenhum PENDING on-chain",
-    });
-  }
-
-  const focusOnchain = readEvidence(runtime, pendingId);
-
-  if (focusOnchain.status !== 1) {
-    return JSON.stringify({
-      workflow: "BILATERAL_MASS",
-      discovery: "BLOCKCHAIN_FIRST",
-      pendingAuthority: "BLOCKCHAIN",
-      focusEvidenceId: pendingId,
-      message: "evidencia escolhida deixou de estar PENDING",
-    });
-  }
-
-  /*
-   * 2) SOMENTE AGORA: secrets + Supabase + Storage.
-   */
-  const { key, master } = secrets(runtime);
-  const actors = loadActorDirectory(runtime, key);
-  const focusRow = loadOneEvidenceRow(runtime, key, focusOnchain.evidenceId);
-  const focus = loadVerifiedEvidence(
-    runtime,
-    key,
-    focusRow,
-    actors,
-    focusOnchain,
-  );
-
-  if (focus.normalized.lotReference === null) {
-    return JSON.stringify({
-      workflow: "BILATERAL_MASS",
-      discovery: "BLOCKCHAIN_FIRST",
-      pendingAuthority: "BLOCKCHAIN",
-      focusEvidenceId: focus.row.evidence_id,
-      message: "lotId ausente no documento comprometido; continua PENDING",
-    });
-  }
+  const initialBlockchainPendingId =
+    getNextPending(runtime);
 
   if (
-    focus.normalized.destinationActorId === null &&
-    focus.normalized.originActorId === null
+    lower(
+      initialBlockchainPendingId,
+    ) === lower(zeroHash)
   ) {
     return JSON.stringify({
-      workflow: "BILATERAL_MASS",
-      discovery: "BLOCKCHAIN_FIRST",
-      pendingAuthority: "BLOCKCHAIN",
-      focusEvidenceId: focus.row.evidence_id,
-      lotReference: focus.normalized.lotReference,
-      message: "origem e destino ausentes no documento comprometido; continua PENDING",
+      workflow:
+        "LOT_CHAIN_PAIRWISE_MASS",
+      discovery:
+        "BLOCKCHAIN_FIRST",
+      pendingAuthority:
+        "BLOCKCHAIN_STATUS_REQUIRED",
+      message:
+        "nenhum PENDING on-chain",
     });
   }
 
   /*
-   * 3) Carrega candidatos DEPOIS que a blockchain escolheu o foco.
-   * Cada candidato e conferido contra a propria ancora on-chain.
+   * 2) So depois da primeira leitura on-chain:
+   * secrets + consulta PONTUAL do evidenceId no indice Supabase.
+   *
+   * Nao carregamos mais explorerchem_evidences inteiro.
    */
-  const allRows = loadAllEvidenceRows(runtime, key);
-  const candidates: VerifiedEvidence[] = [];
-  const candidateErrors: Array<{ evidenceId: Hex; error: string }> = [];
+  const { key, master } =
+    secrets(runtime);
 
-  for (const row of allRows) {
-    if (lower(row.evidence_id) === lower(focus.row.evidence_id)) {
+  const selection =
+    selectEffectivePending(
+      runtime,
+      key,
+      initialBlockchainPendingId,
+    );
+
+  if (selection === null) {
+    return JSON.stringify({
+      workflow:
+        "LOT_CHAIN_PAIRWISE_MASS",
+      discovery:
+        "BLOCKCHAIN_FIRST",
+      pendingAuthority:
+        "BLOCKCHAIN_STATUS_REQUIRED",
+      initialBlockchainPendingId,
+      message:
+        "nenhum novo PENDING efetivo: o primeiro PENDING on-chain ja pode estar espelhado como MATCHED pela simulacao",
+    });
+  }
+
+  const actors =
+    loadActorDirectory(
+      runtime,
+      key,
+    );
+
+  const focus =
+    loadVerifiedEvidence(
+      runtime,
+      key,
+      selection.row,
+      actors,
+      selection.onchain,
+    );
+
+  /*
+   * lotId e obrigatorio nesta versao porque e o token logico de correlacao.
+   */
+  if (
+    focus.normalized
+      .lotReference === null
+  ) {
+    return JSON.stringify({
+      workflow:
+        "LOT_CHAIN_PAIRWISE_MASS",
+      discovery:
+        "BLOCKCHAIN_FIRST",
+      pendingAuthority:
+        "BLOCKCHAIN_STATUS_REQUIRED",
+      initialBlockchainPendingId,
+      pendingSelectionMode:
+        selection.mode,
+      focusEvidenceId:
+        focus.row.evidence_id,
+      message:
+        "lotId ausente no documento comprometido; continua PENDING",
+    });
+  }
+
+  /*
+   * O indice precisa apontar para o mesmo lotId que acabou de ser extraido do
+   * JSON verificado. O indice acelera a busca, mas o documento comprometido e
+   * a fonte de verdade do valor privado.
+   */
+  if (
+    focus.row.lot_reference === null ||
+    focus.row.lot_reference !== focus.normalized.lotReference
+  ) {
+    return JSON.stringify({
+      workflow: "LOT_CHAIN_PAIRWISE_MASS",
+      discovery: "BLOCKCHAIN_FIRST",
+      pendingAuthority: "BLOCKCHAIN_STATUS_REQUIRED",
+      initialBlockchainPendingId,
+      pendingSelectionMode: selection.mode,
+      focusEvidenceId: focus.row.evidence_id,
+      focusLotReference: focus.normalized.lotReference,
+      indexedLotReference: focus.row.lot_reference,
+      message:
+        "indice lot_reference ausente ou divergente do lotId do JSON verificado; reindexe a evidencia e mantenha PENDING",
+    });
+  }
+
+  /*
+   * Aqui esta a mudanca de escala: uma unica consulta indexada traz somente as
+   * evidencias do lote do foco. Nenhuma evidencia de outros lotes e baixada.
+   */
+  const lotRows = loadEvidenceRowsByLot(
+    runtime,
+    key,
+    focus.normalized.lotReference,
+  );
+
+  if (
+    focus.normalized
+      .originActorId === null &&
+    focus.normalized
+      .destinationActorId === null
+  ) {
+    return JSON.stringify({
+      workflow:
+        "LOT_CHAIN_PAIRWISE_MASS",
+      discovery:
+        "BLOCKCHAIN_FIRST",
+      pendingAuthority:
+        "BLOCKCHAIN_STATUS_REQUIRED",
+      initialBlockchainPendingId,
+      pendingSelectionMode:
+        selection.mode,
+      focusEvidenceId:
+        focus.row.evidence_id,
+      focusLotReference:
+        focus.normalized.lotReference,
+      message:
+        "origem e destino ausentes no documento comprometido; continua PENDING",
+    });
+  }
+
+  /*
+   * 3) Candidatos DO MESMO LOTE, vindos da consulta indexada.
+   *
+   * PENDING, MATCHED, VERIFIED e DIVERGENT podem ser consultados.
+   * Um MATCH anterior continua participando da reconstituicao da cadeia.
+   *
+   * O Supabase so aponta os candidatos. Para cada linha retornada, o TEE ainda:
+   *   - le o estado/evidenceHash on-chain;
+   *   - baixa o JSON;
+   *   - recomputa o hash;
+   *   - confirma ownerActor;
+   *   - confirma que o lotId real do JSON e o mesmo do foco.
+   */
+  const candidates:
+    VerifiedEvidence[] = [];
+
+  const candidateErrors:
+    Array<{
+      evidenceId: Hex;
+      error: string;
+    }> = [];
+
+  for (
+    const row of lotRows
+  ) {
+    if (
+      lower(row.evidence_id) ===
+      lower(
+        focus.row.evidence_id,
+      )
+    ) {
       continue;
     }
 
     try {
-      const candidateOnchain = readEvidence(runtime, row.evidence_id);
+      const candidateOnchain =
+        readEvidence(
+          runtime,
+          row.evidence_id,
+        );
 
-      /*
-       * NONE nao existe porque getEvidence reverte.
-       * Aceitamos contraparte PENDING, MATCHED ou VERIFIED.
-       * DIVERGENT nao e usada como nova contraparte fisica neste workflow.
-       */
-      if (![1, 2, 3].includes(candidateOnchain.status)) {
+      if (
+        ![1, 2, 3, 4].includes(
+          candidateOnchain.status,
+        )
+      ) {
         continue;
       }
 
-      candidates.push(
+      const verified =
         loadVerifiedEvidence(
           runtime,
           key,
           row,
           actors,
           candidateOnchain,
-        ),
+        );
+
+      if (
+        verified.row.lot_reference === null ||
+        verified.row.lot_reference !== verified.normalized.lotReference
+      ) {
+        candidateErrors.push({
+          evidenceId: row.evidence_id,
+          error:
+            "indice lot_reference diverge do lotId do JSON verificado",
+        });
+        continue;
+      }
+
+      if (
+        !sameLot(
+          focus.normalized,
+          verified.normalized,
+        )
+      ) {
+        candidateErrors.push({
+          evidenceId: row.evidence_id,
+          error:
+            "candidato retornado pelo indice nao pertence ao mesmo lotId no JSON comprometido",
+        });
+        continue;
+      }
+
+      candidates.push(
+        verified,
       );
     } catch (error) {
       candidateErrors.push({
-        evidenceId: row.evidence_id,
-        error: error instanceof Error ? error.message : String(error),
+        evidenceId:
+          row.evidence_id,
+        error:
+          error instanceof Error
+            ? error.message
+            : String(error),
       });
     }
   }
 
   /*
-   * 4) Procura PARA FRENTE e PARA TRAS.
+   * 4) BFS POR LOTE + ORIGEM/DESTINO ESTRITOS.
+   *
+   * PHYSICAL_HANDOFF:
+   *   lotId(A)        == lotId(B)
+   *   destination(A) == owner(B)
+   *   origin(B)      == owner(A)
+   *
+   * Nao existe janela temporal.
+   * A busca testa os dois sentidos.
+   * A cada novo no encontrado, o JSON daquele no passa a orientar a proxima
+   * conexao da BFS.
    */
-  const pairs = findPairsForFocus(focus, candidates);
+  const component =
+    buildCorrelatedComponent(
+      focus,
+      candidates,
+    );
 
-  let selected: PairCandidate | null;
-
-  try {
-    selected = selectPair(pairs);
-  } catch (error) {
+  if (
+    component.edges.length === 0
+  ) {
     return JSON.stringify({
-      workflow: "BILATERAL_MASS",
-      discovery: "BLOCKCHAIN_FIRST",
-      pendingAuthority: "BLOCKCHAIN",
-      focusEvidenceId: focus.row.evidence_id,
-      lotReference: focus.normalized.lotReference,
-      pairCandidates: pairs.map((pair) => ({
-        fromEvidenceId: pair.from.row.evidence_id,
-        toEvidenceId: pair.to.row.evidence_id,
-        relationType: pair.relationType,
-        focusDirection: pair.focusDirection,
-      })),
-      message: error instanceof Error ? error.message : String(error),
-    });
-  }
-
-  if (!selected) {
-    return JSON.stringify({
-      workflow: "BILATERAL_MASS",
-      discovery: "BLOCKCHAIN_FIRST",
-      pendingAuthority: "BLOCKCHAIN",
-      correlation: "ORIGIN_DESTINATION_PLUS_LOT_BIDIRECTIONAL",
-      focusEvidenceId: focus.row.evidence_id,
-      focusActorId: focus.onchain.actorId,
-      focusOriginActorId: focus.normalized.originActorId,
-      focusDestinationActorId: focus.normalized.destinationActorId,
-      lotReference: focus.normalized.lotReference,
-      scannedCandidates: candidates.length,
+      workflow:
+        "LOT_CHAIN_PAIRWISE_MASS",
+      discovery:
+        "BLOCKCHAIN_FIRST",
+      pendingAuthority:
+        "BLOCKCHAIN_STATUS_REQUIRED",
+      initialBlockchainPendingId,
+      pendingSelectionMode:
+        selection.mode,
+      correlation:
+        "SAME_LOT_PLUS_STRICT_ORIGIN_DESTINATION_BIDIRECTIONAL_BFS",
+      focusEvidenceId:
+        focus.row.evidence_id,
+      focusActorId:
+        focus.onchain.actorId,
+      focusLotReference:
+        focus.normalized.lotReference,
+      focusOriginActorId:
+        focus.normalized
+          .originActorId,
+      focusDestinationActorId:
+        focus.normalized
+          .destinationActorId,
+      evidenceCount:
+        component.evidences.length,
+      evidenceIds:
+        component.evidences.map(
+          (item) =>
+            item.row.evidence_id,
+        ),
+      candidateDiscovery:
+        "SUPABASE_INDEX_BY_LOT_ONLY",
+      indexedLotRowCount:
+        lotRows.length,
+      verifiedSameLotCandidateCount:
+        candidates.length,
       candidateErrors,
-      message: "nenhuma contraparte bilateral encontrada; continua PENDING",
+      message:
+        "nenhuma relacao fisica origem/destino encontrada dentro do mesmo lotId; continua PENDING",
     });
   }
 
   /*
-   * 5) CORRELACAO JA EXISTE.
-   * Agora, e somente agora, a massa das duas partes vira o veredito.
+   * 5) Massa por elo, nunca usada para descobrir a correlacao.
    */
-  const mass = calculateBilateralMass(focus, selected);
+  const mass =
+    calculateComponentMass(
+      focus,
+      component,
+    );
 
-  const committed = commitment(
-    runtime,
-    master,
-    focus.onchain,
-    mass,
-  );
+  const committed =
+    commitment(
+      runtime,
+      master,
+      focus.onchain,
+      mass,
+    );
 
-  const resultPath = privateResultPath(
-    focus.onchain.evidenceId,
-    committed.resultId,
-  );
+  const resultPath =
+    privateResultPath(
+      focus.onchain.evidenceId,
+      committed.resultId,
+    );
 
   const privateBase = {
-    schema: "ExploreChem/PrivateBilateralCommittedMass/v1",
-    sourceEvidenceId: focus.onchain.evidenceId,
-    sourceActorId: focus.onchain.actorId,
-    sourceEvidenceHash: focus.onchain.evidenceHash,
-    counterpartEvidenceId: mass.counterpartEvidenceId,
-    pairId: mass.pairId,
-    salt: committed.salt,
-    resultPlainHash: committed.resultPlainHash,
-    aggregateInputHash: committed.aggregateInputHash,
-    resultHash: committed.resultHash,
-    resultId: committed.resultId,
-    mass,
+    schema:
+      "ExploreChem/PrivateLotCorrelatedPairwiseMass/v4",
+    sourceEvidenceId:
+      focus.onchain.evidenceId,
+    sourceActorId:
+      focus.onchain.actorId,
+    sourceEvidenceHash:
+      focus.onchain.evidenceHash,
+    lotReference:
+      mass.lotReference,
+    evidenceIds:
+      mass.evidenceIds,
+    correlationEdges:
+      mass.correlationEdges,
+    massPairs:
+      mass.massPairs,
+
+    /*
+     * SEM SALT: fingerprint deterministico do calculo relacional.
+     */
+    relationFingerprint:
+      committed.relationFingerprint,
+    resultPlainHash:
+      committed.resultPlainHash,
+
+    /*
+     * COM SALT: compromisso privado usado para os hashes enviados on-chain.
+     */
+    salt:
+      committed.salt,
+    aggregateInputHash:
+      committed.aggregateInputHash,
+    resultHash:
+      committed.resultHash,
+    resultId:
+      committed.resultId,
+    status:
+      mass.status,
   };
 
   /*
-   * 6) Salva primeiro o resultado privado sem tx hashes.
+   * 6) Salva manifest privado antes das transacoes.
    */
   savePrivateResult(
     runtime,
@@ -1652,40 +2185,66 @@ function run(runtime: TeeRuntime<Config>): string {
   );
 
   /*
-   * 7) Reconfere o gate on-chain imediatamente antes da mudanca.
+   * 7) Gate final: o NOVO foco selecionado precisa continuar PENDING on-chain.
    */
-  const gate = readEvidence(runtime, focus.onchain.evidenceId);
+  const gate =
+    readEvidence(
+      runtime,
+      focus.onchain.evidenceId,
+    );
 
   if (gate.status !== 1) {
     return JSON.stringify({
-      workflow: "BILATERAL_MASS",
-      discovery: "BLOCKCHAIN_FIRST",
-      pendingAuthority: "BLOCKCHAIN",
-      focusEvidenceId: focus.onchain.evidenceId,
-      message: "focus deixou de estar PENDING antes do MATCH; nenhuma transacao enviada",
+      workflow:
+        "LOT_CHAIN_PAIRWISE_MASS",
+      discovery:
+        "BLOCKCHAIN_FIRST",
+      pendingAuthority:
+        "BLOCKCHAIN_STATUS_REQUIRED",
+      initialBlockchainPendingId,
+      pendingSelectionMode:
+        selection.mode,
+      focusEvidenceId:
+        focus.onchain.evidenceId,
+      focusLotReference:
+        mass.lotReference,
+      message:
+        "focus deixou de estar PENDING antes do MATCH; nenhuma transacao enviada",
     });
   }
 
   /*
-   * 8) MATCH somente do foco.
-   * A contraparte nao muda de estado aqui.
+   * 8) MATCH somente do NOVO PENDING foco.
    */
-  const matchTxHash = write(
-    runtime,
-    matchReport(focus.onchain.evidenceId),
-  );
+  const matchTxHash =
+    write(
+      runtime,
+      matchReport(
+        focus.onchain.evidenceId,
+      ),
+    );
 
   /*
-   * 9) Resultado bilateral somente do foco.
-   * O contrato novo exige evidenceId + actorId do dono do resultado.
+   * 9) Resultado somente do mesmo foco.
    */
-  const resultTxHash = write(
-    runtime,
-    balanceReport(focus.onchain, committed, mass.status),
-  );
+  const resultTxHash =
+    write(
+      runtime,
+      balanceReport(
+        focus.onchain,
+        committed,
+        mass.status,
+      ),
+    );
 
   /*
-   * 10) Atualiza Storage + espelho Supabase apenas do foco.
+   * 10) Espelha MATCH somente no foco.
+   *
+   * Isso tambem funciona como cursor de progresso durante SIMULATION:
+   * na proxima execucao, se getNextPending() on-chain ainda devolver o mesmo
+   * id por falta de persistencia do simulador, selectEffectivePending() ignora
+   * a linha ja MATCHED no Supabase e escolhe outro row PENDING cujo status
+   * on-chain tambem seja 1.
    */
   savePrivateResult(
     runtime,
@@ -1709,33 +2268,76 @@ function run(runtime: TeeRuntime<Config>): string {
   );
 
   return JSON.stringify({
-    workflow: "BILATERAL_MASS",
-    discovery: "BLOCKCHAIN_FIRST",
-    pendingAuthority: "BLOCKCHAIN",
-    correlation: "ORIGIN_DESTINATION_PLUS_LOT_BIDIRECTIONAL",
-    massPolicy: "PAIRWISE_ONLY_NO_GLOBAL_AGGREGATION",
-    focusEvidenceId: focus.onchain.evidenceId,
-    counterpartEvidenceId: mass.counterpartEvidenceId,
-    focusDirection: mass.focusDirection,
-    relationType: mass.relationType,
-    lotReference: mass.lotReference,
-    fromEvidenceId: mass.fromEvidenceId,
-    toEvidenceId: mass.toEvidenceId,
-    leftMassMg: mass.leftMassMg,
-    rightMassMg: mass.rightMassMg,
-    deltaMg: mass.deltaMg,
-    massStatus: mass.status,
+    workflow:
+      "LOT_CHAIN_PAIRWISE_MASS",
+    discovery:
+      "BLOCKCHAIN_FIRST",
+    pendingAuthority:
+      "BLOCKCHAIN_STATUS_REQUIRED",
+    simulationProgress:
+      "SUPABASE_MATCHED_MIRROR_ONLY_WHEN_CHAIN_SIMULATION_DOES_NOT_ADVANCE",
+    candidateDiscovery:
+      "SUPABASE_INDEX_BY_LOT_ONLY",
+    indexedLotRowCount:
+      lotRows.length,
+    initialBlockchainPendingId,
+    pendingSelectionMode:
+      selection.mode,
+    correlation:
+      "SAME_LOT_PLUS_STRICT_ORIGIN_DESTINATION_BIDIRECTIONAL_BFS",
+    massPolicy:
+      "FULL_CORRELATED_COMPONENT_PAIRWISE_EDGES_NO_GLOBAL_SUM",
+    focusEvidenceId:
+      focus.onchain.evidenceId,
+    focusLotReference:
+      mass.lotReference,
+    evidenceCount:
+      mass.evidenceIds.length,
+    evidenceIds:
+      mass.evidenceIds,
+    correlationEdgeCount:
+      mass.correlationEdges.length,
+    correlationEdges:
+      mass.correlationEdges,
+    massPairCount:
+      mass.massPairs.length,
+    massPairs:
+      mass.massPairs,
+    massStatus:
+      mass.status,
+    candidateErrors,
+
+    /*
+     * O retorno mostra explicitamente os dois niveis pedidos:
+     * - sem salt: relationFingerprint/resultPlainHash
+     * - com salt: resultHash/aggregateInputHash
+     */
     commitment: {
-      resultId: committed.resultId,
-      resultHash: committed.resultHash,
-      aggregateInputHash: committed.aggregateInputHash,
+      unsalted: {
+        relationFingerprint:
+          committed.relationFingerprint,
+        resultPlainHash:
+          committed.resultPlainHash,
+      },
+      salted: {
+        resultId:
+          committed.resultId,
+        resultHash:
+          committed.resultHash,
+        aggregateInputHash:
+          committed.aggregateInputHash,
+      },
     },
+
     privateResult: {
-      bucket: focus.row.storage_bucket,
-      path: resultPath,
+      bucket:
+        focus.row.storage_bucket,
+      path:
+        resultPath,
     },
     onchain: {
-      matchedEvidenceId: focus.onchain.evidenceId,
+      matchedEvidenceId:
+        focus.onchain.evidenceId,
       matchTxHash,
       resultTxHash,
     },
