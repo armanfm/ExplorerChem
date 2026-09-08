@@ -17,8 +17,8 @@ interface IReceiver is IERC165 {
 /// @dev O contrato nao conhece a relacao comercial. Ele guarda:
 ///      - quem submeteu cada evidencia e a qual identidade ela pertence;
 ///      - o hash do documento no momento da submissao;
-///      - o estado da evidencia: PENDING ou MATCHED;
-///      - o resultado minimo do balanco de massa.
+///      - o estado da evidencia: PENDING, MATCHED, VERIFIED ou DIVERGENT;
+///      - o resultado minimo do balanco de massa vinculado a uma evidencia.
 ///
 ///      Nao vao para a cadeia: lotId, origem, destino, CNPJ, actorType,
 ///      documentRef, massas, teores, arquivos nem qualquer campo de
@@ -40,7 +40,9 @@ contract ExploreChemRegistry is IReceiver {
     enum EvidenceStatus {
         NONE,
         PENDING,
-        MATCHED
+        MATCHED,
+        VERIFIED,
+        DIVERGENT
     }
 
     enum BalanceStatus {
@@ -64,6 +66,7 @@ contract ExploreChemRegistry is IReceiver {
         EvidenceStatus status;
         uint64 createdAt;
         uint64 matchedAt;
+        uint64 auditedAt;
     }
 
     /// @dev One immutable result per partner and revision.
@@ -76,21 +79,22 @@ contract ExploreChemRegistry is IReceiver {
     ///      those are responsibilities of the authenticated CRE/TEE workflow.
     struct BalanceResult {
         bytes32 resultId;
+        bytes32 evidenceId;       // evidencia dona deste resultado
         bytes32 actorId;
         bytes32 resultHash;
-        bytes32 previousResultId; // encadeia versoes do mesmo balanco
+        bytes32 previousResultId; // encadeia versoes da mesma evidencia
         bytes32 aggregateInputHash;
         BalanceStatus status;
         uint32 calculationVersion;
         uint64 createdAt;
     }
 
-    /// @dev ABI BREAK: abi.encode(CREReport), a STATIC tuple of nine words.
-    ///      Type 1: only reportType and evidenceId are populated.
-    ///      Type 2: evidenceId is zero; the other result fields are populated.
-    ///      One evidence OR one partner result per invocation. No arrays.
-    ///      The workflow must use separate transactions, never a multicall
-    ///      that groups partners. A single workflow may handle both types.
+    /// @dev abi.encode(CREReport), a STATIC tuple of nine words.
+    ///      Type 1 (correlation): reportType + evidenceId.
+    ///      Type 2 (mass result): evidenceId + result/actor/hash/version fields.
+    ///      Type 3 (audit): reportType + evidenceId + balanceStatus, where
+    ///      balanceStatus carries uint8(EvidenceStatus.VERIFIED|DIVERGENT).
+    ///      One evidence/result per invocation. No arrays.
     struct CREReport {
         uint8 reportType;
         bytes32 evidenceId;
@@ -105,6 +109,7 @@ contract ExploreChemRegistry is IReceiver {
 
     uint8 public constant REPORT_CORRELATION = 1;
     uint8 public constant REPORT_BALANCE = 2;
+    uint8 public constant REPORT_AUDIT = 3;
 
     uint256 public constant REPORT_LENGTH = 9 * 32;
 
@@ -124,15 +129,20 @@ contract ExploreChemRegistry is IReceiver {
     bytes32 public expectedWorkflowId;
     /// @dev Zero means use expectedWorkflowId for balance reports too.
     bytes32 public expectedBalanceWorkflowId;
+    /// @dev Zero means use expectedWorkflowId for audit reports too.
+    bytes32 public expectedAuditWorkflowId;
 
     mapping(bytes32 => ActorIdentity) private actors;
     mapping(bytes32 => mapping(address => bool)) public authorizedWallets;
 
     mapping(bytes32 => Evidence) private evidences;
+    // Indice minimo para permitir consultas por estado sem varrer logs/eventos.
+    bytes32[] private evidenceIds;
     mapping(bytes32 => BalanceResult) private results;
     /// @notice Successor of a result, zero while it is the latest revision.
-    /// @dev Prevents forks without publishing a lotId or a shared group ID.
     mapping(bytes32 => bytes32) public nextResultId;
+    /// @notice Latest mass result anchored for each evidence.
+    mapping(bytes32 => bytes32) public latestResultIdByEvidence;
 
     // ---------------------------------------------------------------
     // Erros
@@ -148,10 +158,15 @@ contract ExploreChemRegistry is IReceiver {
     error EvidenceAlreadyExists(bytes32 evidenceId);
     error EvidenceNotFound(bytes32 evidenceId);
     error EvidenceNotPending(bytes32 evidenceId);
+    error EvidenceNotMatchable(bytes32 evidenceId, uint8 status);
+    error EvidenceNotAuditable(bytes32 evidenceId, uint8 status);
+    error EvidenceNotEligibleForBalance(bytes32 evidenceId, uint8 status);
+    error EvidenceActorMismatch(bytes32 evidenceId, bytes32 expectedActorId, bytes32 receivedActorId);
     error EvidenceExpired(bytes32 evidenceId, uint64 createdAt, uint64 expiresAt);
     error ResultAlreadyExists(bytes32 resultId);
     error PreviousResultNotFound(bytes32 previousResultId);
     error PreviousResultActorMismatch(bytes32 previousResultId, bytes32 actorId);
+    error PreviousResultEvidenceMismatch(bytes32 previousResultId, bytes32 evidenceId);
     error PreviousResultAlreadySuperseded(bytes32 previousResultId);
     error InvalidCalculationVersion(uint32 received, uint32 previous);
     error WorkflowNotConfigured();
@@ -162,6 +177,7 @@ contract ExploreChemRegistry is IReceiver {
     error InvalidMetadataLength(uint256 received);
     error InvalidReportType(uint8 reportType);
     error InvalidBalanceStatus(uint8 balanceStatus);
+    error InvalidEvidenceAuditStatus(uint8 status);
 
     // ---------------------------------------------------------------
     // Eventos
@@ -171,6 +187,7 @@ contract ExploreChemRegistry is IReceiver {
     event ForwarderUpdated(address indexed previous, address indexed current);
     event ExpectedWorkflowIdUpdated(bytes32 indexed previous, bytes32 indexed current);
     event ExpectedBalanceWorkflowIdUpdated(bytes32 indexed previous, bytes32 indexed current);
+    event ExpectedAuditWorkflowIdUpdated(bytes32 indexed previous, bytes32 indexed current);
 
     event ActorRegistered(
         bytes32 indexed actorId,
@@ -208,10 +225,19 @@ contract ExploreChemRegistry is IReceiver {
         uint64 matchedAt
     );
 
+    event EvidenceAudited(
+        bytes32 indexed evidenceId,
+        bytes32 indexed actorId,
+        EvidenceStatus status,
+        bytes32 workflowId,
+        uint64 auditedAt
+    );
+
     event BalanceResultAnchored(
         bytes32 indexed resultId,
+        bytes32 indexed evidenceId,
         bytes32 indexed actorId,
-        bytes32 indexed previousResultId,
+        bytes32 previousResultId,
         bytes32 resultHash,
         BalanceStatus status,
         uint32 calculationVersion,
@@ -271,6 +297,13 @@ contract ExploreChemRegistry is IReceiver {
         bytes32 previous = expectedBalanceWorkflowId;
         expectedBalanceWorkflowId = newWorkflowId;
         emit ExpectedBalanceWorkflowIdUpdated(previous, newWorkflowId);
+    }
+
+    /// @notice Optional distinct auditor workflow; zero restores primary ID.
+    function setExpectedAuditWorkflowId(bytes32 newWorkflowId) external onlyOwner {
+        bytes32 previous = expectedAuditWorkflowId;
+        expectedAuditWorkflowId = newWorkflowId;
+        emit ExpectedAuditWorkflowIdUpdated(previous, newWorkflowId);
     }
 
     // ---------------------------------------------------------------
@@ -376,8 +409,13 @@ contract ExploreChemRegistry is IReceiver {
             evidenceHash: evidenceHash,
             status: EvidenceStatus.PENDING,
             createdAt: timestamp,
-            matchedAt: 0
+            matchedAt: 0,
+            auditedAt: 0
         });
+
+        // Mantem apenas o indice dos IDs. O estado continua sendo a fonte da verdade
+        // dentro de evidences[evidenceId].
+        evidenceIds.push(evidenceId);
 
         emit EvidenceSubmitted(
             evidenceId,
@@ -402,22 +440,33 @@ contract ExploreChemRegistry is IReceiver {
         }
         if (report.length != REPORT_LENGTH) revert InvalidReportLength(report.length);
         CREReport memory decoded = abi.decode(report, (CREReport));
-        if (decoded.reportType != REPORT_CORRELATION && decoded.reportType != REPORT_BALANCE) {
+        if (
+            decoded.reportType != REPORT_CORRELATION &&
+            decoded.reportType != REPORT_BALANCE &&
+            decoded.reportType != REPORT_AUDIT
+        ) {
             revert InvalidReportType(decoded.reportType);
         }
 
-        bytes32 expected = decoded.reportType == REPORT_BALANCE &&
-            expectedBalanceWorkflowId != bytes32(0)
-            ? expectedBalanceWorkflowId
-            : expectedWorkflowId;
+        bytes32 expected;
+        if (decoded.reportType == REPORT_BALANCE && expectedBalanceWorkflowId != bytes32(0)) {
+            expected = expectedBalanceWorkflowId;
+        } else if (decoded.reportType == REPORT_AUDIT && expectedAuditWorkflowId != bytes32(0)) {
+            expected = expectedAuditWorkflowId;
+        } else {
+            expected = expectedWorkflowId;
+        }
+
         if (expected == bytes32(0)) revert WorkflowNotConfigured();
         bytes32 workflowId = _readWorkflowId(metadata);
         if (workflowId != expected) revert InvalidWorkflowId(workflowId, expected);
 
         if (decoded.reportType == REPORT_CORRELATION) {
             _applyEvidenceMatch(decoded, workflowId);
-        } else {
+        } else if (decoded.reportType == REPORT_BALANCE) {
             _applyBalance(decoded);
+        } else {
+            _applyEvidenceAudit(decoded, workflowId);
         }
     }
 
@@ -435,15 +484,47 @@ contract ExploreChemRegistry is IReceiver {
 
         Evidence storage e = evidences[r.evidenceId];
         if (e.status == EvidenceStatus.NONE) revert EvidenceNotFound(r.evidenceId);
-        if (e.status != EvidenceStatus.PENDING) revert EvidenceNotPending(r.evidenceId);
+        if (e.status != EvidenceStatus.PENDING && e.status != EvidenceStatus.VERIFIED) {
+            revert EvidenceNotMatchable(r.evidenceId, uint8(e.status));
+        }
 
         uint64 timestamp = uint64(block.timestamp);
-        uint64 deadline = e.createdAt + EVIDENCE_TTL;
-        if (timestamp > deadline) revert EvidenceExpired(r.evidenceId, e.createdAt, deadline);
+        if (e.status == EvidenceStatus.PENDING) {
+            uint64 deadline = e.createdAt + EVIDENCE_TTL;
+            if (timestamp > deadline) revert EvidenceExpired(r.evidenceId, e.createdAt, deadline);
+        }
 
         e.status = EvidenceStatus.MATCHED;
         e.matchedAt = timestamp;
         emit EvidenceMatched(r.evidenceId, e.actorId, workflowId, timestamp);
+    }
+
+    /// @dev Auditor verdict. Uses balanceStatus as the evidence-status byte to
+    ///      preserve the existing static nine-word CREReport ABI.
+    function _applyEvidenceAudit(CREReport memory r, bytes32 workflowId) internal {
+        if (
+            r.resultId != bytes32(0) || r.actorId != bytes32(0) ||
+            r.resultHash != bytes32(0) || r.previousResultId != bytes32(0) ||
+            r.aggregateInputHash != bytes32(0) || r.calculationVersion != 0
+        ) revert UnexpectedReportFields();
+        if (r.evidenceId == bytes32(0)) revert ZeroIdentifier();
+
+        Evidence storage e = evidences[r.evidenceId];
+        if (e.status == EvidenceStatus.NONE) revert EvidenceNotFound(r.evidenceId);
+        if (e.status != EvidenceStatus.MATCHED) {
+            revert EvidenceNotAuditable(r.evidenceId, uint8(e.status));
+        }
+
+        EvidenceStatus verdict = EvidenceStatus(r.balanceStatus);
+        if (verdict != EvidenceStatus.VERIFIED && verdict != EvidenceStatus.DIVERGENT) {
+            revert InvalidEvidenceAuditStatus(r.balanceStatus);
+        }
+
+        uint64 timestamp = uint64(block.timestamp);
+        e.status = verdict;
+        e.auditedAt = timestamp;
+
+        emit EvidenceAudited(r.evidenceId, e.actorId, verdict, workflowId, timestamp);
     }
 
     /// @dev One partner result per call, with no evidence list.
@@ -453,8 +534,9 @@ contract ExploreChemRegistry is IReceiver {
     ///      eligibility and mass accounting before submitting the report.
     ///      All calldata/storage, actor IDs and block times remain public.
     function _applyBalance(CREReport memory r) internal {
-        if (r.evidenceId != bytes32(0)) revert UnexpectedReportFields();
-        if (r.actorId == bytes32(0) || r.resultId == bytes32(0)) revert ZeroIdentifier();
+        if (r.evidenceId == bytes32(0) || r.actorId == bytes32(0) || r.resultId == bytes32(0)) {
+            revert ZeroIdentifier();
+        }
         if (r.resultHash == bytes32(0) || r.aggregateInputHash == bytes32(0)) {
             revert InvalidHash();
         }
@@ -462,6 +544,18 @@ contract ExploreChemRegistry is IReceiver {
             r.balanceStatus < uint8(BalanceStatus.CONFORME) ||
             r.balanceStatus > uint8(BalanceStatus.NAO_ATESTADO)
         ) revert InvalidBalanceStatus(r.balanceStatus);
+
+        Evidence storage evidence = evidences[r.evidenceId];
+        if (evidence.status == EvidenceStatus.NONE) revert EvidenceNotFound(r.evidenceId);
+        if (
+            evidence.status != EvidenceStatus.MATCHED &&
+            evidence.status != EvidenceStatus.VERIFIED
+        ) {
+            revert EvidenceNotEligibleForBalance(r.evidenceId, uint8(evidence.status));
+        }
+        if (evidence.actorId != r.actorId) {
+            revert EvidenceActorMismatch(r.evidenceId, evidence.actorId, r.actorId);
+        }
 
         _requireActor(r.actorId);
         if (results[r.resultId].resultId != bytes32(0)) {
@@ -483,6 +577,9 @@ contract ExploreChemRegistry is IReceiver {
             if (prev.actorId != r.actorId) {
                 revert PreviousResultActorMismatch(r.previousResultId, r.actorId);
             }
+            if (prev.evidenceId != r.evidenceId) {
+                revert PreviousResultEvidenceMismatch(r.previousResultId, r.evidenceId);
+            }
             if (nextResultId[r.previousResultId] != bytes32(0)) {
                 revert PreviousResultAlreadySuperseded(r.previousResultId);
             }
@@ -496,6 +593,7 @@ contract ExploreChemRegistry is IReceiver {
         BalanceStatus status = BalanceStatus(r.balanceStatus);
         results[r.resultId] = BalanceResult({
             resultId: r.resultId,
+            evidenceId: r.evidenceId,
             actorId: r.actorId,
             resultHash: r.resultHash,
             previousResultId: r.previousResultId,
@@ -504,9 +602,10 @@ contract ExploreChemRegistry is IReceiver {
             calculationVersion: r.calculationVersion,
             createdAt: timestamp
         });
+        latestResultIdByEvidence[r.evidenceId] = r.resultId;
 
         emit BalanceResultAnchored(
-            r.resultId, r.actorId, r.previousResultId,
+            r.resultId, r.evidenceId, r.actorId, r.previousResultId,
             r.resultHash, status, r.calculationVersion, timestamp
         );
     }
@@ -523,6 +622,26 @@ contract ExploreChemRegistry is IReceiver {
         Evidence storage e = evidences[evidenceId];
         if (e.status == EvidenceStatus.NONE) revert EvidenceNotFound(evidenceId);
         return e;
+    }
+
+    /// @notice Retorna uma evidencia atualmente PENDING, ou zero se nao houver.
+    function getNextPending() external view returns (bytes32) {
+        return _getNextByStatus(EvidenceStatus.PENDING);
+    }
+
+    /// @notice Retorna uma evidencia atualmente MATCHED, ou zero se nao houver.
+    function getNextMatched() external view returns (bytes32) {
+        return _getNextByStatus(EvidenceStatus.MATCHED);
+    }
+
+    /// @notice Retorna uma evidencia atualmente VERIFIED, ou zero se nao houver.
+    function getNextVerified() external view returns (bytes32) {
+        return _getNextByStatus(EvidenceStatus.VERIFIED);
+    }
+
+    /// @notice Retorna uma evidencia atualmente DIVERGENT, ou zero se nao houver.
+    function getNextDivergent() external view returns (bytes32) {
+        return _getNextByStatus(EvidenceStatus.DIVERGENT);
     }
 
     function getResult(bytes32 resultId) external view returns (BalanceResult memory) {
@@ -581,6 +700,17 @@ contract ExploreChemRegistry is IReceiver {
     // Internos
     // ---------------------------------------------------------------
 
+    function _getNextByStatus(EvidenceStatus wanted) internal view returns (bytes32) {
+        uint256 length = evidenceIds.length;
+        for (uint256 i = 0; i < length; ++i) {
+            bytes32 evidenceId = evidenceIds[i];
+            if (evidences[evidenceId].status == wanted) {
+                return evidenceId;
+            }
+        }
+        return bytes32(0);
+    }
+
     function _requireActor(bytes32 actorId) internal view returns (ActorIdentity storage actor) {
         actor = actors[actorId];
         if (actor.controller == address(0)) revert ActorNotFound(actorId);
@@ -604,4 +734,5 @@ contract ExploreChemRegistry is IReceiver {
             interfaceId == type(IERC165).interfaceId;
     }
 }
+
 
