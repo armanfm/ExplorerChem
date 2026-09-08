@@ -1,42 +1,47 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.26;
 
-/// @notice ERC-165 minimo usado pelo forwarder do Chainlink CRE.
+/// @title Minimal ERC-165 interface
+/// @notice Exposes ERC-165 interface detection used by the Chainlink CRE forwarder.
 interface IERC165 {
+    /// @notice Reports whether an interface is supported.
+    /// @param interfaceId ERC-165 interface identifier.
+    /// @return `true` if the interface is supported.
     function supportsInterface(bytes4 interfaceId) external view returns (bool);
 }
 
-/// @notice Interface padrao chamada pelo KeystoneForwarder.
+/// @title Chainlink CRE receiver interface
+/// @notice Defines the callback invoked by the KeystoneForwarder.
+/// @dev Implementations are expected to validate both the caller and report metadata.
 interface IReceiver is IERC165 {
+    /// @notice Receives an authenticated report from the Chainlink forwarder.
+    /// @param metadata Forwarder metadata containing the workflow identifier.
+    /// @param report ABI-encoded report payload.
     function onReport(bytes calldata metadata, bytes calldata report) external;
 }
 
 /// @title ExploreChemRegistry
-/// @notice Registro minimo de identidade, evidencias e resultados do ExploreChem.
+/// @notice Stores minimal on-chain identities, evidence commitments, audit verdicts,
+///         and mass-balance result commitments for ExploreChem.
+/// @dev The contract intentionally does not model the commercial relationship between
+///      participants. It stores only the submitting identity, exact document hash,
+///      evidence state, and minimal mass-balance commitments.
 ///
-/// @dev O contrato nao conhece a relacao comercial. Ele guarda:
-///      - quem submeteu cada evidencia e a qual identidade ela pertence;
-///      - o hash do documento no momento da submissao;
-///      - o estado da evidencia: PENDING, MATCHED, VERIFIED ou DIVERGENT;
-///      - o resultado minimo do balanco de massa vinculado a uma evidencia.
+///      Sensitive or correlatable business data such as lot identifiers, origin,
+///      destination, company identifiers, actor types, document references, masses,
+///      concentrations, files, salts, manifests, and correlation fields remain off-chain.
 ///
-///      Nao vao para a cadeia: lotId, origem, destino, CNPJ, actorType,
-///      documentRef, massas, teores, arquivos nem qualquer campo de
-///      correlacao. Nao existe metadataHash: os campos usados na
-///      correlacao sao extraidos do proprio documento ja comprometido
-///      pelo evidenceHash, e um compromisso separado sobre um conjunto
-///      pequeno e previsivel de campos seria enumeravel.
-///
-///      A correlacao acontece no CRE/TEE, sobre dados privados. O
-///      contrato so recebe o veredito, entregue pelo forwarder.
+///      Correlation, private-data validation, and mass-balance computation are performed
+///      by authenticated Chainlink CRE/TEE workflows. This contract only validates the
+///      authenticated delivery context and persists the resulting commitments or verdicts.
 contract ExploreChemRegistry is IReceiver {
     // ---------------------------------------------------------------
-    // Tipos
+    // Types
     // ---------------------------------------------------------------
 
-    /// @dev NONE e apenas o zero-value do storage. Mappings em Solidity
-    ///      retornam o zero-value para chave inexistente, entao sem NONE
-    ///      o contrato nao distingue "nao existe" de "pendente".
+    /// @title Evidence lifecycle status
+    /// @notice Represents the current on-chain state of an evidence record.
+    /// @dev `NONE` is the storage zero value and distinguishes a missing record from `PENDING`.
     enum EvidenceStatus {
         NONE,
         PENDING,
@@ -45,6 +50,8 @@ contract ExploreChemRegistry is IReceiver {
         DIVERGENT
     }
 
+    /// @title Mass-balance attestation status
+    /// @notice Represents the outcome committed for a mass-balance calculation.
     enum BalanceStatus {
         NONE,
         CONFORME,
@@ -52,12 +59,27 @@ contract ExploreChemRegistry is IReceiver {
         NAO_ATESTADO
     }
 
+    /// @title Actor identity
+    /// @notice Minimal on-chain identity record for an ExploreChem participant.
+    /// @param actorId Opaque actor identifier.
+    /// @param controller Address with administrative control over the actor.
+    /// @param createdAt Timestamp at which the identity was registered.
     struct ActorIdentity {
         bytes32 actorId;
         address controller;
         uint64 createdAt;
     }
 
+    /// @title Evidence record
+    /// @notice Stores the immutable document commitment and mutable verification state.
+    /// @param evidenceId Opaque evidence identifier.
+    /// @param actorId Actor identity that owns the evidence.
+    /// @param submittedBy Wallet that submitted the evidence.
+    /// @param evidenceHash Hash of the exact committed document bytes.
+    /// @param status Current evidence lifecycle status.
+    /// @param createdAt Submission timestamp.
+    /// @param matchedAt Timestamp of the most recent successful CRE match.
+    /// @param auditedAt Timestamp of the most recent auditor verdict.
     struct Evidence {
         bytes32 evidenceId;
         bytes32 actorId;
@@ -69,6 +91,17 @@ contract ExploreChemRegistry is IReceiver {
         uint64 auditedAt;
     }
 
+    /// @title Mass-balance result commitment
+    /// @notice Stores one immutable mass-balance result revision for an evidence.
+    /// @param resultId Unique result identifier.
+    /// @param evidenceId Evidence to which the result belongs.
+    /// @param actorId Actor identity to which the result belongs.
+    /// @param resultHash Commitment to the private result.
+    /// @param previousResultId Previous result revision, or zero for a root revision.
+    /// @param aggregateInputHash Commitment to the private canonical input manifest.
+    /// @param status Mass-balance attestation status.
+    /// @param calculationVersion Sequential revision number for this result chain.
+    /// @param createdAt Timestamp at which the result was anchored.
     /// @dev One immutable result per partner and revision.
     ///      CRE/TEE computes resultHash and aggregateInputHash OFF-CHAIN,
     ///      with fresh cryptographically random private salts per partner
@@ -79,17 +112,28 @@ contract ExploreChemRegistry is IReceiver {
     ///      those are responsibilities of the authenticated CRE/TEE workflow.
     struct BalanceResult {
         bytes32 resultId;
-        bytes32 evidenceId;       // evidencia dona deste resultado
+        bytes32 evidenceId;       // Evidence to which this result belongs
         bytes32 actorId;
         bytes32 resultHash;
-        bytes32 previousResultId; // encadeia versoes da mesma evidencia
+        bytes32 previousResultId; // Previous revision for the same evidence
         bytes32 aggregateInputHash;
         BalanceStatus status;
         uint32 calculationVersion;
         uint64 createdAt;
     }
 
-    /// @dev abi.encode(CREReport), a STATIC tuple of nine words.
+    /// @title CRE report payload
+    /// @notice Static report structure delivered by the authenticated CRE forwarder.
+    /// @param reportType Report discriminator: correlation, balance, or audit.
+    /// @param evidenceId Evidence targeted by the report.
+    /// @param resultId Result identifier for balance reports.
+    /// @param actorId Actor identifier for balance reports.
+    /// @param resultHash Private result commitment for balance reports.
+    /// @param previousResultId Previous revision for balance reports.
+    /// @param aggregateInputHash Commitment to the private canonical input manifest.
+    /// @param balanceStatus Balance status, or evidence audit verdict for audit reports.
+    /// @param calculationVersion Sequential balance-result revision.
+    /// @dev `abi.encode(CREReport)` is a static tuple of nine ABI words.
     ///      Type 1 (correlation): reportType + evidenceId.
     ///      Type 2 (mass result): evidenceId + result/actor/hash/version fields.
     ///      Type 3 (audit): reportType + evidenceId + balanceStatus, where
@@ -113,19 +157,20 @@ contract ExploreChemRegistry is IReceiver {
 
     uint256 public constant REPORT_LENGTH = 9 * 32;
 
-    /// @notice Prazo de validade de uma evidencia PENDING.
-    /// @dev Publico e constante para que qualquer um confira a regra. A
-    ///      expiracao e derivada de createdAt: nao existe estado gravado
-    ///      nem transacao para expirar. Contrato nao executa sozinho, e
-    ///      validade e propriedade do tempo, nao um evento.
+    /// @notice Maximum lifetime of a `PENDING` evidence before it can no longer be matched.
+    /// @dev Expiration is derived from `createdAt`; no transaction mutates an evidence merely
+    ///      because time has passed.
     uint64 public constant EVIDENCE_TTL = 365 days;
 
     // ---------------------------------------------------------------
-    // Estado
+    // State
     // ---------------------------------------------------------------
 
+    /// @notice Address with administrative authority over the registry.
     address public owner;
+    /// @notice Authorized Chainlink KeystoneForwarder address.
     address public forwarder;
+    /// @notice Primary CRE workflow identifier accepted by the registry.
     bytes32 public expectedWorkflowId;
     /// @dev Zero means use expectedWorkflowId for balance reports too.
     bytes32 public expectedBalanceWorkflowId;
@@ -136,7 +181,7 @@ contract ExploreChemRegistry is IReceiver {
     mapping(bytes32 => mapping(address => bool)) public authorizedWallets;
 
     mapping(bytes32 => Evidence) private evidences;
-    // Indice minimo para permitir consultas por estado sem varrer logs/eventos.
+    // Minimal index used for status queries without scanning event logs.
     bytes32[] private evidenceIds;
     mapping(bytes32 => BalanceResult) private results;
     /// @notice Successor of a result, zero while it is the latest revision.
@@ -145,12 +190,16 @@ contract ExploreChemRegistry is IReceiver {
     mapping(bytes32 => bytes32) public latestResultIdByEvidence;
 
     // ---------------------------------------------------------------
-    // Erros
+    // Errors
     // ---------------------------------------------------------------
 
+    /// @notice Reverts when a caller other than the owner invokes an owner-only function.
     error OnlyOwner();
+    /// @notice Reverts when a required address is the zero address.
     error ZeroAddress();
+    /// @notice Reverts when a required bytes32 identifier is zero.
     error ZeroIdentifier();
+    /// @notice Reverts when a required commitment hash is zero or otherwise invalid.
     error InvalidHash();
     error ActorAlreadyExists(bytes32 actorId);
     error ActorNotFound(bytes32 actorId);
@@ -180,10 +229,16 @@ contract ExploreChemRegistry is IReceiver {
     error InvalidEvidenceAuditStatus(uint8 status);
 
     // ---------------------------------------------------------------
-    // Eventos
+    // Events
     // ---------------------------------------------------------------
 
+    /// @notice Emitted when registry ownership changes.
+    /// @param previous Previous owner address.
+    /// @param current New owner address.
     event OwnershipTransferred(address indexed previous, address indexed current);
+    /// @notice Emitted when the authorized forwarder changes.
+    /// @param previous Previous forwarder address.
+    /// @param current New forwarder address.
     event ForwarderUpdated(address indexed previous, address indexed current);
     event ExpectedWorkflowIdUpdated(bytes32 indexed previous, bytes32 indexed current);
     event ExpectedBalanceWorkflowIdUpdated(bytes32 indexed previous, bytes32 indexed current);
@@ -207,9 +262,9 @@ contract ExploreChemRegistry is IReceiver {
         bool authorized
     );
 
-    /// @notice Gatilho do workflow de correlacao. Mappings em Solidity nao
-    ///         sao iteraveis, entao o CRE nao consegue varrer pendencias:
-    ///         ele reage a este evento ou consome um indexador que o segue.
+    /// @notice Emitted when a new evidence commitment is submitted.
+    /// @dev This event is intended to trigger, or be indexed by, the CRE correlation workflow
+    ///      because Solidity mappings are not iterable.
     event EvidenceSubmitted(
         bytes32 indexed evidenceId,
         bytes32 indexed actorId,
@@ -245,7 +300,7 @@ contract ExploreChemRegistry is IReceiver {
     );
 
     // ---------------------------------------------------------------
-    // Modificadores
+    // Modifiers
     // ---------------------------------------------------------------
 
     modifier onlyOwner() {
@@ -253,6 +308,8 @@ contract ExploreChemRegistry is IReceiver {
         _;
     }
 
+    /// @notice Deploys the registry and configures the initial CRE forwarder.
+    /// @param initialForwarder Address of the authorized KeystoneForwarder.
     constructor(address initialForwarder) {
         if (initialForwarder == address(0)) revert ZeroAddress();
 
@@ -264,9 +321,11 @@ contract ExploreChemRegistry is IReceiver {
     }
 
     // ---------------------------------------------------------------
-    // Administracao
+    // Administration
     // ---------------------------------------------------------------
 
+    /// @notice Transfers registry ownership to a new address.
+    /// @param newOwner Address that will become the registry owner.
     function transferOwnership(address newOwner) external onlyOwner {
         if (newOwner == address(0)) revert ZeroAddress();
         address previous = owner;
@@ -274,6 +333,8 @@ contract ExploreChemRegistry is IReceiver {
         emit OwnershipTransferred(previous, newOwner);
     }
 
+    /// @notice Updates the authorized Chainlink forwarder.
+    /// @param newForwarder New KeystoneForwarder address.
     function setForwarder(address newForwarder) external onlyOwner {
         if (newForwarder == address(0)) revert ZeroAddress();
         address previous = forwarder;
@@ -281,9 +342,9 @@ contract ExploreChemRegistry is IReceiver {
         emit ForwarderUpdated(previous, newForwarder);
     }
 
-    /// @notice Configure the real workflow ID before accepting any reports.
-    /// @dev Fail-closed: zero never disables identity checks.
-    ///      Local tests use a mock forwarder with explicit test metadata.
+    /// @notice Configures the primary CRE workflow identifier accepted by the registry.
+    /// @dev Fail-closed: a zero identifier is rejected and never disables workflow checks.
+    /// @param newWorkflowId Workflow identifier expected in forwarder metadata.
     function setExpectedWorkflowId(bytes32 newWorkflowId) external onlyOwner {
         if (newWorkflowId == bytes32(0)) revert ZeroIdentifier();
         bytes32 previous = expectedWorkflowId;
@@ -291,15 +352,18 @@ contract ExploreChemRegistry is IReceiver {
         emit ExpectedWorkflowIdUpdated(previous, newWorkflowId);
     }
 
-    /// @notice Optional distinct balance workflow; zero restores primary ID.
-    /// @dev Both workflow types use the configured KeystoneForwarder.
+    /// @notice Configures an optional dedicated workflow identifier for balance reports.
+    /// @dev A zero value makes balance reports fall back to `expectedWorkflowId`.
+    /// @param newWorkflowId Dedicated balance workflow identifier, or zero to use the primary workflow.
     function setExpectedBalanceWorkflowId(bytes32 newWorkflowId) external onlyOwner {
         bytes32 previous = expectedBalanceWorkflowId;
         expectedBalanceWorkflowId = newWorkflowId;
         emit ExpectedBalanceWorkflowIdUpdated(previous, newWorkflowId);
     }
 
-    /// @notice Optional distinct auditor workflow; zero restores primary ID.
+    /// @notice Configures an optional dedicated workflow identifier for audit reports.
+    /// @dev A zero value makes audit reports fall back to `expectedWorkflowId`.
+    /// @param newWorkflowId Dedicated audit workflow identifier, or zero to use the primary workflow.
     function setExpectedAuditWorkflowId(bytes32 newWorkflowId) external onlyOwner {
         bytes32 previous = expectedAuditWorkflowId;
         expectedAuditWorkflowId = newWorkflowId;
@@ -307,13 +371,14 @@ contract ExploreChemRegistry is IReceiver {
     }
 
     // ---------------------------------------------------------------
-    // Identidade do ator
+    // Actor identity
     // ---------------------------------------------------------------
 
-    /// @notice Registra a identidade logica de um participante.
-    /// @dev O cadastro nao tem estados de aprovacao. Nome, CNPJ, actorType
-    ///      e unidades ficam off-chain. A cadeia guarda apenas o actorId
-    ///      opaco e a carteira que o controla.
+    /// @notice Registers a logical participant identity.
+    /// @dev Business metadata remains off-chain. The chain stores only an opaque `actorId`,
+    ///      its controller, and the creation timestamp.
+    /// @param actorId Opaque identifier of the participant.
+    /// @param controller Address that initially controls the participant identity.
     function registerActor(bytes32 actorId, address controller) external onlyOwner {
         if (actorId == bytes32(0)) revert ZeroIdentifier();
         if (controller == address(0)) revert ZeroAddress();
@@ -333,10 +398,11 @@ contract ExploreChemRegistry is IReceiver {
         emit WalletAuthorizationUpdated(actorId, controller, true);
     }
 
-    /// @notice Troca a carteira administrativa sem alterar o actorId.
-    /// @dev A autorizacao da carteira anterior nao e removida automaticamente:
-    ///      revogue explicitamente quando for o caso, para nao invalidar por
-    ///      engano uma chave ainda em uso operacional.
+    /// @notice Changes the administrative controller of an actor without changing its `actorId`.
+    /// @dev The previous controller is not automatically revoked from `authorizedWallets`.
+    ///      Revoke it explicitly when operational access should end.
+    /// @param actorId Identifier of the actor whose controller is being changed.
+    /// @param newController Address of the new controller.
     function setActorController(bytes32 actorId, address newController) external {
         ActorIdentity storage actor = _requireActor(actorId);
         if (msg.sender != actor.controller && msg.sender != owner) {
@@ -352,9 +418,11 @@ contract ExploreChemRegistry is IReceiver {
         emit WalletAuthorizationUpdated(actorId, newController, true);
     }
 
-    /// @notice Autoriza ou revoga uma carteira do ator.
-    /// @dev Varias carteiras por actorId: a empresa troca chave sem perder
-    ///      a identidade nem o historico ja ancorado.
+    /// @notice Grants or revokes wallet authorization for an actor.
+    /// @dev Multiple wallets may be authorized for the same `actorId`.
+    /// @param actorId Identifier of the actor whose wallet authorization is being updated.
+    /// @param wallet Wallet address to update.
+    /// @param authorized `true` to authorize the wallet, `false` to revoke it.
     function setWalletAuthorization(
         bytes32 actorId,
         address wallet,
@@ -371,18 +439,15 @@ contract ExploreChemRegistry is IReceiver {
     }
 
     // ---------------------------------------------------------------
-    // Evidencias
+    // Evidence
     // ---------------------------------------------------------------
 
-    /// @notice Ancora o hash de um documento e abre a evidencia como PENDING.
-    /// @param evidenceId identificador opaco, sem CNPJ, lote ou data embutidos
-    /// @param actorId identidade a que a evidencia pertence
-    /// @param evidenceHash hash dos bytes exatos do documento
-    ///
-    /// @dev O documento, os metadados e o lote ficam off-chain. Os campos
-    ///      usados depois na correlacao precisam ser extraidos deste mesmo
-    ///      documento: valor digitado a mao ou vindo de outra API nao esta
-    ///      coberto por este hash.
+    /// @notice Anchors an exact document hash and opens the evidence in `PENDING` state.
+    /// @dev The document, business metadata, and lot information remain off-chain. Any field
+    ///      later used for correlation must be re-extracted from the exact committed document.
+    /// @param evidenceId Opaque evidence identifier with no business meaning embedded in it.
+    /// @param actorId Actor identity to which the evidence belongs.
+    /// @param evidenceHash Hash of the exact document bytes being committed.
     function submitEvidence(
         bytes32 evidenceId,
         bytes32 actorId,
@@ -413,8 +478,7 @@ contract ExploreChemRegistry is IReceiver {
             auditedAt: 0
         });
 
-        // Mantem apenas o indice dos IDs. O estado continua sendo a fonte da verdade
-        // dentro de evidences[evidenceId].
+        // Store only the identifier in the index; the mapping remains the source of truth.
         evidenceIds.push(evidenceId);
 
         emit EvidenceSubmitted(
@@ -427,13 +491,13 @@ contract ExploreChemRegistry is IReceiver {
     }
 
     // ---------------------------------------------------------------
-    // Recepcao dos relatorios do CRE
+    // CRE report reception
     // ---------------------------------------------------------------
 
     /// @inheritdoc IReceiver
-    /// @dev abi.encode(CREReport). Exactly one record, with no private fields.
-    ///      The forwarder authenticates delivery; the workflow authenticates
-    ///      documents, re-extracts fields, correlates and calculates off-chain.
+    /// @dev Accepts exactly one ABI-encoded `CREReport`. The configured forwarder authenticates
+    ///      report delivery; the selected CRE workflow authenticates documents, re-extracts fields,
+    ///      performs private correlation, and computes private mass-balance results off-chain.
     function onReport(bytes calldata metadata, bytes calldata report) external override {
         if (msg.sender != forwarder) {
             revert InvalidForwarder(msg.sender, forwarder);
@@ -611,47 +675,61 @@ contract ExploreChemRegistry is IReceiver {
     }
 
     // ---------------------------------------------------------------
-    // Leitura
+    // Read functions
     // ---------------------------------------------------------------
 
+    /// @notice Returns the registered identity for an actor.
+    /// @param actorId Actor identifier to query.
+    /// @return The actor identity record.
     function getActor(bytes32 actorId) external view returns (ActorIdentity memory) {
         return _requireActor(actorId);
     }
 
+    /// @notice Returns a stored evidence record.
+    /// @param evidenceId Evidence identifier to query.
+    /// @return The evidence record.
     function getEvidence(bytes32 evidenceId) external view returns (Evidence memory) {
         Evidence storage e = evidences[evidenceId];
         if (e.status == EvidenceStatus.NONE) revert EvidenceNotFound(evidenceId);
         return e;
     }
 
-    /// @notice Retorna uma evidencia atualmente PENDING, ou zero se nao houver.
+    /// @notice Returns the first evidence currently in `PENDING` state, or zero if none exists.
+    /// @return The first matching evidence identifier, or `bytes32(0)` if none exists.
     function getNextPending() external view returns (bytes32) {
         return _getNextByStatus(EvidenceStatus.PENDING);
     }
 
-    /// @notice Retorna uma evidencia atualmente MATCHED, ou zero se nao houver.
+    /// @notice Returns the first evidence currently in `MATCHED` state, or zero if none exists.
+    /// @return The first matching evidence identifier, or `bytes32(0)` if none exists.
     function getNextMatched() external view returns (bytes32) {
         return _getNextByStatus(EvidenceStatus.MATCHED);
     }
 
-    /// @notice Retorna uma evidencia atualmente VERIFIED, ou zero se nao houver.
+    /// @notice Returns the first evidence currently in `VERIFIED` state, or zero if none exists.
+    /// @return The first matching evidence identifier, or `bytes32(0)` if none exists.
     function getNextVerified() external view returns (bytes32) {
         return _getNextByStatus(EvidenceStatus.VERIFIED);
     }
 
-    /// @notice Retorna uma evidencia atualmente DIVERGENT, ou zero se nao houver.
+    /// @notice Returns the first evidence currently in `DIVERGENT` state, or zero if none exists.
+    /// @return The first matching evidence identifier, or `bytes32(0)` if none exists.
     function getNextDivergent() external view returns (bytes32) {
         return _getNextByStatus(EvidenceStatus.DIVERGENT);
     }
 
+    /// @notice Returns a mass-balance result by identifier.
+    /// @param resultId Result identifier to query.
+    /// @return The stored result record. An unknown identifier returns the zero-value struct.
     function getResult(bytes32 resultId) external view returns (BalanceResult memory) {
         return results[resultId];
     }
 
-    /// @notice Confere um documento contra o hash ancorado.
-    /// @dev Quem tem o arquivo recalcula o hash e chama esta funcao. Se
-    ///      retornar false, o documento apresentado nao e o que foi
-    ///      registrado.
+    /// @notice Compares a candidate document hash with the hash committed for an evidence.
+    /// @dev The caller recomputes the document hash off-chain and submits only the candidate hash.
+    /// @param evidenceId Identifier of the evidence to verify.
+    /// @param candidateHash Locally recomputed hash of the presented document.
+    /// @return `true` if the candidate hash equals the committed evidence hash.
     function verifyEvidenceHash(
         bytes32 evidenceId,
         bytes32 candidateHash
@@ -661,9 +739,11 @@ contract ExploreChemRegistry is IReceiver {
         return e.evidenceHash == candidateHash;
     }
 
-    /// @notice Uma evidencia PENDING que passou do prazo.
-    /// @dev Derivado de createdAt, sem custo de transacao. MATCHED nunca
-    ///      expira: a correlacao ja aconteceu dentro da validade.
+    /// @notice Returns whether a `PENDING` evidence is past its matching deadline.
+    /// @dev The value is derived from `createdAt`. Evidence that is no longer `PENDING` is not
+    ///      considered expired by this function.
+    /// @param evidenceId Identifier of the evidence to inspect.
+    /// @return `true` if the evidence is still `PENDING` and its deadline has passed.
     function isExpired(bytes32 evidenceId) external view returns (bool) {
         Evidence storage e = evidences[evidenceId];
         if (e.status == EvidenceStatus.NONE) revert EvidenceNotFound(evidenceId);
@@ -671,15 +751,21 @@ contract ExploreChemRegistry is IReceiver {
         return block.timestamp > e.createdAt + EVIDENCE_TTL;
     }
 
+    /// @notice Returns the matching deadline for an evidence.
+    /// @param evidenceId Evidence identifier to query.
+    /// @return Unix timestamp at which the evidence reaches its matching deadline.
     function expiresAt(bytes32 evidenceId) external view returns (uint64) {
         Evidence storage e = evidences[evidenceId];
         if (e.status == EvidenceStatus.NONE) revert EvidenceNotFound(evidenceId);
         return e.createdAt + EVIDENCE_TTL;
     }
 
-    /// @notice Compare an anchored result with a locally recomputed hash.
-    /// @dev The authorized recipient recomputes from the private canonical
-    ///      manifest AND private salt. Only candidateHash is sent on-chain.
+    /// @notice Compares an anchored result commitment with a locally recomputed hash.
+    /// @dev The authorized recipient recomputes the hash from the private canonical manifest and
+    ///      private salt. Only the candidate hash is submitted on-chain.
+    /// @param resultId Result identifier to verify.
+    /// @param candidateHash Locally recomputed result commitment.
+    /// @return `true` if the candidate hash equals the anchored `resultHash`.
     function verifyResultHash(
         bytes32 resultId,
         bytes32 candidateHash
@@ -689,6 +775,10 @@ contract ExploreChemRegistry is IReceiver {
         return r.resultHash == candidateHash;
     }
 
+    /// @notice Returns whether a wallet is authorized for an actor.
+    /// @param actorId Actor identifier to query.
+    /// @param wallet Wallet address to query.
+    /// @return `true` if the wallet is currently authorized for the actor.
     function isWalletAuthorized(
         bytes32 actorId,
         address wallet
@@ -697,9 +787,11 @@ contract ExploreChemRegistry is IReceiver {
     }
 
     // ---------------------------------------------------------------
-    // Internos
+    // Internal functions
     // ---------------------------------------------------------------
 
+    /// @dev Performs a linear scan over the evidence identifier index and returns the first
+    ///      record whose current status equals `wanted`.
     function _getNextByStatus(EvidenceStatus wanted) internal view returns (bytes32) {
         uint256 length = evidenceIds.length;
         for (uint256 i = 0; i < length; ++i) {
@@ -711,16 +803,19 @@ contract ExploreChemRegistry is IReceiver {
         return bytes32(0);
     }
 
+    /// @dev Loads an actor from storage and reverts if the actor is not registered.
     function _requireActor(bytes32 actorId) internal view returns (ActorIdentity storage actor) {
         actor = actors[actorId];
         if (actor.controller == address(0)) revert ActorNotFound(actorId);
     }
 
+    /// @dev Reads the first 32 bytes of forwarder metadata as the workflow identifier.
+    ///      Longer metadata is accepted; metadata shorter than one ABI word is rejected.
     function _readWorkflowId(
         bytes calldata metadata
     ) internal pure returns (bytes32 workflowId) {
-        // Accept the real forwarder's longer metadata (currently 64 bytes).
-        // Only its first 32-byte workflow ID is needed for this allowlist.
+        // Accept the forwarder's longer metadata; only the first ABI word is required.
+        // The allowlist comparison uses only the first 32-byte workflow identifier.
         if (metadata.length < 32) revert InvalidMetadataLength(metadata.length);
         assembly {
             workflowId := calldataload(metadata.offset)
@@ -734,6 +829,4 @@ contract ExploreChemRegistry is IReceiver {
             interfaceId == type(IERC165).interfaceId;
     }
 }
-
-
 
