@@ -22,6 +22,7 @@ import {
   encodeFunctionData,
   keccak256,
   parseAbiParameters,
+  sha256,
   toHex,
   zeroAddress,
   zeroHash,
@@ -32,14 +33,21 @@ import {
 import { z } from "zod";
 
 /**
- * ExploreChem — Auditor independente do resultado bilateral de massa.
+ * ExploreChem — Auditor independente.
  *
  * Este workflow NAO procura PENDING, NAO correlaciona documentos e NAO cria
- * resultado de massa. Ele consome somente uma evidencia MATCHED que ja possui
- * BalanceResult ancorado pelo workflow primario.
+ * o resultado bilateral original. Ele consome uma evidencia MATCHED que ja
+ * possui BalanceResult ancorado pelo workflow primario.
+ *
+ * Quando o documento comprometido possui elementalBalance, o Auditor tambem:
+ *   - normaliza cada corrente para a base correta;
+ *   - converte oxido em Nd, Pr, Dy ou Tb elementar;
+ *   - recalcula massaElementarMg por corrente;
+ *   - agrega entradas, saidas e inventarios;
+ *   - recalcula o MUF por elemento e a recuperacao privada de produto.
  *
  * Fluxo:
- *   MATCHED + resultado CONFORME e integro   -> VERIFIED
+ *   MATCHED + pairwise/elementar conformes   -> VERIFIED
  *   MATCHED + resultado DIVERGENTE           -> DIVERGENT
  *   MATCHED + falha de integridade/calculo   -> DIVERGENT
  *   MATCHED + resultado NAO_ATESTADO         -> DIVERGENT
@@ -70,6 +78,7 @@ const configSchema = z.object({
   contractAddress: z.string().regex(/^0x[0-9a-fA-F]{40}$/),
   gasLimit: z.string().regex(/^\d+$/),
   auditSchedule: z.string().min(1).optional(),
+  requireElementalBalance: z.boolean().optional(),
 });
 
 type Config = z.infer<typeof configSchema>;
@@ -77,7 +86,15 @@ type Config = z.infer<typeof configSchema>;
 const evidenceRowSchema = z.object({
   evidence_id: bytes32Schema,
   state: z.string().min(1),
+  evidence_hash: bytes32Schema,
+  hash_algorithm: z.enum([
+    "KECCAK256",
+    "KECCAK-256",
+    "SHA-256",
+    "SHA256",
+  ]),
   storage_bucket: z.string().min(1),
+  storage_path: z.string().min(1),
 });
 
 type EvidenceRow = z.infer<typeof evidenceRowSchema>;
@@ -101,11 +118,11 @@ const pairMassResultSchema = z.object({
   rightMassMg: z.string().regex(/^\d+$/).nullable(),
   leftMassField: z.string(),
   rightMassField: z.string(),
-  deltaMg: z.string().regex(/^\d+$/).nullable(),
+  deltaMg: z.string().regex(/^-?\d+$/).nullable(),
   status: massStatusSchema,
 });
 
-const privatePairwiseResultSchema = z.object({
+const currentPrivatePairwiseResultSchema = z.object({
   schema: z.literal("ExploreChem/PrivatePairwiseMass/v1"),
   sourceEvidenceId: bytes32Schema,
   sourceActorId: bytes32Schema,
@@ -124,7 +141,161 @@ const privatePairwiseResultSchema = z.object({
   onchain: z.unknown().optional(),
 });
 
+const legacyPrivatePairwiseResultSchema = z.object({
+  schema: z.literal("ExploreChem/PrivateLotCorrelatedPairwiseMass/v4"),
+  sourceEvidenceId: bytes32Schema,
+  sourceActorId: bytes32Schema,
+  sourceEvidenceHash: bytes32Schema,
+  lotReference: z.string().min(1),
+  evidenceIds: z.array(bytes32Schema).min(1),
+  correlationEdges: z.array(correlationEdgeSchema),
+  massPairs: z.array(pairMassResultSchema),
+  relationFingerprint: bytes32Schema,
+  resultPlainHash: bytes32Schema,
+  salt: bytes32Schema,
+  aggregateInputHash: bytes32Schema,
+  resultHash: bytes32Schema,
+  resultId: bytes32Schema,
+  status: massStatusSchema,
+  onchain: z.unknown().optional(),
+});
+
+const privatePairwiseResultSchema = z.discriminatedUnion("schema", [
+  currentPrivatePairwiseResultSchema,
+  legacyPrivatePairwiseResultSchema,
+]);
+
+type CurrentPrivatePairwiseResult = z.infer<
+  typeof currentPrivatePairwiseResultSchema
+>;
+
+type LegacyPrivatePairwiseResult = z.infer<
+  typeof legacyPrivatePairwiseResultSchema
+>;
+
 type PrivatePairwiseResult = z.infer<typeof privatePairwiseResultSchema>;
+
+const decimalSchema = z
+  .union([z.string(), z.number()])
+  .transform((value) => String(value))
+  .refine(
+    (value) => /^(?:0|[1-9]\d*)(?:\.\d+)?$/.test(value),
+    "decimal nao negativo invalido",
+  );
+
+const signedIntegerSchema = z.string().regex(/^-?\d+$/);
+const unsignedIntegerSchema = z.string().regex(/^\d+$/);
+
+const elementSchema = z.enum(["ND", "PR", "DY", "TB"]);
+type ElementSymbol = z.infer<typeof elementSchema>;
+
+const streamTypeSchema = z.enum([
+  "INPUT",
+  "PRODUCT",
+  "WASTE",
+  "PURGE",
+  "EFFLUENT",
+  "OPENING_INVENTORY",
+  "CLOSING_INVENTORY",
+]);
+
+const declaredBasisSchema = z.enum([
+  "AS_RECEIVED",
+  "DRY_105C",
+  "CALCINED",
+  "LIQUID_TOTAL",
+]);
+
+const reportedFormSchema = z.enum([
+  "ND2O3",
+  "PR6O11",
+  "PR2O3",
+  "DY2O3",
+  "TB4O7",
+  "TB2O3",
+  "DIRECT_ELEMENTAL",
+]);
+
+const elementalAnalysisSchema = z.object({
+  element: elementSchema,
+  reportedForm: reportedFormSchema,
+  reportedContent: decimalSchema,
+  reportedContentUnit: z.enum(["PERCENT", "MG_PER_KG"]),
+  contentBasis: declaredBasisSchema,
+  declaredElementalMassMg: unsignedIntegerSchema,
+});
+
+const elementalStreamSchema = z.object({
+  streamId: z.string().min(1),
+  streamType: streamTypeSchema,
+  grossMassKg: decimalSchema,
+  declaredBasis: declaredBasisSchema,
+  measurementPoint: z.string().min(1),
+  weighingTimestamp: z.string().datetime({ offset: true }),
+  freeMoisturePct: decimalSchema.optional(),
+  moistureMethod: z.string().min(1).optional(),
+  dryingTemperatureC: decimalSchema.optional(),
+  moistureSamplingTimestamp: z.string().datetime({ offset: true }).optional(),
+  hoursBetweenDeterminations: decimalSchema.optional(),
+  lossOnIgnitionPct: decimalSchema.optional(),
+  ignitionTemperatureC: decimalSchema.optional(),
+  ignitionAtmosphere: z.string().min(1).optional(),
+  ignitionResidenceMinutes: decimalSchema.optional(),
+  elements: z.array(elementalAnalysisSchema).min(1),
+});
+
+const declaredMufSchema = z
+  .object({
+    ND: signedIntegerSchema.optional(),
+    PR: signedIntegerSchema.optional(),
+    DY: signedIntegerSchema.optional(),
+    TB: signedIntegerSchema.optional(),
+  })
+  .refine(
+    (value) => Object.values(value).some((item) => item !== undefined),
+    "ao menos um MUF elementar deve ser declarado",
+  );
+
+const elementalBalanceSchema = z.object({
+  schema: z.literal("ExploreChem/PeriodicElementalBalance/v1"),
+  actorId: bytes32Schema,
+  periodStart: z.string().datetime({ offset: true }),
+  periodEnd: z.string().datetime({ offset: true }),
+  factorTableVersion: z.literal("1.0.0"),
+  previousBalanceHash: bytes32Schema.optional(),
+  streams: z.array(elementalStreamSchema).min(1),
+  declaredMufMg: declaredMufSchema,
+});
+
+type ElementalBalance = z.infer<typeof elementalBalanceSchema>;
+
+type ElementTotals = {
+  inputMg: string;
+  productMg: string;
+  otherOutputMg: string;
+  openingInventoryMg: string;
+  closingInventoryMg: string;
+  mufMg: string;
+  productRecoveryPpm: string | null;
+};
+
+type ElementalAudit =
+  | {
+      status: "NOT_PRESENT";
+      resultHash: null;
+      periodStart: null;
+      periodEnd: null;
+      totals: Record<string, never>;
+      errors: string[];
+    }
+  | {
+      status: "CONFORME" | "DIVERGENTE";
+      resultHash: Hex;
+      periodStart: string | null;
+      periodEnd: string | null;
+      totals: Partial<Record<ElementSymbol, ElementTotals>>;
+      errors: string[];
+    };
 
 type OnchainEvidence = {
   evidenceId: Hex;
@@ -336,7 +507,7 @@ function loadEvidenceRow(
 ): EvidenceRow {
   const path =
     "/rest/v1/explorerchem_evidences" +
-    "?select=evidence_id,state,storage_bucket" +
+    "?select=evidence_id,state,evidence_hash,hash_algorithm,storage_bucket,storage_path" +
     `&evidence_id=eq.${encodeURIComponent(evidenceId)}&limit=1`;
 
   const raw = text(request(runtime, key, path, "GET"));
@@ -372,6 +543,40 @@ function loadPrivateResult(
 
   const parsed = JSON.parse(new TextDecoder().decode(response.body));
   return privatePairwiseResultSchema.parse(parsed);
+}
+
+function loadEvidenceDocument(
+  runtime: TeeRuntime<Config>,
+  key: string,
+  row: EvidenceRow,
+  evidence: OnchainEvidence,
+): Record<string, unknown> {
+  const response = request(
+    runtime,
+    key,
+    `/storage/v1/object/authenticated/${encodeURIComponent(row.storage_bucket)}/${encPath(row.storage_path)}`,
+    "GET",
+  );
+
+  const bytes = new Uint8Array(response.body);
+  const recomputedHash =
+    row.hash_algorithm === "SHA-256" || row.hash_algorithm === "SHA256"
+      ? sha256(bytes)
+      : keccak256(bytes);
+
+  if (!sameHex(row.evidence_hash, evidence.evidenceHash)) {
+    throw new Error("evidenceHash do indice diverge da blockchain");
+  }
+  if (!sameHex(recomputedHash, evidence.evidenceHash)) {
+    throw new Error("hash recalculado do documento diverge da blockchain");
+  }
+
+  const parsed: unknown = JSON.parse(new TextDecoder().decode(bytes));
+  if (parsed === null || Array.isArray(parsed) || typeof parsed !== "object") {
+    throw new Error("documento original precisa ser um objeto JSON");
+  }
+
+  return parsed as Record<string, unknown>;
 }
 
 function saveAuditReceipt(
@@ -545,7 +750,479 @@ function verifyResultHash(
   }) as boolean;
 }
 
-function recomputeManifestCommitments(manifest: PrivatePairwiseResult) {
+type Fraction = {
+  numerator: bigint;
+  denominator: bigint;
+};
+
+function gcd(left: bigint, right: bigint): bigint {
+  let a = left < 0n ? -left : left;
+  let b = right < 0n ? -right : right;
+
+  while (b !== 0n) {
+    const next = a % b;
+    a = b;
+    b = next;
+  }
+
+  return a === 0n ? 1n : a;
+}
+
+function fraction(numerator: bigint, denominator = 1n): Fraction {
+  if (denominator === 0n) throw new Error("divisao por zero");
+
+  const sign = denominator < 0n ? -1n : 1n;
+  const divisor = gcd(numerator, denominator);
+
+  return {
+    numerator: (numerator / divisor) * sign,
+    denominator: (denominator / divisor) * sign,
+  };
+}
+
+function decimalFraction(value: string): Fraction {
+  const [whole, decimals = ""] = value.split(".");
+  const denominator = 10n ** BigInt(decimals.length);
+  return fraction(BigInt(`${whole}${decimals}`), denominator);
+}
+
+function addFraction(left: Fraction, right: Fraction): Fraction {
+  return fraction(
+    left.numerator * right.denominator +
+      right.numerator * left.denominator,
+    left.denominator * right.denominator,
+  );
+}
+
+function subtractFraction(left: Fraction, right: Fraction): Fraction {
+  return fraction(
+    left.numerator * right.denominator -
+      right.numerator * left.denominator,
+    left.denominator * right.denominator,
+  );
+}
+
+function multiplyFraction(left: Fraction, right: Fraction): Fraction {
+  return fraction(
+    left.numerator * right.numerator,
+    left.denominator * right.denominator,
+  );
+}
+
+function divideFraction(left: Fraction, right: Fraction): Fraction {
+  if (right.numerator === 0n) throw new Error("divisao por zero");
+
+  return fraction(
+    left.numerator * right.denominator,
+    left.denominator * right.numerator,
+  );
+}
+
+function compareFraction(left: Fraction, right: Fraction): number {
+  const delta =
+    left.numerator * right.denominator -
+    right.numerator * left.denominator;
+
+  return delta < 0n ? -1 : delta > 0n ? 1 : 0;
+}
+
+function roundHalfUp(value: Fraction): bigint {
+  if (value.numerator < 0n) {
+    throw new Error("roundHalfUp recebeu valor negativo");
+  }
+
+  const quotient = value.numerator / value.denominator;
+  const remainder = value.numerator % value.denominator;
+  return remainder * 2n >= value.denominator ? quotient + 1n : quotient;
+}
+
+function percentMultiplier(percent: string): Fraction {
+  const parsed = decimalFraction(percent);
+  const zero = fraction(0n);
+  const hundred = fraction(100n);
+
+  if (
+    compareFraction(parsed, zero) < 0 ||
+    compareFraction(parsed, hundred) >= 0
+  ) {
+    throw new Error(`percentual fora da faixa [0,100): ${percent}`);
+  }
+
+  return divideFraction(parsed, hundred);
+}
+
+const OXIDE_TO_ELEMENT_FACTOR: Record<
+  ElementSymbol,
+  Partial<Record<z.infer<typeof reportedFormSchema>, string>>
+> = {
+  ND: {
+    ND2O3: "0.857356",
+    DIRECT_ELEMENTAL: "1.000000",
+  },
+  PR: {
+    PR6O11: "0.827704",
+    PR2O3: "0.854472",
+    DIRECT_ELEMENTAL: "1.000000",
+  },
+  DY: {
+    DY2O3: "0.871321",
+    DIRECT_ELEMENTAL: "1.000000",
+  },
+  TB: {
+    TB4O7: "0.850215",
+    TB2O3: "0.868806",
+    DIRECT_ELEMENTAL: "1.000000",
+  },
+};
+
+function requireFields(
+  stream: z.infer<typeof elementalStreamSchema>,
+  fields: Array<keyof z.infer<typeof elementalStreamSchema>>,
+) {
+  const missing = fields.filter((field) => stream[field] === undefined);
+  if (missing.length > 0) {
+    throw new Error(
+      `${stream.streamId}: campos obrigatorios ausentes: ${missing.join(", ")}`,
+    );
+  }
+}
+
+function normalizedMassKg(
+  stream: z.infer<typeof elementalStreamSchema>,
+): Fraction {
+  const gross = decimalFraction(stream.grossMassKg);
+
+  if (stream.declaredBasis === "DRY_105C") return gross;
+  if (stream.declaredBasis === "LIQUID_TOTAL") return gross;
+
+  if (stream.declaredBasis === "AS_RECEIVED") {
+    requireFields(stream, [
+      "freeMoisturePct",
+      "moistureMethod",
+      "dryingTemperatureC",
+      "moistureSamplingTimestamp",
+      "hoursBetweenDeterminations",
+    ]);
+
+    const temperature = decimalFraction(stream.dryingTemperatureC!);
+    if (
+      compareFraction(temperature, fraction(100n)) < 0 ||
+      compareFraction(temperature, fraction(110n)) > 0
+    ) {
+      throw new Error(
+        `${stream.streamId}: dryingTemperatureC deve estar entre 100 e 110`,
+      );
+    }
+
+    return multiplyFraction(
+      gross,
+      subtractFraction(
+        fraction(1n),
+        percentMultiplier(stream.freeMoisturePct!),
+      ),
+    );
+  }
+
+  requireFields(stream, [
+    "lossOnIgnitionPct",
+    "ignitionTemperatureC",
+    "ignitionAtmosphere",
+    "ignitionResidenceMinutes",
+  ]);
+
+  return divideFraction(
+    gross,
+    subtractFraction(
+      fraction(1n),
+      percentMultiplier(stream.lossOnIgnitionPct!),
+    ),
+  );
+}
+
+function elementalMassMg(
+  stream: z.infer<typeof elementalStreamSchema>,
+  analysis: z.infer<typeof elementalAnalysisSchema>,
+): bigint {
+  const massKg = normalizedMassKg(stream);
+
+  if (stream.declaredBasis === "LIQUID_TOTAL") {
+    if (
+      analysis.reportedContentUnit !== "MG_PER_KG" ||
+      analysis.contentBasis !== "LIQUID_TOTAL" ||
+      analysis.reportedForm !== "DIRECT_ELEMENTAL"
+    ) {
+      throw new Error(
+        `${stream.streamId}/${analysis.element}: LIQUID_TOTAL exige DIRECT_ELEMENTAL em MG_PER_KG`,
+      );
+    }
+
+    return roundHalfUp(
+      multiplyFraction(
+        massKg,
+        decimalFraction(analysis.reportedContent),
+      ),
+    );
+  }
+
+  if (analysis.reportedContentUnit !== "PERCENT") {
+    throw new Error(
+      `${stream.streamId}/${analysis.element}: corrente solida exige teor em PERCENT`,
+    );
+  }
+  if (analysis.contentBasis !== "DRY_105C") {
+    throw new Error(
+      `${stream.streamId}/${analysis.element}: teor deve estar em DRY_105C`,
+    );
+  }
+
+  const factorValue =
+    OXIDE_TO_ELEMENT_FACTOR[analysis.element][analysis.reportedForm];
+
+  if (factorValue === undefined) {
+    throw new Error(
+      `${stream.streamId}/${analysis.element}: formula ${analysis.reportedForm} invalida para o elemento`,
+    );
+  }
+
+  const elementKg = multiplyFraction(
+    multiplyFraction(
+      massKg,
+      divideFraction(
+        decimalFraction(analysis.reportedContent),
+        fraction(100n),
+      ),
+    ),
+    decimalFraction(factorValue),
+  );
+
+  return roundHalfUp(
+    multiplyFraction(elementKg, fraction(1_000_000n)),
+  );
+}
+
+function emptyTotals() {
+  return {
+    inputMg: 0n,
+    productMg: 0n,
+    otherOutputMg: 0n,
+    openingInventoryMg: 0n,
+    closingInventoryMg: 0n,
+  };
+}
+
+function auditElementalBalance(
+  document: Record<string, unknown>,
+  actorId: Hex,
+): ElementalAudit {
+  const raw = document.elementalBalance;
+
+  if (raw === undefined) {
+    return {
+      status: "NOT_PRESENT",
+      resultHash: null,
+      periodStart: null,
+      periodEnd: null,
+      totals: {},
+      errors: [],
+    };
+  }
+
+  const parsed = elementalBalanceSchema.safeParse(raw);
+  if (!parsed.success) {
+    const errors = parsed.error.issues.map(
+      (issue) =>
+        `elementalBalance.${issue.path.join(".") || "root"}: ${issue.message}`,
+    );
+    const invalidPayloadHash = hashText(stableJson(raw));
+    const resultHash = hashText(
+      stableJson({
+        domain: "ExploreChem/PeriodicElementalBalanceAudit/v1",
+        actorId,
+        invalidPayloadHash,
+        errors,
+      }),
+    );
+
+    return {
+      status: "DIVERGENTE",
+      resultHash,
+      periodStart: null,
+      periodEnd: null,
+      totals: {},
+      errors,
+    };
+  }
+
+  const balance: ElementalBalance = parsed.data;
+  const errors: string[] = [];
+
+  if (!sameHex(balance.actorId, actorId)) {
+    errors.push("elementalBalance.actorId diverge do ator da evidencia");
+  }
+
+  const periodStartMs = Date.parse(balance.periodStart);
+  const periodEndMs = Date.parse(balance.periodEnd);
+  if (periodEndMs <= periodStartMs) {
+    errors.push("periodEnd deve ser posterior a periodStart");
+  }
+
+  const streamIds = new Set<string>();
+  const totals = new Map<ElementSymbol, ReturnType<typeof emptyTotals>>();
+  const streamResults: Array<{
+    streamId: string;
+    streamType: z.infer<typeof streamTypeSchema>;
+    element: ElementSymbol;
+    declaredElementalMassMg: string;
+    recalculatedElementalMassMg: string | null;
+  }> = [];
+
+  for (const stream of [...balance.streams].sort((a, b) =>
+    a.streamId.localeCompare(b.streamId),
+  )) {
+    if (streamIds.has(stream.streamId)) {
+      errors.push(`${stream.streamId}: streamId duplicado`);
+      continue;
+    }
+    streamIds.add(stream.streamId);
+
+    const weighingMs = Date.parse(stream.weighingTimestamp);
+    if (weighingMs < periodStartMs || weighingMs > periodEndMs) {
+      errors.push(
+        `${stream.streamId}: weighingTimestamp fora do periodo declarado`,
+      );
+    }
+
+    const streamElements = new Set<ElementSymbol>();
+    for (const analysis of [...stream.elements].sort((a, b) =>
+      a.element.localeCompare(b.element),
+    )) {
+      if (streamElements.has(analysis.element)) {
+        errors.push(
+          `${stream.streamId}/${analysis.element}: elemento duplicado na corrente`,
+        );
+        continue;
+      }
+      streamElements.add(analysis.element);
+
+      let recalculated: bigint | null = null;
+      try {
+        recalculated = elementalMassMg(stream, analysis);
+        const declared = BigInt(analysis.declaredElementalMassMg);
+
+        if (recalculated !== declared) {
+          errors.push(
+            `${stream.streamId}/${analysis.element}: massaElementarMg declarada=${declared} recalculada=${recalculated}`,
+          );
+        }
+
+        const aggregate = totals.get(analysis.element) ?? emptyTotals();
+        if (stream.streamType === "INPUT") {
+          aggregate.inputMg += recalculated;
+        } else if (stream.streamType === "PRODUCT") {
+          aggregate.productMg += recalculated;
+        } else if (
+          stream.streamType === "WASTE" ||
+          stream.streamType === "PURGE" ||
+          stream.streamType === "EFFLUENT"
+        ) {
+          aggregate.otherOutputMg += recalculated;
+        } else if (stream.streamType === "OPENING_INVENTORY") {
+          aggregate.openingInventoryMg += recalculated;
+        } else {
+          aggregate.closingInventoryMg += recalculated;
+        }
+        totals.set(analysis.element, aggregate);
+      } catch (error) {
+        errors.push(
+          error instanceof Error
+            ? error.message
+            : `${stream.streamId}/${analysis.element}: erro de calculo`,
+        );
+      }
+
+      streamResults.push({
+        streamId: stream.streamId,
+        streamType: stream.streamType,
+        element: analysis.element,
+        declaredElementalMassMg: analysis.declaredElementalMassMg,
+        recalculatedElementalMassMg: recalculated?.toString() ?? null,
+      });
+    }
+  }
+
+  const finalTotals: Partial<Record<ElementSymbol, ElementTotals>> = {};
+
+  for (const element of [...totals.keys()].sort()) {
+    const aggregate = totals.get(element)!;
+    const muf =
+      aggregate.inputMg +
+      aggregate.openingInventoryMg -
+      aggregate.productMg -
+      aggregate.otherOutputMg -
+      aggregate.closingInventoryMg;
+
+    const declaredMuf = balance.declaredMufMg[element];
+    if (declaredMuf === undefined) {
+      errors.push(`${element}: declaredMufMg ausente`);
+    } else if (BigInt(declaredMuf) !== muf) {
+      errors.push(
+        `${element}: MUF declarado=${declaredMuf} recalculado=${muf}`,
+      );
+    }
+
+    const productRecoveryPpm =
+      aggregate.inputMg === 0n
+        ? null
+        : roundHalfUp(
+            multiplyFraction(
+              fraction(aggregate.productMg, aggregate.inputMg),
+              fraction(1_000_000n),
+            ),
+          );
+
+    finalTotals[element] = {
+      inputMg: aggregate.inputMg.toString(),
+      productMg: aggregate.productMg.toString(),
+      otherOutputMg: aggregate.otherOutputMg.toString(),
+      openingInventoryMg: aggregate.openingInventoryMg.toString(),
+      closingInventoryMg: aggregate.closingInventoryMg.toString(),
+      mufMg: muf.toString(),
+      productRecoveryPpm: productRecoveryPpm?.toString() ?? null,
+    };
+  }
+
+  for (const element of Object.keys(balance.declaredMufMg) as ElementSymbol[]) {
+    if (!totals.has(element)) {
+      errors.push(`${element}: MUF declarado sem corrente elementar`);
+    }
+  }
+
+  const resultHash = hashText(
+    stableJson({
+      domain: "ExploreChem/PeriodicElementalBalanceAudit/v1",
+      factorTableVersion: balance.factorTableVersion,
+      actorId: balance.actorId,
+      periodStart: balance.periodStart,
+      periodEnd: balance.periodEnd,
+      previousBalanceHash: balance.previousBalanceHash ?? zeroHash,
+      streamResults,
+      totals: finalTotals,
+    }),
+  );
+
+  return {
+    status: errors.length === 0 ? "CONFORME" : "DIVERGENTE",
+    resultHash,
+    periodStart: balance.periodStart,
+    periodEnd: balance.periodEnd,
+    totals: finalTotals,
+    errors,
+  };
+}
+
+function recomputeCurrentManifestCommitments(
+  manifest: CurrentPrivatePairwiseResult,
+) {
   const result = {
     schema: "ExploreChem/PairwiseMassResult/v1" as const,
     calculationVersion: manifest.calculationVersion,
@@ -591,9 +1268,89 @@ function recomputeManifestCommitments(manifest: PrivatePairwiseResult) {
 
   return {
     aggregateInputHash,
-    canonicalResultHash,
+    resultHash: canonicalResultHash,
     resultId,
   };
+}
+
+function recomputeLegacyManifestCommitments(
+  manifest: LegacyPrivatePairwiseResult,
+) {
+  const result = {
+    schema: "ExploreChem/LotCorrelatedPairwiseMassResult/v4" as const,
+    focusEvidenceId: manifest.sourceEvidenceId,
+    lotReference: manifest.lotReference,
+    evidenceIds: manifest.evidenceIds,
+    correlationEdges: manifest.correlationEdges,
+    massPairs: manifest.massPairs,
+    status: manifest.status,
+  };
+
+  const resultPlainHash = hashText(stableJson(result));
+
+  const relationFingerprint = hashText(
+    stableJson({
+      domain: "ExploreChem/LotRelationFingerprint/v4",
+      lotReference: result.lotReference,
+      evidenceIds: result.evidenceIds,
+      correlationEdges: result.correlationEdges,
+      massPairs: result.massPairs,
+    }),
+  );
+
+  const aggregateInputHash = hashText(
+    stableJson({
+      domain: "ExploreChem/LotComponentInput/v4",
+      salt: manifest.salt,
+      focusEvidenceId: manifest.sourceEvidenceId,
+      lotReference: result.lotReference,
+      evidenceIds: result.evidenceIds,
+      correlationEdges: result.correlationEdges,
+    }),
+  );
+
+  const resultHash = hashText(
+    stableJson({
+      domain: "ExploreChem/LotComponentResult/v4",
+      salt: manifest.salt,
+      relationFingerprint,
+      result,
+    }),
+  );
+
+  const resultId = hashText(
+    `ExploreChem/LotComponentResultId/v4|${manifest.sourceActorId}|${manifest.sourceEvidenceId}|${relationFingerprint}|${resultHash}`,
+  );
+
+  return {
+    resultPlainHash,
+    relationFingerprint,
+    aggregateInputHash,
+    resultHash,
+    resultId,
+  };
+}
+
+type RecomputedManifestCommitments = {
+  aggregateInputHash: Hex;
+  resultHash: Hex;
+  resultId: Hex;
+  resultPlainHash: Hex | null;
+  relationFingerprint: Hex | null;
+};
+
+function recomputeManifestCommitments(
+  manifest: PrivatePairwiseResult,
+): RecomputedManifestCommitments {
+  if (manifest.schema === "ExploreChem/PrivatePairwiseMass/v1") {
+    return {
+      ...recomputeCurrentManifestCommitments(manifest),
+      resultPlainHash: null,
+      relationFingerprint: null,
+    };
+  }
+
+  return recomputeLegacyManifestCommitments(manifest);
 }
 
 function recomputeMassVerdict(manifest: PrivatePairwiseResult) {
@@ -610,7 +1367,7 @@ function recomputeMassVerdict(manifest: PrivatePairwiseResult) {
     } else {
       const left = BigInt(pair.leftMassMg);
       const right = BigInt(pair.rightMassMg);
-      expectedDelta = (left >= right ? left - right : right - left).toString();
+      expectedDelta = (left - right).toString();
       expectedStatus = left === right ? "CONFORME" : "DIVERGENTE";
     }
 
@@ -760,6 +1517,43 @@ function run(runtime: TeeRuntime<Config>): string {
     row.storage_bucket,
     resultPath,
   );
+  const compatibilityMode =
+    manifest.schema === "ExploreChem/PrivatePairwiseMass/v1"
+      ? "CURRENT_V1"
+      : "LEGACY_V4_VERIFIED";
+
+  let elementalAudit: ElementalAudit;
+  try {
+    const evidenceDocument = loadEvidenceDocument(
+      runtime,
+      key,
+      row,
+      evidence,
+    );
+    elementalAudit = auditElementalBalance(
+      evidenceDocument,
+      evidence.actorId,
+    );
+  } catch (error) {
+    const message =
+      error instanceof Error
+        ? error.message
+        : "falha ao abrir o documento elementar";
+    elementalAudit = {
+      status: "DIVERGENTE",
+      resultHash: hashText(
+        stableJson({
+          domain: "ExploreChem/PeriodicElementalBalanceAudit/v1",
+          actorId: evidence.actorId,
+          error: message,
+        }),
+      ),
+      periodStart: null,
+      periodEnd: null,
+      totals: {},
+      errors: [message],
+    };
+  }
 
   const integrityErrors: string[] = [];
 
@@ -779,21 +1573,49 @@ function run(runtime: TeeRuntime<Config>): string {
     integrityErrors.push("resultado on-chain pertence a outro ator");
   }
 
+  const expectedCalculationVersion =
+    manifest.schema === "ExploreChem/PrivatePairwiseMass/v1"
+      ? manifest.calculationVersion
+      : 1;
+
+  if (onchainResult.calculationVersion !== expectedCalculationVersion) {
+    integrityErrors.push(
+      `calculationVersion on-chain=${onchainResult.calculationVersion} esperada=${expectedCalculationVersion}`,
+    );
+  }
+
   const recomputed = recomputeManifestCommitments(manifest);
 
+  if (
+    manifest.schema === "ExploreChem/PrivatePairwiseMass/v1" &&
+    !sameHex(recomputed.resultHash, manifest.canonicalResultHash)
+  ) {
+    integrityErrors.push("canonicalResultHash privado nao e reproduzivel");
+  }
+  if (manifest.schema === "ExploreChem/PrivateLotCorrelatedPairwiseMass/v4") {
+    if (
+      recomputed.resultPlainHash === null ||
+      !sameHex(recomputed.resultPlainHash, manifest.resultPlainHash)
+    ) {
+      integrityErrors.push("resultPlainHash legado nao e reproduzivel");
+    }
+    if (
+      recomputed.relationFingerprint === null ||
+      !sameHex(recomputed.relationFingerprint, manifest.relationFingerprint)
+    ) {
+      integrityErrors.push("relationFingerprint legado nao e reproduzivel");
+    }
+  }
   if (!sameHex(recomputed.aggregateInputHash, manifest.aggregateInputHash)) {
     integrityErrors.push("aggregateInputHash privado nao e reproduzivel");
   }
   if (!sameHex(recomputed.aggregateInputHash, onchainResult.aggregateInputHash)) {
     integrityErrors.push("aggregateInputHash privado diverge do resultado on-chain");
   }
-  if (!sameHex(recomputed.canonicalResultHash, manifest.canonicalResultHash)) {
-    integrityErrors.push("canonicalResultHash privado nao e reproduzivel");
+  if (!sameHex(recomputed.resultHash, manifest.resultHash)) {
+    integrityErrors.push("resultHash privado nao e reproduzivel");
   }
-  if (!sameHex(recomputed.canonicalResultHash, manifest.resultHash)) {
-    integrityErrors.push("resultHash privado diverge do resultado canonico");
-  }
-  if (!sameHex(recomputed.canonicalResultHash, onchainResult.resultHash)) {
+  if (!sameHex(recomputed.resultHash, onchainResult.resultHash)) {
     integrityErrors.push("resultHash recalculado diverge do resultado on-chain");
   }
   if (!sameHex(recomputed.resultId, manifest.resultId)) {
@@ -806,14 +1628,31 @@ function run(runtime: TeeRuntime<Config>): string {
     !verifyResultHash(
       runtime,
       onchainResult.resultId,
-      recomputed.canonicalResultHash,
+      recomputed.resultHash,
     )
   ) {
     integrityErrors.push("verifyResultHash retornou false");
   }
 
   const massAudit = recomputeMassVerdict(manifest);
-  const allErrors = [...integrityErrors, ...massAudit.errors];
+  const elementalErrors = elementalAudit.errors.map(
+    (error) => `elemental: ${error}`,
+  );
+
+  if (
+    runtime.config.requireElementalBalance === true &&
+    elementalAudit.status === "NOT_PRESENT"
+  ) {
+    elementalErrors.push(
+      "elemental: bloco elementalBalance obrigatorio e ausente",
+    );
+  }
+
+  const allErrors = [
+    ...integrityErrors,
+    ...massAudit.errors,
+    ...elementalErrors,
+  ];
 
   const onchainExpectedMassStatus =
     onchainResult.status === 1
@@ -855,6 +1694,8 @@ function run(runtime: TeeRuntime<Config>): string {
     auditReceiptPath(evidenceId, resultId),
     {
       schema: "ExploreChem/PairwiseMassAudit/v1",
+      auditedManifestSchema: manifest.schema,
+      compatibilityMode,
       evidenceId,
       actorId: evidence.actorId,
       evidenceHash: evidence.evidenceHash,
@@ -864,13 +1705,24 @@ function run(runtime: TeeRuntime<Config>): string {
       calculationVersion: onchainResult.calculationVersion,
       previousResultId: onchainResult.previousResultId,
       recalculatedMassStatus: massAudit.expectedOverallStatus,
+      elementalBalanceRequired:
+        runtime.config.requireElementalBalance === true,
+      elementalAudit,
       verdict,
       errors: allErrors,
       auditTxHash,
     },
   );
 
-  mirrorFinalState(runtime, key, evidenceId, verdict);
+  let supabaseMirrorError: string | null = null;
+  try {
+    mirrorFinalState(runtime, key, evidenceId, verdict);
+  } catch (error) {
+    supabaseMirrorError =
+      error instanceof Error
+        ? error.message
+        : "falha desconhecida ao espelhar o estado final no Supabase";
+  }
 
   return JSON.stringify({
     workflow: "PAIRWISE_MASS_AUDITOR",
@@ -879,14 +1731,23 @@ function run(runtime: TeeRuntime<Config>): string {
     evidenceId,
     actorId: evidence.actorId,
     resultId,
+    auditedManifestSchema: manifest.schema,
+    compatibilityMode,
     resultHash: onchainResult.resultHash,
     aggregateInputHash: onchainResult.aggregateInputHash,
     declaredMassStatus: manifest.status,
     recalculatedMassStatus: massAudit.expectedOverallStatus,
+    elementalBalanceRequired:
+      runtime.config.requireElementalBalance === true,
+    elementalAudit,
     auditErrorCount: allErrors.length,
     auditErrors: allErrors,
     finalEvidenceStatus: verdict,
     auditTxHash,
+    supabaseMirror: {
+      updated: supabaseMirrorError === null,
+      error: supabaseMirrorError,
+    },
     privateAudit: {
       bucket: row.storage_bucket,
       path: auditReceiptPath(evidenceId, resultId),
@@ -927,3 +1788,4 @@ export async function main() {
 
   await runner.run(initWorkflow);
 }
+
