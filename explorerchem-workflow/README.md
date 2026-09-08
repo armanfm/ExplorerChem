@@ -442,7 +442,7 @@ The next repository will contain the independent Auditor workflow. It will consu
 
 ExploreChem is being developed for ETHOnline 2026. Demonstration company names, lot identifiers, document references, quantities, and results are fictional.
 
-## Jéssica — Product Lead
+** Jéssica ** — Product Lead
 
 Responsible for product leadership, problem framing, requirements, user experience, business validation, product communication, and presentation strategy.
 
