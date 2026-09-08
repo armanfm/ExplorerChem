@@ -1,1225 +1,510 @@
 # ExploreChem
 
-Confidential traceability infrastructure for rare-earth supply chains, combining private documents, verifiable graph correlation, chain-of-custody evidence, lot-based mass balance, and minimal blockchain anchoring.
+Confidential traceability infrastructure for critical-mineral and rare-earth supply chains. ExploreChem combines private operational documents, verifiable actor identities, strict chain-of-custody correlation, pairwise mass checking inside a Chainlink CRE confidential execution environment, and minimal anchoring on Ethereum Sepolia.
 
 > ExploreChem is being developed for ETHOnline 2026. Company names, lot identifiers, document references, quantities, and results shown in the demonstration are fictional.
 
+- Live demo: [armanfm.github.io/ExplorerChem](https://armanfm.github.io/ExplorerChem/)
+- Network: Ethereum Sepolia (chain ID `11155111`)
+- Contract: [`0xcd5eDA10c0b3424999626e6A2DaB2909B982866c`](https://sepolia.etherscan.io/address/0xcd5eDA10c0b3424999626e6A2DaB2909B982866c)
+- License: Apache-2.0
+
 ## Overview
 
-ExploreChem allows independent organizations to prove the continuity and consistency of a material supply chain without publishing commercial documents, relationships, quantities, or chemical composition on-chain.
+ExploreChem separates public proof from private business data.
 
-```text
-private document
-→ evidenceHash anchored on-chain
-→ confidential correlation inside CRE/TEE
-→ private graph revalidated
-→ lot-based mass balance
-→ versioned resultHash anchored on-chain
+The blockchain stores identities, evidence commitments, workflow authorization, status transitions, and compact result commitments. Original files, participant names, operational metadata, and detailed calculation output remain private. A Chainlink CRE workflow opens and verifies the committed files in confidential execution, correlates physically connected evidence, checks the mass declared at a handoff, and publishes only the minimum report required by the contract.
+
+```mermaid
+flowchart TD
+    A["Participant submits evidence"] --> B["Private file and metadata"]
+    A --> C["On-chain hash and PENDING status"]
+    B --> D["CRE confidential execution"]
+    C --> D
+    D --> E["Strict physical correlation"]
+    E --> F["Pairwise mass check"]
+    F --> G["MATCHED and result commitment"]
+    G --> H["Separate Auditor workflow — in preparation"]
 ```
 
-The system separates responsibilities:
+The current CRE workflow is deliberately a pairwise verifier. It does not calculate a global inventory balance, a monthly material-unaccounted-for value, elemental recovery, moisture normalization, or commercial relationship.
 
-- **ExploreChem:** product experience, company registration, permissions, private metadata, and history;
-- **Chainlink CRE + TEE:** document integrity checks, deterministic extraction, graph correlation, and confidential calculation;
-- **Blockchain:** minimal identity, authorship, integrity, state, and result commitments;
-- **DPP:** the evolving Digital Product Passport associated with a product or material lot;
-- **MVP client:** open read-only access to the demonstration mass-balance dashboard, without evidence upload privileges. Production access will be restricted to results explicitly authorized by the responsible company.
+## Why ExploreChem
 
-> The blockchain is not ExploreChem's corporate database. It stores only what is required to prove submission, integrity, state, and result history.
+Critical-mineral supply chains involve multiple independent organizations, confidential documents, changing custody, and claims that must remain auditable over time. A conventional shared database forces participants to trust one operator and may expose sensitive data. Publishing every document on-chain is also impractical and inappropriate.
 
----
+ExploreChem uses a hybrid model:
 
-## 1. Problem
+- private source documents remain under controlled storage;
+- the document hash is committed on-chain at submission;
+- actor and workflow identities are checked on-chain;
+- the CRE workflow independently downloads and verifies the committed documents;
+- correlation and mass comparison run in confidential execution;
+- only deterministic hashes, statuses, timestamps, and transaction evidence become public.
 
-Rare-earth supply chains involve miners, carriers, laboratories, processors, recyclers, manufacturers, and buyers. Each participant produces documents, but those documents are normally stored in isolated systems and may contain commercially sensitive information.
+## Current MVP scope
 
-Publishing complete records on a public blockchain would expose relationships that companies may not be allowed or willing to disclose. Keeping everything only in a conventional database would make the result easier for a database administrator to alter without leaving a public trace.
+The current implementation includes:
 
-ExploreChem combines private processing with public cryptographic commitments:
+- actor registration and actor-owned evidence;
+- multiple authorized wallets per actor;
+- private evidence storage with an on-chain file commitment;
+- on-chain evidence states;
+- blockchain-first discovery of pending evidence;
+- same-lot candidate discovery through a private index;
+- strict origin/destination correlation;
+- bidirectional reconstruction of a physically connected component;
+- pairwise mass comparison for outgoing physical handoffs;
+- deterministic, unsalted result commitments;
+- separate match and balance reports sent through the Chainlink forwarder;
+- a hybrid inspection page that cross-checks private files against Sepolia;
+- contract support for later audit outcomes and result revisions.
 
-- documents and operational data remain private;
-- hashes prove which document version was submitted;
-- independent documents are correlated inside a protected environment;
-- mass balance is calculated by lot and chemical element;
-- each authorized participant receives its own publicly anchored, privately salted result commitment;
-- previous result versions remain available instead of being overwritten.
+The following items are not claimed as completed by this workflow:
 
----
+- periodic or monthly actor-wide reconciliation;
+- inventory opening and closing balance;
+- chemical-element or assay-based mass conversion;
+- tolerance or uncertainty rules;
+- moisture-basis normalization;
+- automatic compliance certification;
+- the separate Auditor CRE/TEE workflow.
 
-## 2. Goals
+Those controls can be added as later, versioned workflows without changing the meaning of the current pairwise result.
 
-The MVP is designed to:
+## Participants and access model
 
-- identify the actor and wallet responsible for each evidence submission;
-- confirm that a retrieved document is byte-for-byte identical to the anchored document;
-- correlate documents submitted by different supply-chain actors;
-- represent verified transfers, analyses, transformations, returns, and recycling relationships;
-- preserve the commercial graph outside the public blockchain;
-- prevent the same physical mass from being counted more than once;
-- calculate a mass balance for a specific lot;
-- append new result versions without deleting previous ones;
-- restrict each participant to an authorized view of the chain;
-- provide clients with an open read-only mass-balance dashboard for the MVP demonstration, while keeping production access authorization as a separate requirement.
+The demonstration models the following roles:
 
-The MVP does not claim that cryptography alone proves that a physical event happened. It proves document integrity and rule-based consistency. Material truth still depends on authorized issuers, audits, sensors, official sources, and external enforcement.
+- Miner
+- Carrier
+- Laboratory
+- Refiner or processor
+- Manufacturer
+- Recycler
+- Platform operator
+- Read-only client
 
----
+Each supply-chain participant has a stable `actorId`. The on-chain actor record is intentionally minimal and can include:
 
-## 3. Digital Product Passport
-
-The **DPP — Digital Product Passport** is associated with a product or material lot. It is not the company's registration record.
-
-An actor is registered once and may contribute evidence to several DPPs:
-
-```text
-registered actor
-→ submits evidence for different lots
-→ evidence contributes to the corresponding DPPs
-→ each DPP evolves through append-only result versions
-```
-
-The complete DPP remains off-chain. The blockchain stores only opaque identifiers, document commitments, minimal states, and result commitments.
-
----
-
-## 4. Participants and visibility
-
-ExploreChem may receive evidence from:
-
-- mining companies;
-- laboratories;
-- carriers;
-- processors and refiners;
-- recyclers;
-- manufacturers;
-- other authorized supply-chain participants.
-
-`actorType` is private operational data and does not need to be published on-chain.
-
-### ExploreChem administrator
-
-- registers organizations and actors;
-- associates authorized wallets;
-- assigns roles and permissions;
-- monitors evidence, correlation runs, DPPs, and mass-balance results.
-
-### Actor or supplier
-
-- uploads its own documents;
-- associates submissions with the appropriate lot;
-- monitors its own evidence processing;
-- sees its own evidence, direct counterparties, and authorized result;
-- does not automatically see earlier or later participants in the supply chain.
-
-### Carrier
-
-- records pickup, received mass, delivered mass, delivery time, and incidents;
-- confirms custody between sender and recipient;
-- does not create a second physical mass flow merely by transporting the material;
-- sees only transfers assigned to it.
-
-### Lot operator
-
-- monitors authorized correlated evidence;
-- reviews inputs, outputs, inventories, losses, and yield;
-- generates a verifiable mass-balance report;
-- accesses the private graph only within its operational scope.
-
-### MVP client
-
-- opens the demonstration mass-balance dashboard without an invitation;
-- receives read-only access for a simpler jury and user experience;
-- cannot upload, modify, or delete evidence;
-- does not receive private documents or the complete private graph;
-- will require authentication and explicit result authorization in production.
-
-### Visibility horizon
-
-| Profile | Visible scope |
-|---|---|
-| CRE/TEE | Private graph required for correlation and calculation |
-| Company or actor | Own evidence, direct relationships, and authorized results |
-| Carrier | Assigned pickup, delivery, and incident information |
-| MVP client | Open read-only demonstration dashboard; production access requires explicit authorization |
-| Public blockchain observer | Opaque actor/evidence/result IDs, wallets, hashes, states, revision links, calldata, events and block times |
-
-The private correlation identifier never grants access. Authorization is enforced independently by application and database policies.
-
----
-
-## 5. Actor identity
-
-The company registration is created in ExploreChem, while the blockchain stores only a minimal logical identity.
-
-```text
-company opens ExploreChem
-→ administrative wallet is connected
-→ company profile is created off-chain
-→ actorId is assigned
-→ authorized wallets are associated with actorId
-```
-
-Private company data may include:
-
-- legal name;
-- tax identifier;
+- `actorId`;
 - `actorType`;
-- facilities and operating locations;
-- responsible personnel;
-- administrative information;
-- internal access rules.
+- `metadataHash`;
+- controller address;
+- active or inactive state;
+- creation timestamp.
 
-Minimal on-chain identity:
+An actor may authorize more than one wallet. Evidence submission is accepted only from the actor controller or an authorized wallet. Actor registration and administrative workflow configuration are restricted to the contract owner.
 
-```solidity
-struct ActorIdentity {
-    bytes32 actorId;
-    address controller;
-    uint64 createdAt;
-}
+The read-only client view is open in the MVP so the public demonstration can be inspected without a wallet. This is a product choice for the prototype, not a recommendation for every production deployment.
 
-mapping(bytes32 actorId => mapping(address wallet => bool authorized))
-    public authorizedWallets;
-```
+## Evidence submission
 
-`actorId` is a stable logical identity. An organization can add or replace wallets without changing its historical identifier.
+A participant submits an operational document for one actor. The application:
 
-Actor registration does not use evidence states such as `PENDING`, `MATCHED`, `FAILED`, or `REVOKED`. Wallet authorization is managed directly by the identity registry.
+1. validates the selected actor and wallet authorization;
+2. calculates the configured hash of the original file;
+3. stores the original document in private storage;
+4. stores the private indexing metadata required by the workflow;
+5. submits the evidence commitment to Ethereum Sepolia;
+6. receives the resulting `evidenceId`;
+7. leaves the evidence in `PENDING` until an authorized workflow processes it.
 
-`registerActor` is owner-only. Connecting a wallet or choosing a role in the UI
-does not register an actor on-chain. A wallet proves control of a key, not a
-verified company identity or mining authorization. The demonstration uses
-fictional organizations; real-world identity checks and customer onboarding
-are production requirements, not claimed as completed by this MVP.
+The contract does not receive the original file, participant name, filename, private storage path, lot number, origin, destination, masses, assay data, or commercial fields.
 
----
+A file remains independently verifiable because its hash can be recalculated later and compared with the immutable `evidenceHash` committed on-chain.
 
-## 6. Evidence submission
+## Public and private data
 
-When an actor uploads a document, ExploreChem:
-
-1. preserves the original file in private storage;
-2. calculates `evidenceHash` from the exact original bytes;
-3. extracts operational metadata;
-4. stores the document, metadata, and extractor version off-chain;
-5. generates an opaque `evidenceId`;
-6. requests an authorized wallet to submit the minimal evidence on-chain;
-7. emits `EvidenceSubmitted`, the primary trigger for correlation.
-
-Evidence may include:
-
-- invoice or commercial document;
-- origin and quantity declaration;
-- laboratory report;
-- transport document;
-- proof of delivery;
-- refining or purification report;
-- transformation record;
-- manufacturing or recycling record.
-
-## Demonstration actor navigation
-
-The MVP includes an actor selector below the registration form. After an actor is registered, the operator can select it to navigate through the system using that actor's role and visibility scope.
-
-This demonstration mechanism avoids requiring a separate login and wallet for every fictional participant. The connected administrative wallet signs actor registration, while each actor receives its own unique and persistent `actorId`.
-
-`actorId` is an opaque randomly generated identifier, stored as `actor_id` in Supabase and registered as `actorId` on-chain. It is unique, but it is not a transferable token, stablecoin, NFT, credential, or access key.
-
-The selector is intended only for the MVP demonstration. In production it will be replaced by verified identities, authenticated accounts, wallet authorization, and backend/RLS access policies.
-
-### Demonstration editing permissions
-
-| Profile | Allowed write scope |
+| Layer | Data |
 |---|---|
-| Operator | Registers actors and monitors processing; does not submit participant evidence |
-| Miner (`MINER`) | Submits only mining evidence through the supplier view |
-| Carrier (`CARRIER`) | Records only assigned transport and custody information |
-| Laboratory (`LABORATORY`) | Submits only laboratory reports and analysis information |
-| Refiner (`REFINER`) | Submits only purification evidence through the supplier view |
-| Recycler (`RECYCLER`) | Submits only recycling evidence through the supplier view |
-| Manufacturer (`MANUFACTURER`) | Submits only manufacturing evidence through the supplier view |
-| Client | Read-only mass-balance dashboard |
+| Ethereum Sepolia | Actor identifiers, controllers, authorized wallets, evidence identifiers, file commitments, submitter address, workflow IDs, statuses, timestamps, result commitments, revision links, and events |
+| Supabase database | Participant display data, evidence-to-file index, private storage path, lot lookup index, and simulation mirror fields |
+| Private Storage | Original evidence JSON documents and detailed workflow result JSON |
+| CRE confidential execution | Downloaded documents, verified contents, correlation graph, selected mass fields, pairwise calculation, and canonicalization |
+| Public frontend | A combined inspection view built from permitted private metadata and direct Sepolia reads |
 
-The interface disables editing outside the selected actor's permitted view. The database validation layer also checks structural compatibility between `actor_db_id`, `actor_type`, the operation, and the submitted document type. This structural check does not replace production identity authentication.
+Supabase is not the authority for the evidence status. The contract state is authoritative. In simulator mode, a Supabase mirror can be used only as a progress cursor when the simulated chain does not advance as a live deployment would; the candidate still has to be `PENDING` on-chain.
 
-### Temporary public Supabase access
+## On-chain state model
 
-To support a simple hands-on MVP demonstration without creating a Supabase account for every fictional participant, anonymous `SELECT` and `INSERT` policies are temporarily enabled only for the demonstration actor registry. All demonstration data is fictional. This temporary policy means the actor registry is not presented as production-grade access control.
+### Evidence status
 
-Operational evidence, private documents, transfers, and results are not intended to use unrestricted anonymous writes. In production, direct anonymous insertion will be removed. A wallet-authenticated Edge Function will verify the signature, nonce, actor ownership, and operational role before writing through protected backend/RLS policies. Supabase secret and `service_role` keys are never included in the frontend or public repository.
+The contract defines:
 
----
+| Value | Status | Meaning |
+|---:|---|---|
+| 0 | `NONE` | Evidence does not exist |
+| 1 | `PENDING` | Submitted and awaiting correlation |
+| 2 | `MATCHED` | Correlation was accepted by the authorized workflow |
+| 3 | `VERIFIED` | A separate audit workflow accepted the evidence |
+| 4 | `DIVERGENT` | A separate audit workflow found a divergence |
 
-## 7. On-chain data
+The current pairwise workflow ends at `MATCHED`. It does not assign `VERIFIED` or `DIVERGENT`. Those final audit transitions are reserved for a separate Auditor workflow that is being prepared.
 
-Each document submission records only:
+### Pairwise mass status
+
+The result also carries an independent mass status:
+
+| Value | Status | Meaning |
+|---:|---|---|
+| 0 | `NONE` | No result |
+| 1 | `CONFORME` | Both mass values exist and the signed difference is zero |
+| 2 | `DIVERGENTE` | Both values exist and the signed difference is nonzero |
+| 3 | `NAO_ATESTADO` | A physical relation exists, but one or both required masses are absent |
+
+Evidence status and mass status answer different questions. `MATCHED` confirms that the documents form an accepted relation. `CONFORME`, `DIVERGENTE`, or `NAO_ATESTADO` describes the mass comparison for that relation.
+
+## Current CRE/TEE workflow
+
+The implemented workflow is named `LOT_CHAIN_PAIRWISE_MASS`.
+
+### 1. Blockchain-first discovery
+
+The workflow calls the registry for the next pending evidence. The chain is the authority for whether an item can be processed.
+
+### 2. Focus evidence verification
+
+For the selected `evidenceId`, the workflow:
+
+- reads the on-chain evidence record;
+- confirms `PENDING`;
+- locates the private file through the private index;
+- downloads the original JSON document;
+- recalculates its SHA-256 or Keccak-256 hash, according to the evidence configuration;
+- rejects the document if the recalculated hash differs from the on-chain `evidenceHash`;
+- confirms that the document owner matches the on-chain `actorId`.
+
+### 3. Candidate discovery
+
+Supabase is used only to find possible documents with the same indexed lot reference. Every candidate is then independently downloaded and verified against its own on-chain commitment.
+
+The indexed lot value is a lookup optimization, not proof. The workflow compares the actual `lotId` found inside the committed documents before accepting any relation.
+
+### 4. Strict physical correlation
+
+Two documents form a directed physical handoff only when all three conditions hold:
 
 ```text
+from.lotId == to.lotId
+from.destinationActorId == to.ownerActorId
+to.originActorId == from.ownerActorId
+```
+
+This prevents same-lot documents from being connected merely because they share a label. Correlation does not use mass values, company names, approximate text, timestamps, or inferred commercial relationships.
+
+The workflow evaluates candidates in both directions and uses breadth-first search to reconstruct the verified same-lot physical component. Laboratory documents may be attached as `LAB_ANALYSIS` evidence, but they do not create a physical mass pair by themselves.
+
+### 5. Origin-focused pairwise mass check
+
+The result belongs to the focus evidence and its actor. For the current pass, the workflow emits mass pairs only for physical edges leaving the focus evidence.
+
+That makes the ownership rule explicit:
+
+- the origin evidence declares the outgoing mass;
+- the next actor's evidence declares the received or collected mass;
+- the workflow compares those two declarations;
+- the result is anchored to the origin actor and focus evidence.
+
+When the next actor later becomes the focus of another pass, its outgoing declaration is compared with the following actor. The two result hashes do not need to be equal because the actor, focus evidence, relation, and calculation content have changed.
+
+### 6. Mass field selection
+
+For an outgoing declaration, the workflow uses the actor-specific field and, where implemented, a documented fallback:
+
+| Actor role | Outgoing mass |
+|---|---|
+| Miner | `outputMassKg`, falling back to `massBalance.grossMassKg` |
+| Carrier | Delivered mass |
+| Refiner or processor | Output mass |
+| Manufacturer | Scrap mass when the destination is a recycler; otherwise output mass |
+| Recycler | Recovered mass |
+| Laboratory | No physical outgoing mass for this workflow |
+
+For an incoming declaration:
+
+| Actor role | Incoming mass |
+|---|---|
+| Carrier | Collected mass |
+| Refiner or processor | Input mass |
+| Manufacturer | Input mass |
+| Recycler | Input mass |
+| Laboratory | No physical incoming mass for this workflow |
+
+The selected decimal kilogram values are converted to integer milligrams. Conversion uses deterministic half-up rounding after six decimal places, avoiding floating-point ambiguity in the commitment.
+
+For each pair:
+
+```text
+deltaMg = leftMassMg - rightMassMg
+```
+
+The delta is signed:
+
+- `0` → `CONFORME`;
+- nonzero → `DIVERGENTE`;
+- missing side → `NAO_ATESTADO`.
+
+There is no global sum across all companies in the current workflow.
+
+## Deterministic result commitments
+
+The workflow canonicalizes structured JSON with stable key ordering and hashes the exact canonical form. It does not use a random salt or a runtime timestamp in the commitment.
+
+Domain separation and explicit versioning prevent the same bytes from being interpreted as another kind of result. Current domains include:
+
+- `ExploreChem/PairwiseMassPair/v1`
+- `ExploreChem/PairwiseMassRelation/v1`
+- `ExploreChem/PairwiseMassInput/v1`
+- `ExploreChem/PairwiseMass/v1`
+- `ExploreChem/PairwiseMassResultId/v1`
+
+The canonical result includes the domain, actor, focus evidence, calculation version, verified relation fingerprint, input commitment, mass status, and canonical pair output. Its deterministic hash is the `canonicalResultHash` and is also used as the contract's `resultHash`.
+
+Conceptually:
+
+```json
+{
+  "domain": "ExploreChem/PairwiseMass/v1",
+  "actorId": "0x…",
+  "focusEvidenceId": "0x…",
+  "calculationVersion": 1,
+  "result": {
+    "massStatus": "CONFORME",
+    "pairs": []
+  }
+}
+```
+
+The absence of a salt makes the same canonical calculation reproducible. It also means the hash is not intended to hide a very small, guessable input space by itself. Confidentiality still depends on keeping the underlying operational documents and detailed result private.
+
+## Private result artifact
+
+The detailed result is stored outside the chain under a deterministic private path:
+
+```text
+mass-results/{focusEvidenceId}/{resultId}.json
+```
+
+The private artifact can contain the verified evidence set, correlation edges, mass pairs, selected source fields, signed deltas, status, and commitments. The chain receives only the compact fields needed for public anchoring.
+
+## Reports sent to the contract
+
+The registry receives fixed-width reports through the authorized Chainlink forwarder.
+
+### Report type 1 — evidence correlation
+
+This report marks the focus evidence as `MATCHED` and records the relation fingerprint.
+
+```text
+reportType
+evidenceId
+relationFingerprint
+```
+
+### Report type 2 — pairwise balance result
+
+This report stores the result for the same focus evidence and actor.
+
+```text
+reportType
+resultId
 evidenceId
 actorId
-submittedBy
-evidenceHash
+resultHash
+previousResultId
+aggregateInputHash
 status
-createdAt
-matchedAt
+calculationVersion
 ```
 
-Conceptual structure implemented by the contract:
+The `evidenceId` is not zero in the current workflow. The result is evidence-scoped and actor-scoped.
 
-```solidity
-enum EvidenceStatus {
-    NONE,
-    PENDING,
-    MATCHED
-}
+The current workflow creates the first result revision with `previousResultId = 0x00…00` and `calculationVersion = 1`. The contract already supports later revisions for the same evidence and actor, requiring a valid previous result and an incremented calculation version. Automatic periodic revision creation is not yet part of this workflow.
 
-struct Evidence {
-    bytes32 evidenceId;
-    bytes32 actorId;
-    address submittedBy;
-    bytes32 evidenceHash;
-    EvidenceStatus status;
-    uint64 createdAt;
-    uint64 matchedAt;
-}
-```
+### Report type 3 — audit outcome
 
-`NONE` is the Solidity zero value used to distinguish a missing mapping entry. A valid new evidence record starts as `PENDING`.
+The contract supports a separate audit report that can move `MATCHED` evidence to `VERIFIED` or `DIVERGENT`. That report belongs to the future Auditor workflow and is not emitted by `LOT_CHAIN_PAIRWISE_MASS`.
 
-The contract rejects submissions from wallets that are not authorized for the supplied `actorId`.
-
-```solidity
-require(authorizedWallets[actorId][msg.sender], "UNAUTHORIZED_WALLET");
-```
-
-The current contract defines a 365-day validity window for pending evidence. Expiration is derived from `createdAt + EVIDENCE_TTL`; no `EXPIRED` state is stored on-chain.
-
-### Submission event
-
-```solidity
-event EvidenceSubmitted(
-    bytes32 indexed evidenceId,
-    bytes32 indexed actorId,
-    address indexed submittedBy,
-    bytes32 evidenceHash,
-    uint64 createdAt
-);
-```
-
-The event allows the CRE workflow to receive an `evidenceId` without attempting to iterate over contract mappings.
-
-The processing strategy is:
-
-1. event-driven through `EvidenceSubmitted`;
-2. backed by a deterministic queue of pending evidence;
-3. recovered by scheduled reconciliation if an event is missed;
-4. repeatable by explicit `evidenceId` after temporary failures.
-
-Evidence processing never depends on random selection.
-
----
-
-## 8. Data that never goes on-chain
-
-The following information is not published:
-
-```text
-company name and tax identifier
-actorType
-
-originActor and originSite
-destinationActor and destinationSite
-carrierActor
-
-lotId
-documentRef
-evidenceType
-
-PDF files, reports, invoices, and attachments
-mass, concentration, assay, and composition
-commercial and logistical details
-
-correlationGroupId
-transferId
-relationId
-verified graph edges
-
-credentials
-private result and input salts
-private endpoints
-access-control relationships
-```
-
-There is no on-chain `metadataHash`. The original `evidenceHash` remains the
-unsalted hash of the exact document bytes. Private salts ARE used for
-`resultHash` and `aggregateInputHash`; those salted commitments are described
-in Section 17. Neither salt nor its private manifest is sent on-chain.
-
----
-
-## 9. Private storage
-
-ExploreChem uses two private storage layers.
-
-### Structured database
-
-The database stores searchable data such as:
-
-- `evidenceId` and `actorId`;
-- actor and evidence types;
-- origin, destination, and carrier identities;
-- operational sites;
-- `lotId` and `documentRef`;
-- document timestamp;
-- extractor version;
-- internal processing state;
-- permissions by company, transfer, lot, and result;
-- private correlation groups and transfers;
-- verified graph edges;
-- correlation-policy version;
-- workflow runs, locks, and idempotency keys.
-
-### Private file storage
-
-Private file storage contains:
-
-- original PDFs and documents;
-- laboratory attachments;
-- generated manifests;
-- mass-balance reports;
-- supporting incident records.
-
-Access requires authentication, authorization, auditing, temporary URLs, retention rules, and protection appropriate to the documents.
-
-`lotId` remains readable to authorized ExploreChem infrastructure because it must be searchable for correlation. It is never published directly on-chain.
-
----
-
-## 10. Why there is no metadataHash
-
-The fields used for correlation are extracted from the document already committed by `evidenceHash`.
-
-For example:
-
-- an invoice contains sender, recipient, product, quantity, and document reference;
-- a transport record contains origin, destination, lot, pickup, and delivery information;
-- a laboratory report contains the analyzed lot and measurement results.
-
-```text
-original document
-→ evidenceHash anchored on-chain
-→ TEE retrieves the original document
-→ TEE recalculates evidenceHash
-→ recalculated hash equals on-chain hash
-→ metadata is extracted again from the verified source
-```
-
-A separate commitment over a small and predictable metadata set would be redundant in this model and could increase enumeration risk.
-
-### Mandatory condition
-
-This decision is valid only when correlation fields are extracted from the anchored document. A manually entered value, external API response, or independently calculated field is not proven merely because the document's `evidenceHash` is valid.
-
----
-
-## 11. Deterministic and versioned extraction
-
-A hash proves that a file did not change. It does not define how a field should be interpreted.
-
-Each evidence type therefore requires:
-
-- a mandatory-field schema;
-- normalization rules;
-- an extractor version;
-- validation rules;
-- handling for missing or ambiguous fields.
-
-Example:
-
-```text
-evidenceType: ORIGIN_AND_QUANTITY
-extractorVersion: 1
-
-required fields:
-- originActor
-- destinationActor
-- lotId
-- documentRef
-- timestamp
-- material
-- quantity
-```
-
-The TEE uses the registered extractor version to reproduce extraction. The extractor version is also committed in the private result manifest.
-
----
-
-## 12. Evidence states
-
-### `PENDING`
-
-The evidence has been anchored but does not yet have a validated correlation.
-
-### `MATCHED`
-
-`MATCHED` means that the CRE/TEE:
-
-1. found a potential counterparty or related evidence;
-2. retrieved the relevant private documents;
-3. recalculated their `evidenceHash` values;
-4. confirmed document integrity;
-5. extracted fields through deterministic and versioned rules;
-6. validated the relationship according to the current correlation policy.
-
-It does not merely mean that two records looked similar. It also does not prove that every statement in a document is physically true.
-
-### Internal off-chain states
-
-The private processing layer may distinguish:
-
-```text
-QUEUED
-VERIFYING_INTEGRITY
-WAITING_COUNTERPART
-PARSER_ERROR
-INTEGRITY_REJECTED
-RETRY_SCHEDULED
-REVIEW_REQUIRED
-CORRELATED
-```
-
-| Situation | Internal result | On-chain state |
-|---|---|---|
-| No valid counterparty | `WAITING_COUNTERPART` | remains `PENDING` |
-| Hash mismatch | `INTEGRITY_REJECTED` | remains `PENDING` |
-| Temporary API failure | `RETRY_SCHEDULED` | remains `PENDING` |
-| Ambiguous relationship | `REVIEW_REQUIRED` | remains `PENDING` |
-| Validated relationship | `CORRELATED` | becomes `MATCHED` |
-
-The contract does not use `UNMATCHED` or `FAILED` evidence states.
-
-Each on-chain confirmation handles one evidence ID, not an array. The CRE
-sender must submit each confirmation in a separate transaction. New documents
-receive new IDs and start as `PENDING`; existing `MATCHED` records stay
-`MATCHED` when their relationships are revalidated off-chain.
-
----
-
-## 13. CRE/TEE correlation workflow
+## Processing sequence
 
 ```mermaid
-flowchart TD
-    A[EvidenceSubmitted] --> B[Deterministic queue]
-    B --> C[Verify hash in TEE]
-    C --> D[Locate candidate group]
-    D --> E[Revalidate relationships]
-    E --> F[PENDING to MATCHED]
+sequenceDiagram
+    participant Chain as Registry
+    participant CRE as CRE workflow
+    participant Store as Private storage
+    CRE->>Chain: getNextPending()
+    CRE->>Store: load focus and candidates
+    CRE->>CRE: verify hashes and ownership
+    CRE->>CRE: correlate and compare mass
+    CRE->>Chain: report type 1 — MATCHED
+    CRE->>Store: store detailed private result
+    CRE->>Chain: report type 2 — result commitment
 ```
 
-### Complete flow
+The match report is sent before the balance report because the contract accepts a balance for evidence in `MATCHED` or `VERIFIED` state.
 
-1. the CRE receives or deterministically selects a pending `evidenceId`;
-2. it reads the on-chain actor, submitter, hash, state, and deadline;
-3. it confirms that the contract accepted a submission from an authorized wallet;
-4. it fetches the private document through the ExploreChem API;
-5. the TEE recalculates `evidenceHash`;
-6. metadata is extracted again with the versioned extractor;
-7. private indices narrow the candidate set;
-8. candidate documents are also retrieved and hash-verified;
-9. relationships are validated with a versioned correlation policy;
-10. groups, transfers, verified edges, and the workflow run are persisted privately;
-11. an individual approved verdict is sent through the authorized forwarder;
-12. the evidence changes from `PENDING` to `MATCHED`.
+## Auditor separation
 
-Discovery metadata may include:
+The audit step is intentionally separate from correlation and pairwise mass checking.
+
+The current repository demonstrates the evidence workflow and pairwise checker. A separate Auditor CRE/TEE workflow is being prepared to:
+
+- read evidence already in `MATCHED`;
+- verify the applicable private audit inputs;
+- issue report type 3;
+- preserve the existing match and balance history;
+- move the evidence to `VERIFIED` or `DIVERGENT`.
+
+This separation keeps `MATCHED` as a statement about correlation and reserves `VERIFIED` or `DIVERGENT` for the independent audit decision.
+
+A future periodic actor reconciliation may also consume the actor's previous balance and new matched evidence over a defined time window. That is a different calculation domain and must create a new immutable result linked to the previous result; it must not overwrite historical commitments.
+
+## History and immutability
+
+ExploreChem does not destroy prior on-chain evidence or result records.
+
+A result revision is appended as a new result with:
+
+- a new `resultId`;
+- the same evidence and actor scope;
+- `previousResultId` pointing to the prior revision;
+- a higher `calculationVersion`;
+- its own result and input commitments;
+- its own creation timestamp.
+
+The latest-result pointer is updated, while old records remain addressable. The current pairwise workflow uses the first revision only; the revision mechanism is available in the contract for later workflows.
+
+## Frontend
+
+The frontend supports the demonstration lifecycle:
+
+- wallet connection;
+- actor selection and identity display;
+- evidence upload;
+- local file hashing;
+- private storage submission;
+- on-chain evidence registration;
+- evidence and transaction inspection;
+- DPP-style traceability views;
+- hybrid verification of private files against public commitments;
+- direct display of Sepolia state and events.
+
+Participant names and filenames shown by the interface come from private application data. Actor IDs, evidence IDs, evidence hashes, authorized wallets, states, timestamps, workflow IDs, and transaction hashes are read from Ethereum Sepolia.
+
+The hybrid inspection page downloads an original file through an authorized signed URL, recalculates its hash locally, and compares it with the on-chain anchor.
+
+## Security and trust boundaries
+
+The MVP is designed around the following controls:
+
+- original documents are not stored on a public chain;
+- evidence hashes bind later inspection to the submitted bytes;
+- private index fields are treated as discovery hints and revalidated against committed files;
+- the chain is authoritative for `PENDING` and workflow transitions;
+- only configured workflow IDs and the authorized forwarder can apply CRE reports;
+- actor ownership is rechecked between the document and the chain;
+- correlation requires strict bidirectional origin/destination consistency;
+- integers are used for committed mass arithmetic;
+- result hashes are deterministic and domain-separated;
+- old result revisions remain immutable.
+
+For production use, deployment operations should also include independent smart-contract review, access-policy review, secret rotation, storage-policy testing, monitoring, incident response, and formal version governance for every calculation domain.
+
+## Repository structure
 
 ```text
-actorId
-actorType
-evidenceType
-originActor
-originSite
-destinationActor
-destinationSite
-carrierActor
-lotId
-documentRef
-timestamp
+contracts/
+  ExploreChemRegistry.sol
+
+explorerchem-workflow/
+  main.ts
+  main.test.ts
+  config.staging.json
+  config.production.json
+  workflow.yaml
+  package.json
+  tsconfig.json
+
+index.html
+project.yaml
+README.md
 ```
 
-These fields narrow the search. They are not a substitute for document verification and relationship validation.
+The exact file list may evolve as the Auditor is moved into its own repository.
 
----
+## Running the CRE workflow
 
-## 14. Private correlation graph
+Install project dependencies in the workflow directory, authenticate the CRE CLI, and use the environment configuration appropriate to the deployment.
 
-The project does not use the name `token` for correlation. In a blockchain project, that word could be mistaken for an ERC-20, NFT, access credential, or transferable asset.
+Typical simulator command:
 
-The private model separates four identifiers:
-
-| Identifier | Fictional example | Purpose |
-|---|---|---|
-| `correlationGroupId` | `CR-7742` | Groups one connected material-chain component |
-| `transferId` | `TR-01` | Identifies one transfer or delivery |
-| `relationId` | `REL-004` | Identifies one verified edge between evidence records |
-| `workflowRunId` | `CRE-20260905-0918-0042` | Identifies the execution that performed validation |
-
-```text
-CR-7742
-├── TR-01: miner → carrier → processor
-├── AN-01: processor → laboratory
-└── TR-02: processor → carrier → manufacturer
+```bash
+cre workflow simulate massa-worflow --broadcast
 ```
 
-A new evidence record receives the same `correlationGroupId` when it belongs to the same validated material component. A new movement inside that component receives a new `transferId`. A disconnected material chain receives a different group.
+`--broadcast` is required when the simulation should transmit the generated reports to the configured chain. A successful simulator response can include both `matchTxHash` and `resultTxHash`.
 
-### Verified edges
+The simulator is not a real TEE and must not be treated as a safe environment for production secrets. Real confidential execution does not expose user logs in the same way as local simulation.
 
-Group membership alone is not sufficient. ExploreChem also stores why evidence records are connected:
+## Deployment
 
-```text
-relationId: REL-001
-fromEvidenceId: EV-2026-0148
-toEvidenceId: EV-2026-0153
-relationType: ORIGIN_CUSTODY
-transferId: TR-01
-correlationPolicyVersion: correlation-1.2
-workflowRunId: CRE-20260905-0918-0042
-verifiedAt: 2026-09-05T09:18:00Z
-```
-
-Planned relationship types include:
-
-- `ORIGIN_DESTINATION`;
-- `ORIGIN_CUSTODY`;
-- `CUSTODY_DESTINATION`;
-- `MATERIAL_ANALYSIS`;
-- `TRANSFORMATION_INPUT`;
-- `TRANSFORMATION_OUTPUT`;
-- `RECYCLING`;
-- `RETURN`;
-- `DOCUMENT_REPLACEMENT`.
-
-The graph must support one-to-one, one-to-many, many-to-one, and many-to-many relationships. Splits, consolidation, mixing, recycling, and returns cannot be forced into a strictly linear model.
-
-### Trust rule
-
-> `correlationGroupId` accelerates discovery. It does not grant trust, access, or validity. Every relevant relationship is revalidated by the CRE/TEE.
-
-If a database administrator changes or deletes a group, the CRE can reconstruct
-it from available hash-verified documents and versioned rules. The group
-identifier is an index and cache, not a source of truth. Reconstruction still
-requires access to the documents and a recovery path independent of group
-membership. Hashes do not restore deleted documents or prove that a database
-returned every eligible candidate; availability, backups and completeness
-checks remain infrastructure and workflow responsibilities.
-
-`correlationGroupId`, transfers, edges, and the commercial graph remain off-chain.
-
-### Cycles and large groups
-
-Returns and recycling may create graph cycles. Each run therefore maintains:
-
-- a set of visited `evidenceIds`;
-- a maximum traversal depth;
-- a maximum number of evidence records per run;
-- paginated continuation for large groups.
-
----
-
-## 15. Carrier and chain of custody
-
-The carrier confirms physical movement between sender and recipient. The data model separates:
-
-```text
-originActorId
-destinationActorId
-carrierActorId
-```
-
-Transport evidence may contain:
-
-- pickup location, time, and mass;
-- delivery location, time, and mass;
-- lot and document reference;
-- people responsible for pickup and delivery;
-- damage, spillage, moisture, loss, or rejection;
-- explanation and supporting evidence for an incident.
-
-Example: a carrier picks up 1,000 kg and delivers 985 kg. The missing 15 kg cannot silently disappear. It becomes a custody difference that must be classified, documented, and handled by the mass-balance policy.
-
-### Double-counting rule
-
-The carrier's quantity normally confirms the same physical flow declared by the sender and recipient. It is not added as a new mass flow.
-
-| Evidence role | Calculation behavior |
+| Item | Value |
 |---|---|
-| Physical input flow | Adds elemental mass |
-| Physical output flow | Subtracts elemental mass |
-| Inventory | Enters according to its temporal position |
-| Transport | Confirms custody and differences; does not duplicate the flow |
-| Laboratory | Supplies assay, composition, or measurement |
-| Commercial document | Confirms the business relationship |
-| Transformation | Connects inputs, products, rejects, and effluents |
+| Network | Ethereum Sepolia |
+| Chain ID | `11155111` |
+| Registry contract | `0xcd5eDA10c0b3424999626e6A2DaB2909B982866c` |
+| Contract explorer | [View on Sepolia Etherscan](https://sepolia.etherscan.io/address/0xcd5eDA10c0b3424999626e6A2DaB2909B982866c) |
+| Frontend | [ExploreChem live demo](https://armanfm.github.io/ExplorerChem/) |
 
----
+Workflow IDs, forwarder address, storage bucket, Supabase project settings, and secret identifiers are environment-specific and should be read from the active deployment configuration rather than copied from documentation.
 
-## 16. Mass-balance workflow
+## Design decisions
 
-The corrected contract receives both logical report types through `onReport`:
-an individual evidence confirmation or an individual partner balance result.
-One authorized workflow may perform both responsibilities. A distinct balance
-workflow ID is optional, not a requirement for two independent CRE systems.
+### Why the document is anchored at the origin
 
-Mass balance is calculated **by lot**, not by a generic reconciliation period.
+The origin actor is responsible for the outgoing declaration in a physical handoff. The receiving actor independently declares the amount received. Keeping the result anchored to the origin focus evidence creates a clear statement:
 
-The workflow never trusts a previously stored group by itself:
+> This origin evidence was correlated with the next custody evidence, and their declared handoff masses produced this result.
 
-```text
-load candidate group
-→ confirm on-chain state and evidenceHash again
-→ revalidate the required graph edges
-→ classify physical and documentary evidence
-→ prevent double counting
-→ normalize mass, assay, units, and basis
-→ calculate balance by chemical element
-→ build a canonical private manifest
-→ generate private salts per partner and revision
-→ calculate resultHash and aggregateInputHash
-→ anchor each partner's new version in a separate transaction
-```
+The receiver can become the origin of the next pair in a later pass. This avoids pretending that one hash represents the entire supply chain.
 
-### Balance states
+### Why correlation is separate from mass conformity
 
-```solidity
-enum BalanceStatus {
-    NONE,
-    CONFORME,
-    DIVERGENTE,
-    NAO_ATESTADO
-}
-```
+A valid physical relation may still contain divergent mass values, and a missing mass does not erase the relation. Therefore:
 
-- `CONFORME`: the result satisfies the defined rules and tolerances;
-- `DIVERGENTE`: an objective calculation inconsistency exists;
-- `NAO_ATESTADO`: the available evidence is insufficient to attest the balance.
+- `MATCHED` describes the evidence relationship;
+- `CONFORME`, `DIVERGENTE`, or `NAO_ATESTADO` describes its mass check;
+- `VERIFIED` or `DIVERGENT` describes a later audit outcome.
 
-`NONE` is only the empty storage value. The balance does not reuse an evidence `FAILED` state.
+### Why there is no random salt
 
----
+The commitment must be reproducible from the same canonical calculation. Actor ID, focus evidence ID, calculation version, domain, and full canonical content provide identity and separation. A salt would introduce additional secret state without being required for uniqueness.
 
-## 17. Minimal private result per actor
+## Roadmap
 
-The contract records one result per actor and revision. Even when two partners
-share the same underlying balance, they receive different public commitments
-through different cryptographically random private salts.
+Planned work includes:
 
-```solidity
-struct BalanceResult {
-    bytes32 resultId;
-    bytes32 actorId;
-    bytes32 resultHash;
-    bytes32 previousResultId;
-    bytes32 aggregateInputHash;
-    BalanceStatus status;
-    uint32 calculationVersion;
-    uint64 createdAt;
-}
-```
+- publish the separate Auditor CRE/TEE repository;
+- connect report type 3 to independent audit policy;
+- add deterministic test vectors for canonicalization and report encoding;
+- expand automated workflow and contract integration tests;
+- formalize versioned schemas for each participant document type;
+- define a separate periodic actor-reconciliation domain;
+- add inventory, time-window, tolerance, moisture, and elemental rules only when their source data and policy are explicit;
+- complete security review and operational monitoring.
 
-### Three different commitments
+## Use of AI tools
 
-| Field | What it commits to | Salt |
-| --- | --- | --- |
-| `evidenceHash` | Exact original document bytes | None; immutable after submission |
-| `aggregateInputHash` | Canonical private set of calculation inputs, including evidence IDs, document hashes and relevant versions | Fresh private input salt per partner and revision |
-| `resultHash` | Canonical private result manifest | Fresh private result salt per partner and revision |
+Claude, ChatGPT, and Manus were used as supporting tools for research, implementation review, debugging, and documentation. Architecture, product decisions, contract deployment, configuration, testing, and final responsibility remain with the human project team.
 
-The term `privateNonce` in earlier project material means this private random
-salt; it is not a public transaction nonce. Use independent 32-byte
-cryptographically secure salts for input and result commitments, with distinct
-hash domains. Do not derive salts only from actor IDs, time or lot references.
+## Team
 
-For each commitment, hash a versioned, unambiguous encoding of the domain,
-chain ID, registry address, actor ID, result revision, canonical private
-manifest hash and private salt. The same computed hash is saved in Supabase
-and on-chain. The private salt and manifest remain under access control and
-are provided only to authorized verifiers who need to reproduce the hash.
-Keep the same salts and hashes for a retry of the same result; use fresh salts
-for a new revision.
+- **Armando Freire — Technical Lead:** architecture, smart contracts, Chainlink CRE/TEE workflows, backend and blockchain integration, security planning, testing, and technical documentation.
+- **Jéssica — Product Lead:** problem framing, requirements, user experience, business validation, communication, and presentation.
 
-Different salts prevent an identical balance or input set from becoming a
-shared public hash across partners. The contract cannot inspect salts or
-enforce their quality; the authenticated workflow must implement this rule.
+## License
 
-### Private result manifest
+Apache License 2.0. See [LICENSE](./LICENSE).
 
-The private manifest committed by `resultHash` includes:
-
-- `correlationGroupId`;
-- the result recipient's `actorId`;
-- deterministically ordered `evidenceIds`;
-- document `evidenceHash` values;
-- verified edges and relationship types;
-- normalized physical flows;
-- extractor versions;
-- correlation-policy version;
-- normalization-rule version;
-- algorithm and factor-table versions;
-- result revision (`calculationVersion`);
-- result by chemical element;
-- final state;
-- calculation time and the relevant lot snapshot;
-- `previousResultId`;
-- the reference to the private input manifest committed by `aggregateInputHash`.
-
-The group, evidence list, edges, quantities, calculations and salts remain
-private. The stored result contains `resultId`, `actorId`, `resultHash`,
-`previousResultId`, `aggregateInputHash`, status, revision and timestamp.
-
-### What aggregateInputHash does not prove by itself
-
-`aggregateInputHash` commits to the inputs without listing them publicly.
-The contract cannot derive the evidence list from that hash or check whether
-the hidden inputs were `MATCHED`. The authorized CRE/TEE must verify document
-hashes, re-extract and validate relationships, check input eligibility and
-completeness, prevent double counting, and perform the calculation.
-
-This is an explicit trust boundary of ExploreChem, not a claim that the
-contract independently verifies the private computation. Authentication of a
-workflow is not proof that its rules or implementation are correct.
-
-### Individual reports and transactions
-
-Each `onReport` invocation accepts one evidence confirmation OR one partner
-balance result. No arrays of evidence IDs or partner results are accepted.
-The CRE sender must submit each invocation as a separate transaction, without
-a multicall or external batch combining partners. One record per contract
-call alone cannot prevent an external transaction from composing calls.
-
-The current `BalanceResultAnchored` event retains indexed `actorId`.
-The field supports public association with the registered actor; the stored
-`actorId` also lets the contract reject cross-actor history links. Removing
-the event index would remove a filtering shortcut, not hide the actor: the
-report calldata and `getResult` remain public.
-
----
-
-## 18. Append-only result history
-
-The DPP and mass balance evolve when newly validated evidence joins the graph:
-
-```text
-V1 = evidence A + B
-V2 = evidence A + B + C, previousResultId = V1
-V3 = evidence A + B + C + D, previousResultId = V2
-```
-
-Every revision receives a new `resultId`, a fresh pair of private salts and
-new `resultHash`/`aggregateInputHash` commitments. Earlier versions remain
-available and are never overwritten. Status may change between revisions.
-
-The corrected contract requires revision 1 for a new root and predecessor
-revision + 1 for an update. A predecessor must exist, belong to the same actor
-and have no successor yet. `nextResultId` records that successor and rejects
-forks of an already superseded revision. `calculationVersion` means result
-revision; algorithm versions are committed privately instead.
-
-One actor can have independent histories for different private balances.
-Because lots are not public, the backend/CRE must select the correct history
-and prevent duplicate roots for the same private balance.
-
-An evidence record already marked `MATCHED` does not automatically return to `PENDING`. Its document integrity and relationships may still be revalidated during a relevant run. If new evidence changes the graph or calculation, the CRE creates a new result version while preserving the previous history.
-
----
-
-## 19. Internal product experience
-
-### Actor registration
-
-The administrator enters company information, connects the wallet, creates the `actorId`, associates authorized wallets, and defines the operational role.
-
-### Evidence upload
-
-The supplier, laboratory, processor, carrier, or manufacturer uploads its own document. ExploreChem preserves the original bytes, calculates `evidenceHash`, and requests the authorized wallet to anchor the evidence as `PENDING`.
-
-### Private queue and correlation
-
-The authorized operator can monitor:
-
-- pending, verifying, correlated, and waiting evidence;
-- the private `correlationGroupId`;
-- the number of evidence records, actors, transfers, and relationships;
-- verified edges and the reason for each relationship;
-- policy version and `workflowRunId`;
-- the most recent revalidation time.
-
-The interface must make the trust rule explicit:
-
-> The group accelerates discovery. Every relationship was verified again during this run.
-
-### Lot dashboard
-
-The operator can inspect:
-
-- physical inputs and outputs;
-- initial and final inventory;
-- process and custody losses;
-- yield;
-- results by chemical element;
-- included and excluded evidence;
-- calculation version;
-- current `resultHash` and previous history;
-- `CONFORME`, `DIVERGENTE`, or `NAO_ATESTADO` state.
-
-### Document verification
-
-The original document is shown only to authorized users, together with:
-
-- issuing company;
-- document type;
-- related lot;
-- submission time;
-- `evidenceHash`;
-- evidence role in the calculation;
-- authorized relationships;
-- validation rule and version;
-- verification result.
-
-### Carrier view
-
-The carrier records pickup, delivery, and incidents. It does not see the complete graph or commercial documents from other stages.
-
-### Supplier view
-
-The supplier sees its evidence, assigned transfer, direct counterparty, and individual result. It does not automatically see the counterparty's subsequent customer.
-
-### Client portal
-
-For the MVP demonstration, the client opens the mass-balance dashboard directly in read-only mode. This deliberate simplification improves the jury and user experience without granting evidence-writing privileges. The client receives:
-
-- the demonstration result dashboard;
-- a provenance summary with protected identities when required;
-- the verifiable report;
-- the integrity proof;
-- download access.
-
-The client cannot upload, modify, or delete evidence and does not receive the complete private `correlationGroupId`. In production, authentication and explicit result authorization will replace the open demonstration access. Full disclosure of supply-chain identities requires explicit authorization from the participating companies.
-
----
-
-## 20. End-to-end flow
-
-```mermaid
-flowchart TD
-    A[Register actor and wallets] --> B[Upload and evidenceHash]
-    B --> C[PENDING on-chain]
-    C --> D[CRE/TEE validates graph]
-    D --> E[Individual MATCHED verdict]
-    E --> F[Lot-based mass balance]
-    F --> G[resultHash per actor]
-    G --> H[Authorized dashboard and download]
-```
-
-The primary trigger is event-driven. Scheduled reconciliation is a recovery mechanism, while explicit retry by `evidenceId` handles temporary failures.
-
----
-
-## 21. Responsibility by layer
-
-| Layer | Responsibility |
-|---|---|
-| Blockchain | Actor/wallet authorization, immutable `evidenceHash`, minimal state, salted `resultHash` and `aggregateInputHash`, revision links and authenticated report acceptance |
-| ExploreChem | Registration, product experience, permissions, audit trail, and history |
-| Supabase/private API | Searchable metadata, lots, groups, transfers, edges, and workflow runs |
-| Private file storage | Original documents, manifests, attachments, and reports |
-| CRE/TEE correlation | Integrity, deterministic extraction, discovery, and relationship revalidation |
-| CRE/TEE mass balance | Evidence classification, double-counting prevention, calculation, and manifest generation |
-| DPP | Verifiable and versioned product or lot history |
-| Client portal | Read-only consultation and downloads for an authorized result |
-
----
-
-## 22. Privacy properties
-
-The design avoids directly publishing:
-
-- lot number;
-- commercial origin and destination;
-- explicit carrier/counterparty relationships and private company profiles;
-- `correlationGroupId`, `transferId`, and graph edges;
-- invoices, reports, and document references;
-- mass, assay, and composition;
-- the complete commercial graph.
-
-> Commercial documents, the explicit correlation graph, quantities and salts
-> remain private. Opaque participant identifiers and on-chain activity remain
-> public. ExploreChem does not promise full participant anonymity.
-
-The current model does not attempt to hide `lotId` from authorized infrastructure operators because the identifier must remain searchable for processing.
-
-Public `actorId`, `evidenceId`, transaction, and timing data may still permit frequency analysis and pseudonymous clustering. Therefore:
-
-- public identifiers must be opaque;
-- identifiers must not embed a tax number, lot, document number, or company name;
-- correlated evidence receives individual on-chain confirmation;
-- partner results are submitted in separate transactions;
-- each partner and revision uses privately salted `resultHash` AND
-  `aggregateInputHash`, never a shared public input commitment.
-
-### Accepted MVP privacy boundary
-
-The design removes explicit multi-partner report lists and shared balance/input
-hashes. It does not eliminate traffic analysis: actor IDs, wallets, indexed
-events, history links and block times remain visible. Separate transactions
-may still be close in time or in the same block. Multiple workflows do not
-guarantee anonymity, and removing an application timestamp does not remove a
-block timestamp.
-
-`evidenceHash` remains unsalted, so identical original files produce identical
-public document hashes. This is separate from the salted balance commitments.
-
-These are acknowledged limitations of the MVP, not a claim of zero inference
-risk. Authentication and correctness of the authorized CRE/TEE workflow are
-central security requirements and must be tested accordingly.
-
----
-
-## 23. Integrity, consistency, and material truth
-
-ExploreChem distinguishes three properties.
-
-### Integrity
-
-The retrieved document has the same hash as the document originally anchored.
-
-### Consistency
-
-Independent documents contain compatible information about actors, lot, transport, receipt, analysis, or transformation.
-
-### Material truth
-
-The described physical event actually occurred.
-
-Blockchain, hashes, and the TEE support integrity and consistency. Material truth additionally depends on authorized issuers, signatures, audits, sensors, official sources, and external enforcement.
-
-`MATCHED` does not turn a document statement into absolute truth. It means integrity and correlation were approved under an identifiable policy version.
-
----
-
-## 24. Reliability and security requirements
-
-### Idempotency and concurrency
-
-The processing layer must use:
-
-- a temporary lock for each evidence record or correlation group;
-- a unique `workflowRunId`;
-- a fresh on-chain state check before submitting a report;
-- a unique constraint for the same edge, evidence pair, and policy version;
-- idempotent operations so retries cannot duplicate edges or results.
-
-### Canonicalization
-
-Before hashing, evidence identifiers and graph edges must use a deterministic
-order and a versioned serialization format. After canonicalization, use private
-random salts and distinct domains for result and input commitments to resist
-guessing from predictable data. Do not log or send salts in public calldata,
-events, frontend bundles or public repositories. Preserve private manifests
-and salts securely so authorized parties can reproduce past commitments.
-
-### Workflow authentication and private-input trust
-
-The contract accepts reports only from its configured forwarder and expected
-workflow ID. Reports fail closed while the primary workflow ID is unconfigured;
-zero no longer bypasses identity checks. An optional balance workflow ID may
-override the primary ID for result reports. Both report types use `onReport`.
-
-Salts provide no validation or authorization by themselves. The workflow must
-verify the anchored source documents and input eligibility each relevant run.
-This README does not claim an on-chain membership proof, zero-knowledge proof
-or independent contract-side verification of the hidden calculation.
-
-### Completed local contract checks
-
-The corrected contract passed 46 local checks using Solidity 0.8.26 and an
-in-process Ganache chain. Tests covered authorization, workflow validation,
-rejection of the old batch ABI, individual confirmations, salted-commitment
-fixtures, revision history and expiration. Optimized runtime size was 7,756
-bytes with 200 optimizer runs and the Paris EVM target.
-
-These checks are not Foundry/Slither/Mythril results, an independent audit,
-a live-network deployment or a real CRE/TEE end-to-end execution.
-
-### Planned validation
-
-Before the final presentation and any production use, the project is expected to undergo:
-
-- unit, integration, fuzz, and invariant testing with Foundry;
-- static analysis with Slither;
-- symbolic analysis with Mythril;
-- access-control and wallet-rotation review;
-- replay, idempotency, and concurrency tests;
-- altered, duplicated, missing, and ambiguous document tests;
-- split, consolidation, mixing, return, and recycling tests;
-- manifest canonicalization review;
-- calldata, event, endpoint, and privacy review;
-- final technical documentation review in English.
-
-Tool results will be published only after execution and human review. This README does not claim that an independent external audit has been completed.
-
----
-
-## 25. Current MVP status
-
-### Implemented in the current smart contract
-
-- minimal actor identity and multiple authorized wallets;
-- `evidenceHash` submission by an authorized wallet;
-- `NONE`, `PENDING`, and `MATCHED` evidence states;
-- derived 365-day expiration for pending evidence;
-- report delivery through an authorized forwarder;
-- a required primary workflow ID and an optional distinct balance workflow ID;
-- both individual report types routed through `onReport`;
-- individual correlation verdicts without a public counterparty list;
-- one balance result per actor per call, including `aggregateInputHash`;
-- `previousResultId`, sequential revisions and `nextResultId` for append-only history;
-- public verification functions for evidence and result hashes.
-
-### MVP architectural decisions being implemented
-
-- private document and metadata storage;
-- deterministic event-driven queue with recovery and retry;
-- private `correlationGroupId`, `transferId`, `relationId`, and `workflowRunId`;
-- storage and revalidation of graph edges;
-- visibility rules by actor, transfer, lot, and result;
-- evidence-role classification to prevent double counting;
-- canonical private result and input manifests with independent per-partner,
-  per-revision private salts;
-- CRE encoder updated to the corrected static report ABI and sender configured
-  to use separate transactions;
-- operator, supplier, carrier, laboratory, and client experiences;
-- open read-only client access for the MVP demonstration, replaced by authenticated and explicitly authorized result access in production;
-- wallet-authenticated Edge Functions and restrictive backend/RLS policies for production writes.
-
-### Implemented in the current frontend and demonstration database
-
-- actor registration and persistent demonstration actor selection;
-- operator registration scope, with participant evidence editing disabled for the operator;
-- separate carrier and laboratory editing experiences;
-- supplier-view editing for miners, refiners, recyclers, and manufacturers;
-- read-only client mass-balance dashboard without an invitation requirement;
-- frontend role locks that preserve navigation while disabling unauthorized fields, uploads, and submission actions;
-- structural database validation that associates laboratory reports with `LABORATORY`, transport with `CARRIER`, mining with `MINER`, purification with `REFINER`, recycling with `RECYCLER`, and manufacturing with `MANUFACTURER`;
-- temporary anonymous actor-registry access for fictional MVP data only.
-
-This distinction prevents planned architecture from being presented as completed functionality.
-
-## Current deployment
-
-The current contract is deployed on the Ethereum Sepolia testnet:
-
-| Contract | Address | Explorer |
-|---|---|---|
-| ExploreChemRegistry | `0xB30d10835dDC1Ffa3D7E0582DABf5969917F6b23` | [Sepolia Etherscan](https://sepolia.etherscan.io/tx/0xe618b943a0db6364321b611760441a906f389ffe99e247b9d387aa763a977a58) |
-
-The frontend and staging CRE configuration use this address for testnet
-interactions. The contract was deployed with the Chainlink KeystoneForwarder
-for Ethereum Sepolia. Secrets, service-role keys and private salts are not
-included in the repository.
-
-## Demonstration
-
-Published application: [Open ExploreChem](https://armanfm.github.io/ExplorerChem/)
-
-The interface presents operator, supplier, carrier, laboratory, and client
-experiences. The actor selector simulates each fictional participant while
-preserving its editing scope. Actor registration on-chain is owner-only and
-therefore requires the administrative deployment wallet. Other wallets can
-connect, but they can perform an on-chain action only when the contract has
-authorized that wallet for the corresponding `actorId`.
-
-The client dashboard is intentionally open in read-only mode for the MVP. The
-Supabase actor registry also uses temporary anonymous read and insert policies
-so the fictional demonstration can run without separate participant accounts.
-This is a disposable demonstration configuration, not the production security
-model. All demonstration data shown in the interface is fictional.
-
-### Integration change
-
-The corrected `CREReport` is a static 288-byte ABI tuple in this order:
-
-```text
-uint8 reportType
-bytes32 evidenceId
-bytes32 resultId
-bytes32 actorId
-bytes32 resultHash
-bytes32 previousResultId
-bytes32 aggregateInputHash
-uint8 balanceStatus
-uint32 calculationVersion
-```
-
-Type 1 fills only `reportType = 1` and `evidenceId`; all result fields are
-zero. Type 2 uses `reportType = 2`, a zero `evidenceId`, and the result fields.
-Encode as `abi.encode(CREReport)`, not packed encoding. The old dynamic arrays
-are no longer compatible; regenerate frontend/backend ABI bindings and update
-the CRE encoder before integrating. These zero values are protocol values.
-
-The contract is not upgradeable. If an earlier version is already deployed,
-a new deployment is required, and historical records must remain associated
-with their original contract address and chain.
-
----
-
-## 26. Use of artificial intelligence
-
-The original ExploreChem idea, product vision, and core architectural direction were created by **Armando Freire and Jéssica**. After the team defined this foundation, **Claude**, **ChatGPT**, and **Manus** were used as supporting tools for refinement and development. Their assistance included:
-
-- architecture discussion and refinement;
-- documentation and copy review;
-- interface and user-experience suggestions;
-- assisted generation, explanation, and review of code;
-- identification of risks, inconsistencies, and test cases.
-
-These artificial-intelligence systems are not project team members, independent authors, or decision-makers. Every item incorporated into the official project — including architecture, business rules, documentation, interfaces, and code — is selected, adapted, reviewed, and approved by human team members.
-
-> ExploreChem's authorship and full responsibility for the product, code, documentation, technical decisions, and submitted claims belong to the project team.
-
-AI use is disclosed for transparency. It does not replace human review, testing, security analysis, or technical validation.
-
----
-
-## 27. Core principle
-
-> The blockchain does not need to know the commercial relationship. It needs to prove who submitted a document, which logical identity the submission belongs to, what content was committed at that moment, and which verifiable result was produced from authorized evidence.
-
-```text
-ExploreChem
-= private data + product experience + authorization
-
-CRE/TEE
-= integrity + revalidated correlation + mass balance
-
-Blockchain
-= identity + authorship + commitments + history
-
-DPP
-= verifiable evolution of a product or material lot
-```
-
----
-
-## 28. Team and authorship
-
-### Armando Freire — Technical Lead
-
-Responsible for technical leadership, software and system architecture, smart-contract development, Chainlink CRE/TEE workflow design, backend and blockchain integration, security planning, and technical documentation.
-
-### Jéssica — Product Lead
-
-Responsible for product leadership, problem framing, requirements, user experience, business validation, product communication, and presentation strategy.
-
-The original concept and product vision belong to Armando Freire and Jéssica. All final product decisions, source code, documentation, demonstrations, and submissions are reviewed and approved by the ExploreChem team. The team retains full authorship and responsibility for the project.
 
