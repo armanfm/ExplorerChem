@@ -1,6 +1,6 @@
 # ExploreChem
 
-Confidential traceability infrastructure for critical-mineral and rare-earth supply chains. ExploreChem combines private operational documents, verifiable actor identities, strict chain-of-custody correlation, pairwise mass checking inside a Chainlink CRE confidential execution environment, and minimal anchoring on Ethereum Sepolia.
+Confidential traceability infrastructure for critical-mineral and rare-earth supply chains. ExploreChem combines private operational documents, verifiable actor identities, strict chain-of-custody correlation, pairwise mass checking by a Chainlink CRE workflow executed inside a TEE, and minimal anchoring on Ethereum Sepolia.
 
 > ExploreChem is being developed for ETHOnline 2026. Company names, lot identifiers, document references, quantities, and results shown in the demonstration are fictional.
 
@@ -13,13 +13,13 @@ Confidential traceability infrastructure for critical-mineral and rare-earth sup
 
 ExploreChem separates public proof from private business data.
 
-The blockchain stores identities, evidence commitments, workflow authorization, status transitions, and compact result commitments. Original files, participant names, operational metadata, and detailed calculation output remain private. A Chainlink CRE workflow opens and verifies the committed files in confidential execution, correlates physically connected evidence, checks the mass declared at a handoff, and publishes only the minimum report required by the contract.
+The blockchain stores identities, evidence commitments, workflow authorization, status transitions, and compact result commitments. Original files, participant names, operational metadata, and detailed calculation output remain private. A Chainlink CRE workflow executed inside a TEE opens and verifies the committed files, correlates physically connected evidence, checks the mass declared at a handoff, and publishes only the minimum report required by the contract.
 
 ```mermaid
 flowchart TD
     A["Participant submits evidence"] --> B["Private file and metadata"]
     A --> C["On-chain hash and PENDING status"]
-    B --> D["CRE confidential execution"]
+    B --> D["Chainlink CRE workflow in TEE"]
     C --> D
     D --> E["Strict physical correlation"]
     E --> F["Pairwise mass check"]
@@ -121,7 +121,7 @@ A file remains independently verifiable because its hash can be recalculated lat
 | Ethereum Sepolia | Actor identifiers, controllers, authorized wallets, evidence identifiers, file commitments, submitter address, workflow IDs, statuses, timestamps, result commitments, revision links, and events |
 | Supabase database | Participant display data, evidence-to-file index, private storage path, lot lookup index, and simulation mirror fields |
 | Private Storage | Original evidence JSON documents and detailed workflow result JSON |
-| CRE confidential execution | Downloaded documents, verified contents, correlation graph, selected mass fields, pairwise calculation, and canonicalization |
+| Chainlink CRE workflow in TEE | Downloaded documents, verified contents, correlation graph, selected mass fields, pairwise calculation, and canonicalization |
 | Public frontend | A combined inspection view built from permitted private metadata and direct Sepolia reads |
 
 Supabase is not the authority for the evidence status. The contract state is authoritative. In simulator mode, a Supabase mirror can be used only as a progress cursor when the simulated chain does not advance as a live deployment would; the candidate still has to be `PENDING` on-chain.
@@ -331,7 +331,7 @@ The contract supports a separate audit report that can move `MATCHED` evidence t
 ```mermaid
 sequenceDiagram
     participant Chain as Registry
-    participant CRE as CRE workflow
+    participant CRE as CRE workflow in TEE
     participant Store as Private storage
     CRE->>Chain: getNextPending()
     CRE->>Store: load focus and candidates
