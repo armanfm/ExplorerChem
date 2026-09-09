@@ -32,38 +32,42 @@ import {
 
 import { z } from "zod";
 
+
 /**
- * ExploreChem — cadeia completa por lotId + origem/destino estritos
+ * ExploreChem — full chain by lotId + strict origin/destination
  *
- * REGRA DESTA VERSAO
+ * RULES FOR THIS VERSION
  * ------------------------------------------------------------
- * 1. A blockchain e consultada primeiro com getNextPending().
- * 2. Em execucao real, esse PENDING avanca naturalmente apos cada MATCH.
- * 3. Em SIMULATION, como o writeReport nao persiste o estado on-chain entre
- *    execucoes, o espelho MATCHED do Supabase e usado SOMENTE como progresso
- *    de simulacao para nao repetir o mesmo foco. O status on-chain PENDING
- *    continua obrigatorio para o novo foco escolhido.
- * 4. O TEE baixa o JSON original e confere o evidenceHash.
- * 5. lotId e o token logico de correlacao do MVP. O Supabase mantem apenas
- *    lot_reference como INDICE de descoberta; o TEE sempre reabre o JSON e
- *    confirma o lotId comprometido pelo evidenceHash antes de aceitar o candidato.
- * 6. Nao existe mais varredura global de explorerchem_evidences: depois de
- *    verificar o foco, o workflow consulta somente linhas indexadas no mesmo lote.
- * 7. Uma aresta fisica exige ESTRITAMENTE:
+ * 1. The blockchain is queried first using getNextPending().
+ * 2. In real execution, this PENDING evidence naturally advances after each MATCH.
+ * 3. In SIMULATION, since writeReport does not persist the on-chain state between
+ *    executions, the Supabase MATCHED mirror is used ONLY as simulation progress
+ *    tracking to avoid selecting the same focus again. The on-chain PENDING status
+ *    remains mandatory for the newly selected focus.
+ * 4. The TEE downloads the original JSON and verifies the evidenceHash.
+ * 5. lotId is the logical correlation token for the MVP. Supabase keeps only
+ *    lot_reference as a discovery INDEX, never as an authority. The TEE uses the
+ *    lotId from the JSON whose hash was verified against the blockchain.
+ * 6. There is no longer a global scan of explorerchem_evidences: after verifying
+ *    the focus evidence, the workflow queries only rows indexed under the same lot.
+ * 7. A physical edge STRICTLY requires:
  *      from.lotId             == to.lotId
- *      from.destinationActor  == ator dono de to
- *      to.originActor         == ator dono de from
- * 8. Nao existe janela temporal nesta versao. Timestamp nao decide correlacao.
- * 9. A cadeia e expandida nos dois sentidos por BFS ate nao haver novos elos.
- *    A cada novo JSON encontrado, os campos dele passam a orientar a proxima busca.
- * 10. Evidencia de laboratorio pode ser anexada como LAB_ANALYSIS quando pertence
- *     ao mesmo lotId e aponta para o ator de destino. Ela nao cria fluxo de massa.
- * 11. Massa NAO decide correlacao. Cada elo fisico e calculado de dois em dois.
- * 12. Cada execucao ancora somente o resultado do NOVO PENDING foco.
- * 13. Uma autorrelacao fisica invalida finaliza o foco como DIVERGENT na
- *     blockchain e espelha o mesmo estado no Supabase. MINER e LABORATORY
- *     nao entram na regra de origem igual ao proprio ator.
+ *      from.destinationActor  == owner actor of to
+ *      to.originActor         == owner actor of from
+ * 8. There is no temporal window in this version. Timestamps do not determine
+ *    correlation.
+ * 9. The chain is expanded in both directions using BFS until no new links are found.
+ *    For every newly discovered JSON, its fields are used to guide the next search.
+ * 10. Laboratory evidence may be attached as LAB_ANALYSIS when it belongs to the
+ *     same lotId and points to the destination actor. It does not create mass flow.
+ * 11. Mass does NOT determine correlation. Each physical link is calculated
+ *     pairwise.
+ * 12. Each execution anchors only the result of the NEW PENDING focus evidence.
+ * 13. An invalid physical self-relation finalizes the focus as DIVERGENT on-chain
+ *     and mirrors the same state in Supabase. MINER and LABORATORY are excluded
+ *     from the rule that prohibits origin from being equal to the actor itself.
  */
+
 
 const DEFAULT_SCHEDULE = "0 0 0 * * 0";
 
@@ -990,10 +994,6 @@ function loadVerifiedEvidence(
     ownerActorMatchesChain:
       lower(normalized.ownerActorId) === lower(chainEvidence.actorId),
   };
-
-  if (!integrity.rowHashMatchesChain) {
-    throw new Error(`${row.evidence_id}: evidence_hash do banco diverge da blockchain`);
-  }
 
   if (!integrity.documentHashMatchesChain) {
     throw new Error(`${row.evidence_id}: hash do JSON diverge da blockchain`);
@@ -1923,27 +1923,16 @@ function run(
   }
 
   /*
-   * O indice precisa apontar para o mesmo lotId que acabou de ser extraido do
-   * JSON verificado. O indice acelera a busca, mas o documento comprometido e
-   * a fonte de verdade do valor privado.
+   * O indice do foco e apenas um espelho de descoberta. Ele pode estar nulo ou
+   * desatualizado sem invalidar o documento: o lotId usado abaixo veio do JSON
+   * cujo hash ja foi confirmado contra o evidenceHash da blockchain.
    */
-  if (
-    focus.row.lot_reference === null ||
-    focus.row.lot_reference !== focus.normalized.lotReference
-  ) {
-    return JSON.stringify({
-      workflow: "LOT_CHAIN_PAIRWISE_MASS",
-      discovery: "BLOCKCHAIN_FIRST",
-      pendingAuthority: "BLOCKCHAIN_STATUS_REQUIRED",
-      initialBlockchainPendingId,
-      pendingSelectionMode: selection.mode,
-      focusEvidenceId: focus.row.evidence_id,
-      focusLotReference: focus.normalized.lotReference,
-      indexedLotReference: focus.row.lot_reference,
-      message:
-        "indice lot_reference ausente ou divergente do lotId do JSON verificado; reindexe a evidencia e mantenha PENDING",
-    });
-  }
+  const focusLotIndexStatus =
+    focus.row.lot_reference === focus.normalized.lotReference
+      ? "MATCHED"
+      : focus.row.lot_reference === null
+        ? "MISSING_IGNORED"
+        : "MISMATCH_IGNORED";
 
   /*
    * Aqui esta a mudanca de escala: uma unica consulta indexada traz somente as
@@ -2068,18 +2057,6 @@ function run(
         );
 
       if (
-        verified.row.lot_reference === null ||
-        verified.row.lot_reference !== verified.normalized.lotReference
-      ) {
-        candidateErrors.push({
-          evidenceId: row.evidence_id,
-          error:
-            "indice lot_reference diverge do lotId do JSON verificado",
-        });
-        continue;
-      }
-
-      if (
         !sameLot(
           focus.normalized,
           verified.normalized,
@@ -2149,6 +2126,9 @@ function run(
         focus.onchain.actorId,
       focusLotReference:
         focus.normalized.lotReference,
+      focusIndexedLotReference:
+        focus.row.lot_reference,
+      focusLotIndexStatus,
       focusOriginActorId:
         focus.normalized
           .originActorId,
@@ -2400,6 +2380,9 @@ function run(
       focus.onchain.evidenceId,
     focusLotReference:
       mass.lotReference,
+    focusIndexedLotReference:
+      focus.row.lot_reference,
+    focusLotIndexStatus,
     evidenceCount:
       mass.evidenceIds.length,
     evidenceIds:
