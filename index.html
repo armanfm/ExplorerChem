@@ -3171,9 +3171,27 @@ function clientBalanceRecompute(manifest){
 
   throw new Error("Unsupported mass-result schema: "+String(manifest.schema||"missing"));
 }
-function clientBalanceValidatePairs(manifest){
+function clientBalanceIsStructuralDivergence(manifest,auditState){
+  return Array.isArray(manifest?.massPairs)&&
+    manifest.massPairs.length===0&&
+    manifest.status==="DIVERGENTE"&&
+    auditState==="DIVERGENT";
+}
+function clientBalanceValidatePairs(manifest,auditState){
+  if(!Array.isArray(manifest.massPairs)){
+    throw new Error("Mass-pair collection is missing or invalid.");
+  }
+
+  /*
+   * A structural divergence is intentionally produced without a mass pair.
+   * It is accepted only when the private manifest declares DIVERGENTE and the
+   * evidence itself is already DIVERGENT on-chain. Result commitments and the
+   * blockchain result status are still independently checked immediately after.
+   */
+  if(clientBalanceIsStructuralDivergence(manifest,auditState)) return;
+
   const statuses=[];
-  for(const pair of manifest.massPairs||[]){
+  for(const pair of manifest.massPairs){
     const attested=
       pair.leftMassMg!==null&&pair.leftMassMg!==undefined&&
       pair.rightMassMg!==null&&pair.rightMassMg!==undefined;
@@ -3379,7 +3397,7 @@ async function clientBalanceLoadSelectedActor(){
             throw new Error("Private result ownership mismatch.");
           }
 
-          clientBalanceValidatePairs(manifest);
+          clientBalanceValidatePairs(manifest,auditState);
           const commitments=clientBalanceRecompute(manifest);
 
           if(!clientBalanceSameHex(commitments.resultId,resultId)||
@@ -3508,6 +3526,10 @@ function clientBalanceRenderDashboard(){
 
   const allPairs=clientBalanceAllUniquePairs();
   const pairs=clientBalanceSelectedPairs();
+  const structuralDivergence=clientBalanceIsStructuralDivergence(
+    selected.manifest,
+    selected.auditState
+  );
   const compliant=allPairs.filter(pair=>pair.status==="CONFORME").length;
   const absoluteDelta=allPairs.reduce((sum,pair)=>{
     if(pair.deltaMg===null||pair.deltaMg===undefined) return sum;
@@ -3560,7 +3582,11 @@ function clientBalanceRenderDashboard(){
           "<td class=\"num\">"+escaparHtml(clientBalanceKgFromMg(pair.deltaMg))+"</td>"+
           "<td>"+clientBalanceTag(pair.status)+"</td></tr>"
         ).join("")
-      : '<tr><td colspan="6" class="client-live-empty">No attested mass pair in this result.</td></tr>';
+      : '<tr><td colspan="6" class="client-live-empty">'+
+          (structuralDivergence
+            ? 'Structural divergence recorded on-chain. No pairwise mass comparison applies.'
+            : 'No attested mass pair in this result.')+
+        '</td></tr>';
   }
 
   const history=$("#clientHistoryRows");
@@ -3600,19 +3626,35 @@ function clientBalanceRenderDashboard(){
     warning.textContent=CLIENT_BALANCE_WARNINGS.length
       ? CLIENT_BALANCE_WARNINGS.length+
         " inaccessible or incompatible historical record(s) were ignored. Only independently reproduced commitments are displayed."
-      : "All displayed result commitments were reproduced successfully.";
+      : structuralDivergence
+        ? "Structural divergence and all displayed commitments were verified against the blockchain."
+        : "All displayed result commitments were reproduced successfully.";
   }
 
   $("#clientLiveDashboard")?.classList.remove("client-live-hidden");
-  clientBalanceRenderChart(pairs);
+  clientBalanceRenderChart(pairs,structuralDivergence);
 }
-function clientBalanceRenderChart(pairs){
+function clientBalanceRenderChart(pairs,structuralDivergence=false){
   if(CLIENT_BALANCE_CHART){
     CLIENT_BALANCE_CHART.destroy();
     CLIENT_BALANCE_CHART=null;
   }
   const canvas=$("#clientMassChart");
   if(!canvas||typeof Chart==="undefined") return;
+
+  const chartBox=canvas.parentElement;
+  chartBox?.querySelector(".client-live-chart-empty")?.remove();
+  if(!pairs.length){
+    canvas.style.display="none";
+    const empty=document.createElement("div");
+    empty.className="client-live-empty client-live-chart-empty";
+    empty.textContent=structuralDivergence
+      ? "Structural divergence confirmed. There is no valid origin-to-destination mass pair to chart."
+      : "No attested mass values are available for this result.";
+    chartBox?.appendChild(empty);
+    return;
+  }
+  canvas.style.display="block";
 
   const labels=pairs.map((pair,index)=>pair.lotReference||"Handoff "+(index+1));
   CLIENT_BALANCE_CHART=new Chart(canvas,{
@@ -3662,6 +3704,10 @@ function clientBalanceOpenProof(){
   if(!selected) return;
 
   const pairs=clientBalanceSelectedPairs();
+  const structuralDivergence=clientBalanceIsStructuralDivergence(
+    selected.manifest,
+    selected.auditState
+  );
   const rows=pairs.map(pair=>
     "<tr><td>"+escaparHtml(pair.lotReference||"—")+"</td>"+
     "<td>"+escaparHtml(clientBalanceKgFromMg(pair.leftMassMg))+"</td>"+
@@ -3669,11 +3715,14 @@ function clientBalanceOpenProof(){
     "<td>"+escaparHtml(clientBalanceKgFromMg(pair.deltaMg))+"</td>"+
     "<td>"+escaparHtml(clientBalanceMassState(pair.status))+"</td></tr>"
   ).join("");
+  const emptyPairMessage=structuralDivergence
+    ? "Structural divergence recorded on-chain. No pairwise mass comparison applies."
+    : "No attested mass pair.";
 
   const win=window.open("","_blank");
   if(!win) return;
 
-  win.document.write(`<!doctype html><html lang="en"><head><meta charset="utf-8"><title>ExploreChem — Mass Balance Proof</title><style>@page{size:A4;margin:15mm}body{font-family:Arial;color:#14252d}button{padding:9px 12px;margin-right:8px}h1{margin-bottom:4px}.sub{color:#52666e}.box{border-left:4px solid #0ea7a0;background:#eef9f6;padding:12px;margin:18px 0}dl{display:grid;grid-template-columns:150px 1fr;border:1px solid #dbe8e7}dt,dd{padding:7px;margin:0;border-bottom:1px solid #dbe8e7;word-break:break-all}dt{font-weight:bold;background:#f3f7f7}table{width:100%;border-collapse:collapse;font-size:11px}th,td{border:1px solid #dbe8e7;padding:7px;text-align:left}.note{font-size:11px;margin-top:18px}@media print{.controls{display:none}}</style></head><body><div class="controls"><button onclick="print()">Print / Save PDF</button><button onclick="close()">Close</button></div><h1>ExploreChem — Verified Mass Balance</h1><p class="sub">Client proof for one selected actor and one blockchain-selected result.</p><div class="box"><b>${escaparHtml(selected.actor.display_name)}</b><br>${escaparHtml(selected.actor.actor_type)} · ${escaparHtml(selected.auditState)}</div><dl><dt>Lot</dt><dd>${escaparHtml(selected.manifest.lotReference||"—")}</dd><dt>Mass verdict</dt><dd>${escaparHtml(clientBalanceMassState(selected.manifest.status))}</dd><dt>Created</dt><dd>${escaparHtml(clientBalanceDateFromUnix(selected.createdAt))}</dd><dt>evidenceId</dt><dd>${escaparHtml(selected.evidenceId)}</dd><dt>resultId</dt><dd>${escaparHtml(selected.resultId)}</dd><dt>resultHash</dt><dd>${escaparHtml(selected.resultHash)}</dd><dt>aggregateInputHash</dt><dd>${escaparHtml(selected.aggregateInputHash)}</dd><dt>Integrity</dt><dd>RECOMPUTED AND VERIFIED</dd></dl><h2>Pairwise mass checks</h2><table><thead><tr><th>Lot</th><th>Origin</th><th>Destination</th><th>Difference</th><th>Verdict</th></tr></thead><tbody>${rows||'<tr><td colspan="5">No attested mass pair.</td></tr>'}</tbody></table><p class="note"><b>Privacy boundary.</b> This proof contains the selected actor's balance and public commitments. Original evidence files and counterparty documents are not exposed.</p></body></html>`);
+  win.document.write(`<!doctype html><html lang="en"><head><meta charset="utf-8"><title>ExploreChem — Mass Balance Proof</title><style>@page{size:A4;margin:15mm}body{font-family:Arial;color:#14252d}button{padding:9px 12px;margin-right:8px}h1{margin-bottom:4px}.sub{color:#52666e}.box{border-left:4px solid #0ea7a0;background:#eef9f6;padding:12px;margin:18px 0}dl{display:grid;grid-template-columns:150px 1fr;border:1px solid #dbe8e7}dt,dd{padding:7px;margin:0;border-bottom:1px solid #dbe8e7;word-break:break-all}dt{font-weight:bold;background:#f3f7f7}table{width:100%;border-collapse:collapse;font-size:11px}th,td{border:1px solid #dbe8e7;padding:7px;text-align:left}.note{font-size:11px;margin-top:18px}@media print{.controls{display:none}}</style></head><body><div class="controls"><button onclick="print()">Print / Save PDF</button><button onclick="close()">Close</button></div><h1>ExploreChem — Verified Mass Balance</h1><p class="sub">Client proof for one selected actor and one blockchain-selected result.</p><div class="box"><b>${escaparHtml(selected.actor.display_name)}</b><br>${escaparHtml(selected.actor.actor_type)} · ${escaparHtml(selected.auditState)}</div><dl><dt>Lot</dt><dd>${escaparHtml(selected.manifest.lotReference||"—")}</dd><dt>Mass verdict</dt><dd>${escaparHtml(clientBalanceMassState(selected.manifest.status))}</dd><dt>Created</dt><dd>${escaparHtml(clientBalanceDateFromUnix(selected.createdAt))}</dd><dt>evidenceId</dt><dd>${escaparHtml(selected.evidenceId)}</dd><dt>resultId</dt><dd>${escaparHtml(selected.resultId)}</dd><dt>resultHash</dt><dd>${escaparHtml(selected.resultHash)}</dd><dt>aggregateInputHash</dt><dd>${escaparHtml(selected.aggregateInputHash)}</dd><dt>Integrity</dt><dd>RECOMPUTED AND VERIFIED</dd></dl><h2>Pairwise mass checks</h2><table><thead><tr><th>Lot</th><th>Origin</th><th>Destination</th><th>Difference</th><th>Verdict</th></tr></thead><tbody>${rows||'<tr><td colspan="5">'+escaparHtml(emptyPairMessage)+'</td></tr>'}</tbody></table><p class="note"><b>Privacy boundary.</b> This proof contains the selected actor's balance and public commitments. Original evidence files and counterparty documents are not exposed.</p></body></html>`);
   win.document.close();
 }
 async function clientBalanceRefreshAll(){
