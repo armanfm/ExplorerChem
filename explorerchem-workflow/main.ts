@@ -60,6 +60,9 @@ import { z } from "zod";
  *     ao mesmo lotId e aponta para o ator de destino. Ela nao cria fluxo de massa.
  * 11. Massa NAO decide correlacao. Cada elo fisico e calculado de dois em dois.
  * 12. Cada execucao ancora somente o resultado do NOVO PENDING foco.
+ * 13. Uma autorrelacao fisica invalida finaliza o foco como DIVERGENT na
+ *     blockchain e espelha o mesmo estado no Supabase. MINER e LABORATORY
+ *     nao entram na regra de origem igual ao proprio ator.
  */
 
 const DEFAULT_SCHEDULE = "0 0 0 * * 0";
@@ -668,6 +671,25 @@ function mirrorMatch(
       state: "MATCHED",
       matched_at: new Date(runtime.now()).toISOString(),
       match_tx_hash: txHash,
+    },
+    {
+      prefer: { values: ["return=minimal"] },
+    },
+  );
+}
+
+function mirrorDivergent(
+  runtime: TeeRuntime<Config>,
+  key: string,
+  evidenceId: Hex,
+) {
+  request(
+    runtime,
+    key,
+    `/rest/v1/explorerchem_evidences?evidence_id=eq.${encodeURIComponent(evidenceId)}&state=eq.MATCHED`,
+    "PATCH",
+    {
+      state: "DIVERGENT",
     },
     {
       prefer: { values: ["return=minimal"] },
@@ -1742,6 +1764,25 @@ function balanceReport(
   );
 }
 
+function divergentEvidenceReport(evidenceId: Hex): Hex {
+  return encodeAbiParameters(
+    parseAbiParameters(
+      "uint8 reportType, bytes32 evidenceId, bytes32 resultId, bytes32 actorId, bytes32 resultHash, bytes32 previousResultId, bytes32 aggregateInputHash, uint8 balanceStatus, uint32 calculationVersion",
+    ),
+    [
+      3,
+      evidenceId,
+      zeroHash,
+      zeroHash,
+      zeroHash,
+      zeroHash,
+      zeroHash,
+      4,
+      0,
+    ],
+  );
+}
+
 function write(runtime: TeeRuntime<Config>, payload: Hex): Hex {
   const don = runtime.usingTheDons();
 
@@ -1940,6 +1981,35 @@ function run(
   }
 
   /*
+   * Divergencia estrutural objetiva.
+   *
+   * Uma evidencia fisica nao pode declarar origem e destino iguais. Alem
+   * disso, um ator intermediario nao pode declarar a si proprio como origem;
+   * MINER e LABORATORY ficam fora dessa segunda verificacao.
+   * Esses casos produzem um resultado DIVERGENTE sem par numerico e sao
+   * finalizados como DIVERGENT on-chain.
+   */
+  const originEqualsDestination =
+    focus.normalized.originActorId !== null &&
+    focus.normalized.destinationActorId !== null &&
+    lower(focus.normalized.originActorId) ===
+      lower(focus.normalized.destinationActorId);
+
+  const originEqualsOwner =
+    focus.normalized.actorType !== "MINER" &&
+    focus.normalized.actorType !== "LABORATORY" &&
+    focus.normalized.originActorId !== null &&
+    lower(focus.normalized.originActorId) ===
+      lower(focus.onchain.actorId);
+
+  const structuralDivergenceCode =
+    originEqualsDestination
+      ? "ORIGIN_EQUALS_DESTINATION"
+      : originEqualsOwner
+        ? "ORIGIN_EQUALS_OWNER"
+        : null;
+
+  /*
    * 3) Candidatos DO MESMO LOTE, vindos da consulta indexada.
    *
    * PENDING, MATCHED, VERIFIED e DIVERGENT podem ser consultados.
@@ -2058,7 +2128,8 @@ function run(
     );
 
   if (
-    component.edges.length === 0
+    component.edges.length === 0 &&
+    structuralDivergenceCode === null
   ) {
     return JSON.stringify({
       workflow:
@@ -2106,11 +2177,26 @@ function run(
   /*
    * 5) Massa por elo, nunca usada para descobrir a correlacao.
    */
-  const mass =
-    calculateComponentMass(
-      focus,
-      component,
-    );
+  const mass: ComponentMassResult =
+    structuralDivergenceCode !== null
+      ? {
+          schema:
+            "ExploreChem/LotCorrelatedPairwiseMassResult/v4",
+          focusEvidenceId:
+            focus.row.evidence_id,
+          lotReference:
+            focus.normalized.lotReference!,
+          evidenceIds: [
+            focus.row.evidence_id,
+          ],
+          correlationEdges: [],
+          massPairs: [],
+          status: "DIVERGENTE",
+        }
+      : calculateComponentMass(
+          focus,
+          component,
+        );
 
   const committed =
     commitment(
@@ -2238,6 +2324,20 @@ function run(
     );
 
   /*
+   * O reportType 3 finaliza apenas a autorrelacao invalida como DIVERGENT.
+   * Resultados normais continuam MATCHED e seguem para o auditor separado.
+   */
+  const divergenceTxHash =
+    structuralDivergenceCode !== null
+      ? write(
+          runtime,
+          divergentEvidenceReport(
+            focus.onchain.evidenceId,
+          ),
+        )
+      : null;
+
+  /*
    * 10) Espelha MATCH somente no foco.
    *
    * Isso tambem funciona como cursor de progresso durante SIMULATION:
@@ -2256,6 +2356,7 @@ function run(
       onchain: {
         matchTxHash,
         resultTxHash,
+        divergenceTxHash,
       },
     },
   );
@@ -2266,6 +2367,14 @@ function run(
     focus.onchain.evidenceId,
     matchTxHash,
   );
+
+  if (structuralDivergenceCode !== null) {
+    mirrorDivergent(
+      runtime,
+      key,
+      focus.onchain.evidenceId,
+    );
+  }
 
   return JSON.stringify({
     workflow:
@@ -2305,6 +2414,8 @@ function run(
       mass.massPairs,
     massStatus:
       mass.status,
+    structuralDivergence:
+      structuralDivergenceCode,
     candidateErrors,
 
     /*
@@ -2340,6 +2451,7 @@ function run(
         focus.onchain.evidenceId,
       matchTxHash,
       resultTxHash,
+      divergenceTxHash,
     },
   });
 }
@@ -2382,4 +2494,3 @@ export async function main() {
 
   await runner.run(initWorkflow);
 }
-
