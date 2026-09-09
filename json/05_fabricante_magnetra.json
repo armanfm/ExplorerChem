@@ -1,0 +1,31 @@
+{
+  "schemaVersion": "explorechem.evidence.v1",
+  "evidenceId": "EV-20260906-FAB-001",
+  "status": "PENDING",
+  "actorId": "0xea29f1fbe162a42454e534fc398e81550ee4f74bff2066074ea16d4ade339814",
+  "actorType": "MANUFACTURER",
+  "originActor": "Magnetra Componentes Avançados S.A.",
+  "originSite": "Campinas, SP, Brasil",
+  "destinationActor": "CircularMet Recuperação de Materiais Ltda.",
+  "destinationSite": "Sorocaba, SP, Brasil",
+  "lotId": "LOT-ND-2026-001",
+  "documentRef": "ORD-PROD-2026-001",
+  "timestamp": "2026-09-12T14:20:00-03:00",
+  "evidenceType": "MANUFACTURING_RECORD",
+  "correlationGroupId": "CR-ND-2026-001",
+  "transformation": {
+    "process": "Fabricação de componente magnético",
+    "inputCompound": "Nd2O3",
+    "inputProductMassKg": 11.7551,
+    "inputElementalNdMassMg": 9878400,
+    "finishedProductMassKg": 10.0,
+    "scrapMassKg": 1.7551,
+    "elementalNdFinishedProductMassMg": 8400000,
+    "elementalNdScrapMassMg": 1478400,
+    "massBasis": "DRY_105C"
+  },
+  "document": {
+    "fileName": "EV-20260906-FAB-001.json",
+    "mimeType": "application/json"
+  }
+}
