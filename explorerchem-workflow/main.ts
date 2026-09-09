@@ -212,7 +212,9 @@ type PairMassResult = {
 };
 
 type ComponentMassResult = {
-  schema: "ExploreChem/LotCorrelatedPairwiseMassResult/v4";
+  schema: "ExploreChem/PairwiseMassResult/v1";
+  calculationVersion: 1;
+  focusActorId: Hex;
   focusEvidenceId: Hex;
   lotReference: string;
   evidenceIds: Hex[];
@@ -426,25 +428,16 @@ function secrets(runtime: TeeRuntime<Config>) {
         id: "SUPABASE_SERVICE_ROLE_KEY",
         namespace: runtime.config.secretNamespace,
       },
-      {
-        id: "COMMITMENT_MASTER_KEY",
-        namespace: runtime.config.secretNamespace,
-      },
     ])
     .result();
 
   const key = result.SUPABASE_SERVICE_ROLE_KEY?.value;
-  const master = result.COMMITMENT_MASTER_KEY?.value;
 
   if (!key) {
     throw new Error("SUPABASE_SERVICE_ROLE_KEY ausente");
   }
 
-  if (!master || master.length < 32) {
-    throw new Error("COMMITMENT_MASTER_KEY invalida");
-  }
-
-  return { key, master };
+  return { key };
 }
 
 /* ============================================================
@@ -1577,7 +1570,10 @@ function calculateComponentMass(
 
   return {
     schema:
-      "ExploreChem/LotCorrelatedPairwiseMassResult/v4",
+      "ExploreChem/PairwiseMassResult/v1",
+    calculationVersion: 1,
+    focusActorId:
+      focus.onchain.actorId,
     focusEvidenceId:
       focus.row.evidence_id,
     lotReference,
@@ -1608,22 +1604,15 @@ function calculateComponentMass(
 }
 
 /* ============================================================
- * Fingerprint deterministico + commitment privado para blockchain
+ * Fingerprints e commitments deterministicos para blockchain
  * ============================================================
  */
 
 function commitment(
-  runtime: TeeRuntime<Config>,
-  master: string,
   focus: OnchainEvidence,
   result: ComponentMassResult,
 ) {
-  /*
-   * SEM SALT:
-   * identifica deterministicamente o mesmo calculo privado.
-   * Nao e enviado para a blockchain como compromisso publico.
-   */
-  const resultPlainHash =
+  const canonicalResultHash =
     hashText(
       stableJson(result),
     );
@@ -1632,7 +1621,13 @@ function commitment(
     hashText(
       stableJson({
         domain:
-          "ExploreChem/LotRelationFingerprint/v4",
+          "ExploreChem/PairwiseMassRelation/v1",
+        calculationVersion:
+          result.calculationVersion,
+        focusActorId:
+          result.focusActorId,
+        focusEvidenceId:
+          result.focusEvidenceId,
         lotReference:
           result.lotReference,
         evidenceIds:
@@ -1644,37 +1639,17 @@ function commitment(
       }),
     );
 
-  /*
-   * COM SALT:
-   * estes sao os compromissos destinados ao resultado on-chain.
-   */
-  const salt =
-    hashText(
-      stableJson({
-        domain:
-          "ExploreChem/LotComponentPrivateSalt/v4",
-        master,
-        executionTime:
-          runtime.now(),
-        focusEvidenceId:
-          focus.evidenceId,
-        focusEvidenceHash:
-          focus.evidenceHash,
-        relationFingerprint,
-        resultPlainHash,
-      }),
-    );
-
   const aggregateInputHash =
     hashText(
       stableJson({
         domain:
-          "ExploreChem/LotComponentInput/v4",
-        salt,
+          "ExploreChem/PairwiseMassInput/v1",
+        calculationVersion:
+          result.calculationVersion,
+        actorId:
+          focus.actorId,
         focusEvidenceId:
           focus.evidenceId,
-        lotReference:
-          result.lotReference,
         evidenceIds:
           result.evidenceIds,
         correlationEdges:
@@ -1686,24 +1661,37 @@ function commitment(
     hashText(
       stableJson({
         domain:
-          "ExploreChem/LotComponentResult/v4",
-        salt,
-        relationFingerprint,
+          "ExploreChem/PairwiseMass/v1",
+        calculationVersion:
+          result.calculationVersion,
+        actorId:
+          focus.actorId,
+        focusEvidenceId:
+          focus.evidenceId,
         result,
       }),
     );
 
   const resultId =
     hashText(
-      `ExploreChem/LotComponentResultId/v4|${focus.actorId}|${focus.evidenceId}|${relationFingerprint}|${resultHash}`,
+      stableJson({
+        domain:
+          "ExploreChem/PairwiseMassResultId/v1",
+        calculationVersion:
+          result.calculationVersion,
+        actorId:
+          focus.actorId,
+        focusEvidenceId:
+          focus.evidenceId,
+        resultHash,
+      }),
     );
 
   return {
-    salt,
     relationFingerprint,
     componentFingerprint:
       relationFingerprint,
-    resultPlainHash,
+    canonicalResultHash,
     aggregateInputHash,
     resultHash,
     resultId,
@@ -1859,7 +1847,7 @@ function run(
    *
    * Nao carregamos mais explorerchem_evidences inteiro.
    */
-  const { key, master } =
+  const { key } =
     secrets(runtime);
 
   const selection =
@@ -2161,7 +2149,10 @@ function run(
     structuralDivergenceCode !== null
       ? {
           schema:
-            "ExploreChem/LotCorrelatedPairwiseMassResult/v4",
+            "ExploreChem/PairwiseMassResult/v1",
+          calculationVersion: 1,
+          focusActorId:
+            focus.onchain.actorId,
           focusEvidenceId:
             focus.row.evidence_id,
           lotReference:
@@ -2180,8 +2171,6 @@ function run(
 
   const committed =
     commitment(
-      runtime,
-      master,
       focus.onchain,
       mass,
     );
@@ -2194,7 +2183,7 @@ function run(
 
   const privateBase = {
     schema:
-      "ExploreChem/PrivateLotCorrelatedPairwiseMass/v4",
+      "ExploreChem/PrivatePairwiseMass/v1",
     sourceEvidenceId:
       focus.onchain.evidenceId,
     sourceActorId:
@@ -2209,20 +2198,14 @@ function run(
       mass.correlationEdges,
     massPairs:
       mass.massPairs,
+    calculationVersion:
+      mass.calculationVersion,
 
-    /*
-     * SEM SALT: fingerprint deterministico do calculo relacional.
-     */
+    /* Fingerprints e commitments deterministicos. */
     relationFingerprint:
       committed.relationFingerprint,
-    resultPlainHash:
-      committed.resultPlainHash,
-
-    /*
-     * COM SALT: compromisso privado usado para os hashes enviados on-chain.
-     */
-    salt:
-      committed.salt,
+    canonicalResultHash:
+      committed.canonicalResultHash,
     aggregateInputHash:
       committed.aggregateInputHash,
     resultHash:
@@ -2401,26 +2384,17 @@ function run(
       structuralDivergenceCode,
     candidateErrors,
 
-    /*
-     * O retorno mostra explicitamente os dois niveis pedidos:
-     * - sem salt: relationFingerprint/resultPlainHash
-     * - com salt: resultHash/aggregateInputHash
-     */
     commitment: {
-      unsalted: {
-        relationFingerprint:
-          committed.relationFingerprint,
-        resultPlainHash:
-          committed.resultPlainHash,
-      },
-      salted: {
-        resultId:
-          committed.resultId,
-        resultHash:
-          committed.resultHash,
-        aggregateInputHash:
-          committed.aggregateInputHash,
-      },
+      relationFingerprint:
+        committed.relationFingerprint,
+      canonicalResultHash:
+        committed.canonicalResultHash,
+      resultId:
+        committed.resultId,
+      resultHash:
+        committed.resultHash,
+      aggregateInputHash:
+        committed.aggregateInputHash,
     },
 
     privateResult: {
