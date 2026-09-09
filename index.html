@@ -2119,6 +2119,7 @@ async function enviarEvidenciaReal(button){
       actor_db_id:esc.ator.dbId,
       origin_actor_db_id:originActorDbId,
       destination_actor_db_id:destinationActorDbId,
+      lot_reference:String(jsonData?.lotId||"").trim()||null,
       submitted_by_user_id:userId,submitted_wallet:walletAddress,
       document_type:config.documentType,calculation_role:config.calculationRole,state:"PENDING",
       evidence_hash:evidenceHash,hash_algorithm:"SHA-256",storage_bucket:EVIDENCE_BUCKET,
