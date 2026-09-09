@@ -33,29 +33,31 @@ import {
 import { z } from "zod";
 
 /**
- * ExploreChem — Auditor independente.
+ * ExploreChem — Independent Auditor.
  *
- * Este workflow NAO procura PENDING, NAO correlaciona documentos e NAO cria
- * o resultado bilateral original. Ele consome uma evidencia MATCHED que ja
- * possui BalanceResult ancorado pelo workflow primario.
+ * This workflow does NOT search for PENDING evidence, does NOT correlate
+ * documents, and does NOT create the original bilateral result. It consumes
+ * a MATCHED evidence that already has a BalanceResult anchored by the
+ * primary workflow.
  *
- * Quando o documento comprometido possui elementalBalance, o Auditor tambem:
- *   - normaliza cada corrente para a base correta;
- *   - converte oxido em Nd, Pr, Dy ou Tb elementar;
- *   - recalcula massaElementarMg por corrente;
- *   - agrega entradas, saidas e inventarios;
- *   - recalcula o MUF por elemento e a recuperacao privada de produto.
+ * When the committed document contains elementalBalance, the Auditor also:
+ *   - normalizes each stream to the correct basis;
+ *   - converts oxides into elemental Nd, Pr, Dy, or Tb;
+ *   - recalculates elementalMassMg for each stream;
+ *   - aggregates inputs, outputs, and inventories;
+ *   - recalculates MUF per element and private product recovery.
  *
- * Fluxo:
- *   MATCHED + pairwise/elementar conformes   -> VERIFIED
- *   MATCHED + resultado DIVERGENTE           -> DIVERGENT
- *   MATCHED + falha de integridade/calculo   -> DIVERGENT
- *   MATCHED + resultado NAO_ATESTADO         -> DIVERGENT
- *   MATCHED ainda sem resultado              -> permanece MATCHED
+ * Flow:
+ *   MATCHED + pairwise/elemental compliant   -> VERIFIED
+ *   MATCHED + DIVERGENT result               -> DIVERGENT
+ *   MATCHED + integrity/calculation failure  -> DIVERGENT
+ *   MATCHED + NOT_ATTESTED result            -> DIVERGENT
+ *   MATCHED with no result yet               -> remains MATCHED
  *
- * A blockchain e sempre a autoridade. O Supabase so e espelhado depois da
- * releitura do estado final on-chain.
+ * The blockchain is always the authority. Supabase is mirrored only after
+ * rereading the final on-chain state.
  */
+
 
 const DEFAULT_AUDIT_SCHEDULE = "0 */5 * * * *";
 
@@ -83,8 +85,31 @@ const configSchema = z.object({
 
 type Config = z.infer<typeof configSchema>;
 
+const actorTypeSchema = z.enum([
+  "MINER",
+  "CARRIER",
+  "LABORATORY",
+  "PROCESSOR",
+  "REFINER",
+  "RECYCLER",
+  "MANUFACTURER",
+  "OTHER",
+]);
+
+type ActorType = z.infer<typeof actorTypeSchema>;
+
+const actorRowSchema = z.object({
+  id: z.string().uuid(),
+  actor_id: bytes32Schema,
+  display_name: z.string().min(1),
+  actor_type: actorTypeSchema,
+});
+
+type ActorRow = z.infer<typeof actorRowSchema>;
+
 const evidenceRowSchema = z.object({
   evidence_id: bytes32Schema,
+  actor_db_id: z.string().uuid(),
   state: z.string().min(1),
   evidence_hash: bytes32Schema,
   hash_algorithm: z.enum([
@@ -95,9 +120,51 @@ const evidenceRowSchema = z.object({
   ]),
   storage_bucket: z.string().min(1),
   storage_path: z.string().min(1),
+  mime_type: z.string().min(1),
 });
 
 type EvidenceRow = z.infer<typeof evidenceRowSchema>;
+
+type ActorDirectory = {
+  byDbId: Map<string, ActorRow>;
+  byName: Map<string, Hex>;
+};
+
+type NormalizedEvidence = {
+  actorType: ActorType;
+  ownerActorId: Hex;
+  originActorId: Hex | null;
+  destinationActorId: Hex | null;
+  lotReference: string | null;
+  grossMassKg: string | null;
+  collectedMassKg: string | null;
+  deliveredMassKg: string | null;
+  inputMassKg: string | null;
+  outputMassKg: string | null;
+  scrapMassKg: string | null;
+  recoveredMassKg: string | null;
+};
+
+type IndependentlyVerifiedEvidence = {
+  row: EvidenceRow;
+  onchain: OnchainEvidence;
+  document: Record<string, unknown>;
+  normalized: NormalizedEvidence;
+  rowHashMatchesChain: boolean;
+};
+
+type MassEndpoint = {
+  massMg: bigint | null;
+  field: string;
+};
+
+type IndependentAudit = {
+  evidenceCount: number;
+  pairCount: number;
+  rowHashWarnings: string[];
+  errors: string[];
+  documents: Map<string, IndependentlyVerifiedEvidence>;
+};
 
 const correlationEdgeSchema = z.object({
   fromEvidenceId: bytes32Schema,
@@ -391,6 +458,10 @@ function lower(value: string): string {
   return value.toLowerCase();
 }
 
+function canonicalName(value: string): string {
+  return value.trim().toLowerCase();
+}
+
 function sameHex(left: string, right: string): boolean {
   return lower(left) === lower(right);
 }
@@ -416,6 +487,52 @@ function stableJson(value: unknown): string {
 
 function hashText(value: string): Hex {
   return keccak256(toHex(value));
+}
+
+function recordOf(value: unknown): Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {};
+}
+
+function nullableString(value: unknown): string | null {
+  return typeof value === "string" && value.trim().length > 0
+    ? value.trim()
+    : null;
+}
+
+function decimalString(value: unknown): string | null {
+  if (value === null || value === undefined) return null;
+
+  if (typeof value === "number") {
+    if (!Number.isFinite(value) || value < 0) return null;
+    const rendered = value.toString();
+    return /^\d+(?:\.\d+)?$/.test(rendered) ? rendered : null;
+  }
+
+  if (typeof value !== "string") return null;
+  const rendered = value.trim();
+  return /^\d+(?:\.\d+)?$/.test(rendered) ? rendered : null;
+}
+
+function kgToMg(value: string | null): bigint | null {
+  if (value === null) return null;
+
+  const parts = value.split(".");
+  const whole = BigInt(parts[0]);
+  const fractional = parts[1] ?? "";
+  const firstSix = fractional.slice(0, 6).padEnd(6, "0");
+  let result = whole * 1_000_000n + BigInt(firstSix);
+
+  if (fractional.length > 6 && Number(fractional[6]) >= 5) {
+    result += 1n;
+  }
+
+  return result;
+}
+
+function idEquals(left: Hex | null, right: Hex): boolean {
+  return left !== null && sameHex(left, right);
 }
 
 function encPath(path: string): string {
@@ -507,7 +624,7 @@ function loadEvidenceRow(
 ): EvidenceRow {
   const path =
     "/rest/v1/explorerchem_evidences" +
-    "?select=evidence_id,state,evidence_hash,hash_algorithm,storage_bucket,storage_path" +
+    "?select=evidence_id,actor_db_id,state,evidence_hash,hash_algorithm,storage_bucket,storage_path,mime_type" +
     `&evidence_id=eq.${encodeURIComponent(evidenceId)}&limit=1`;
 
   const raw = text(request(runtime, key, path, "GET"));
@@ -518,6 +635,26 @@ function loadEvidenceRow(
   }
 
   return rows[0];
+}
+
+function loadActorDirectory(
+  runtime: TeeRuntime<Config>,
+  key: string,
+): ActorDirectory {
+  const path =
+    "/rest/v1/explorerchem_actors" +
+    "?select=id,actor_id,display_name,actor_type" +
+    "&active=eq.true&order=created_at.asc";
+
+  const raw = text(request(runtime, key, path, "GET"));
+  const rows = z.array(actorRowSchema).parse(JSON.parse(raw));
+
+  return {
+    byDbId: new Map(rows.map((actor) => [actor.id, actor])),
+    byName: new Map(
+      rows.map((actor) => [canonicalName(actor.display_name), actor.actor_id]),
+    ),
+  };
 }
 
 function privateResultPath(evidenceId: Hex, resultId: Hex): string {
@@ -564,11 +701,16 @@ function loadEvidenceDocument(
       ? sha256(bytes)
       : keccak256(bytes);
 
-  if (!sameHex(row.evidence_hash, evidence.evidenceHash)) {
-    throw new Error("evidenceHash do indice diverge da blockchain");
-  }
   if (!sameHex(recomputedHash, evidence.evidenceHash)) {
-    throw new Error("hash recalculado do documento diverge da blockchain");
+    throw new Error(
+      `${evidence.evidenceId}: hash recalculado do JSON diverge da blockchain`,
+    );
+  }
+
+  if (!row.mime_type.toLowerCase().includes("json")) {
+    throw new Error(
+      `${evidence.evidenceId}: auditor independente exige JSON; mime=${row.mime_type}`,
+    );
   }
 
   const parsed: unknown = JSON.parse(new TextDecoder().decode(bytes));
@@ -1353,6 +1495,437 @@ function recomputeManifestCommitments(
   return recomputeLegacyManifestCommitments(manifest);
 }
 
+function actorIdFromValue(
+  value: unknown,
+  actors: ActorDirectory,
+): Hex | null {
+  if (typeof value !== "string" || value.trim().length === 0) return null;
+  const trimmed = value.trim();
+
+  if (/^0x[0-9a-fA-F]{64}$/.test(trimmed)) {
+    return trimmed as Hex;
+  }
+
+  return actors.byName.get(canonicalName(trimmed)) ?? null;
+}
+
+function normalizeCommittedEvidence(
+  document: Record<string, unknown>,
+  row: EvidenceRow,
+  onchain: OnchainEvidence,
+  actors: ActorDirectory,
+): NormalizedEvidence {
+  const actor = actors.byDbId.get(row.actor_db_id);
+  if (!actor) {
+    throw new Error(`${row.evidence_id}: actor_db_id nao encontrado`);
+  }
+  if (!sameHex(actor.actor_id, onchain.actorId)) {
+    throw new Error(`${row.evidence_id}: ator cadastrado diverge da blockchain`);
+  }
+
+  if (typeof document.actorType === "string") {
+    const declaredType = document.actorType.trim().toUpperCase();
+    if (
+      (actorTypeSchema.options as readonly string[]).includes(declaredType) &&
+      declaredType !== actor.actor_type
+    ) {
+      throw new Error(`${row.evidence_id}: actorType do JSON diverge do cadastro`);
+    }
+  }
+
+  const massBalance = recordOf(document.massBalance);
+  const custody = recordOf(document.custody);
+  const transformation = recordOf(document.transformation);
+  const recovery = recordOf(document.recovery);
+
+  return {
+    actorType: actor.actor_type,
+    ownerActorId: actor.actor_id,
+    originActorId: actorIdFromValue(
+      document.originActorId ?? document.originActor,
+      actors,
+    ),
+    destinationActorId: actorIdFromValue(
+      document.destinationActorId ?? document.destinationActor,
+      actors,
+    ),
+    lotReference: nullableString(document.lotId ?? document.lotReference),
+    grossMassKg: decimalString(
+      massBalance.grossMassKg ?? document.grossMassKg ?? document.massKg,
+    ),
+    collectedMassKg: decimalString(
+      custody.massCollectedKg ?? document.collectedMassKg,
+    ),
+    deliveredMassKg: decimalString(
+      custody.massDeliveredKg ?? document.deliveredMassKg,
+    ),
+    inputMassKg: decimalString(
+      transformation.inputMassKg ??
+        transformation.inputProductMassKg ??
+        recovery.inputMassKg ??
+        document.inputMassKg,
+    ),
+    outputMassKg: decimalString(
+      transformation.outputProductMassKg ??
+        transformation.finishedProductMassKg ??
+        recovery.recoveredProductMassKg ??
+        document.outputMassKg,
+    ),
+    scrapMassKg: decimalString(
+      transformation.scrapMassKg ?? document.scrapMassKg,
+    ),
+    recoveredMassKg: decimalString(
+      recovery.recoveredProductMassKg ?? document.recoveredMassKg,
+    ),
+  };
+}
+
+function outgoingMass(
+  from: IndependentlyVerifiedEvidence,
+  to: IndependentlyVerifiedEvidence,
+): MassEndpoint {
+  const n = from.normalized;
+
+  if (n.actorType === "LABORATORY") {
+    return { massMg: null, field: "NO_PHYSICAL_MASS" };
+  }
+  if (n.actorType === "MINER") {
+    return {
+      massMg: kgToMg(n.outputMassKg ?? n.grossMassKg),
+      field:
+        n.outputMassKg !== null
+          ? "outputMassKg"
+          : "massBalance.grossMassKg",
+    };
+  }
+  if (n.actorType === "CARRIER") {
+    return {
+      massMg: kgToMg(n.deliveredMassKg ?? n.outputMassKg),
+      field:
+        n.deliveredMassKg !== null
+          ? "custody.massDeliveredKg"
+          : "outputMassKg",
+    };
+  }
+  if (n.actorType === "PROCESSOR" || n.actorType === "REFINER") {
+    return {
+      massMg: kgToMg(n.outputMassKg),
+      field: "transformation.outputMassKg",
+    };
+  }
+  if (n.actorType === "MANUFACTURER") {
+    if (to.normalized.actorType === "RECYCLER" && n.scrapMassKg !== null) {
+      return {
+        massMg: kgToMg(n.scrapMassKg),
+        field: "transformation.scrapMassKg",
+      };
+    }
+    return {
+      massMg: kgToMg(n.outputMassKg ?? n.scrapMassKg),
+      field:
+        n.outputMassKg !== null
+          ? "outputMassKg"
+          : "transformation.scrapMassKg",
+    };
+  }
+  if (n.actorType === "RECYCLER") {
+    return {
+      massMg: kgToMg(n.recoveredMassKg ?? n.outputMassKg),
+      field:
+        n.recoveredMassKg !== null
+          ? "recovery.recoveredProductMassKg"
+          : "outputMassKg",
+    };
+  }
+
+  return {
+    massMg: kgToMg(
+      n.deliveredMassKg ??
+        n.recoveredMassKg ??
+        n.scrapMassKg ??
+        n.outputMassKg ??
+        n.grossMassKg,
+    ),
+    field: "bestAvailableOutgoingMass",
+  };
+}
+
+function incomingMass(to: IndependentlyVerifiedEvidence): MassEndpoint {
+  const n = to.normalized;
+
+  if (n.actorType === "LABORATORY") {
+    return { massMg: null, field: "NO_PHYSICAL_MASS" };
+  }
+  if (n.actorType === "CARRIER") {
+    return {
+      massMg: kgToMg(n.collectedMassKg ?? n.inputMassKg ?? n.grossMassKg),
+      field:
+        n.collectedMassKg !== null
+          ? "custody.massCollectedKg"
+          : n.inputMassKg !== null
+            ? "inputMassKg"
+            : "massBalance.grossMassKg",
+    };
+  }
+  if (
+    n.actorType === "PROCESSOR" ||
+    n.actorType === "REFINER" ||
+    n.actorType === "MANUFACTURER" ||
+    n.actorType === "RECYCLER"
+  ) {
+    return {
+      massMg: kgToMg(n.inputMassKg ?? n.grossMassKg ?? n.collectedMassKg),
+      field:
+        n.inputMassKg !== null
+          ? "transformation.inputMassKg"
+          : n.grossMassKg !== null
+            ? "massBalance.grossMassKg"
+            : "custody.massCollectedKg",
+    };
+  }
+
+  return {
+    massMg: kgToMg(n.inputMassKg ?? n.collectedMassKg ?? n.grossMassKg),
+    field: "bestAvailableIncomingMass",
+  };
+}
+
+function independentlyAuditCommittedDocuments(
+  runtime: TeeRuntime<Config>,
+  key: string,
+  manifest: PrivatePairwiseResult,
+  focusEvidence: OnchainEvidence,
+  actors: ActorDirectory,
+): IndependentAudit {
+  const errors: string[] = [];
+  const rowHashWarnings: string[] = [];
+  const documents = new Map<string, IndependentlyVerifiedEvidence>();
+  const seenEvidenceIds = new Set<string>();
+
+  for (const evidenceId of manifest.evidenceIds) {
+    const normalizedId = lower(evidenceId);
+    if (seenEvidenceIds.has(normalizedId)) {
+      errors.push(`${evidenceId}: evidenceId duplicado no resultado privado`);
+      continue;
+    }
+    seenEvidenceIds.add(normalizedId);
+
+    try {
+      const onchain = sameHex(evidenceId, focusEvidence.evidenceId)
+        ? focusEvidence
+        : readEvidence(runtime, evidenceId);
+      if (!sameHex(onchain.evidenceId, evidenceId)) {
+        throw new Error(`${evidenceId}: getEvidence retornou outro evidenceId`);
+      }
+
+      const row = loadEvidenceRow(runtime, key, evidenceId);
+      const document = loadEvidenceDocument(runtime, key, row, onchain);
+      const normalized = normalizeCommittedEvidence(
+        document,
+        row,
+        onchain,
+        actors,
+      );
+
+      if (normalized.lotReference !== manifest.lotReference) {
+        throw new Error(
+          `${evidenceId}: lotId do JSON=${String(normalized.lotReference)} diverge do resultado=${manifest.lotReference}`,
+        );
+      }
+
+      const rowHashMatchesChain = sameHex(
+        row.evidence_hash,
+        onchain.evidenceHash,
+      );
+      if (!rowHashMatchesChain) {
+        rowHashWarnings.push(
+          `${evidenceId}: hash do indice Supabase diverge da blockchain; JSON confirmou a blockchain`,
+        );
+      }
+
+      documents.set(normalizedId, {
+        row,
+        onchain,
+        document,
+        normalized,
+        rowHashMatchesChain,
+      });
+    } catch (error) {
+      errors.push(
+        error instanceof Error
+          ? error.message
+          : `${evidenceId}: falha desconhecida na verificacao independente`,
+      );
+    }
+  }
+
+  if (!seenEvidenceIds.has(lower(manifest.sourceEvidenceId))) {
+    errors.push("sourceEvidenceId nao esta em evidenceIds");
+  }
+
+  const physicalEdgeKeys = new Set<string>();
+  const allEdgeKeys = new Set<string>();
+  for (const edge of manifest.correlationEdges) {
+    const edgeKey = [
+      lower(edge.fromEvidenceId),
+      lower(edge.toEvidenceId),
+      edge.relationType,
+    ].join("|");
+    if (allEdgeKeys.has(edgeKey)) {
+      errors.push(`${edgeKey}: correlationEdge duplicada`);
+      continue;
+    }
+    allEdgeKeys.add(edgeKey);
+    if (edge.relationType === "PHYSICAL_HANDOFF") physicalEdgeKeys.add(edgeKey);
+
+    const from = documents.get(lower(edge.fromEvidenceId));
+    const to = documents.get(lower(edge.toEvidenceId));
+    if (!from || !to) {
+      errors.push(`${edgeKey}: documentos comprometidos indisponiveis`);
+      continue;
+    }
+    if (edge.lotReference !== manifest.lotReference) {
+      errors.push(`${edgeKey}: lotReference da aresta diverge do resultado`);
+    }
+
+    if (edge.relationType === "LAB_ANALYSIS") {
+      if (
+        from.normalized.actorType !== "LABORATORY" ||
+        !idEquals(from.normalized.destinationActorId, to.onchain.actorId)
+      ) {
+        errors.push(`${edgeKey}: relacao LAB_ANALYSIS nao e reproduzivel dos JSONs`);
+      }
+    } else if (
+      from.normalized.actorType === "LABORATORY" ||
+      to.normalized.actorType === "LABORATORY" ||
+      !idEquals(from.normalized.destinationActorId, to.onchain.actorId) ||
+      !idEquals(to.normalized.originActorId, from.onchain.actorId)
+    ) {
+      errors.push(`${edgeKey}: PHYSICAL_HANDOFF nao e reproduzivel dos JSONs`);
+    }
+  }
+
+  const pairKeys = new Set<string>();
+  const reconstructedStatuses: MassStatus[] = [];
+  for (const pair of manifest.massPairs) {
+    const pairKey = [
+      lower(pair.fromEvidenceId),
+      lower(pair.toEvidenceId),
+      pair.relationType,
+    ].join("|");
+    if (pairKeys.has(pairKey)) {
+      errors.push(`${pair.pairId}: par de massa duplicado`);
+      continue;
+    }
+    pairKeys.add(pairKey);
+
+    if (manifest.schema === "ExploreChem/PrivateLotCorrelatedPairwiseMass/v4") {
+      const expectedPairId = hashText(
+        stableJson({
+          domain: "ExploreChem/LotPairwiseMassPair/v4",
+          lotReference: pair.lotReference,
+          fromEvidenceId: pair.fromEvidenceId,
+          toEvidenceId: pair.toEvidenceId,
+          relationType: pair.relationType,
+        }),
+      );
+      if (!sameHex(pair.pairId, expectedPairId)) {
+        errors.push(`${pair.pairId}: pairId legado nao e reproduzivel`);
+      }
+    }
+
+    if (!allEdgeKeys.has(pairKey)) {
+      errors.push(`${pair.pairId}: par nao possui correlationEdge correspondente`);
+    }
+
+    const from = documents.get(lower(pair.fromEvidenceId));
+    const to = documents.get(lower(pair.toEvidenceId));
+    if (!from || !to) {
+      errors.push(`${pair.pairId}: documentos do par indisponiveis`);
+      continue;
+    }
+    if (!sameHex(pair.fromActorId, from.onchain.actorId)) {
+      errors.push(`${pair.pairId}: fromActorId diverge da blockchain`);
+    }
+    if (!sameHex(pair.toActorId, to.onchain.actorId)) {
+      errors.push(`${pair.pairId}: toActorId diverge da blockchain`);
+    }
+    if (pair.lotReference !== manifest.lotReference) {
+      errors.push(`${pair.pairId}: lotReference diverge do resultado`);
+    }
+
+    const left =
+      pair.relationType === "LAB_ANALYSIS"
+        ? { massMg: null, field: "NO_PHYSICAL_MASS" }
+        : outgoingMass(from, to);
+    const right =
+      pair.relationType === "LAB_ANALYSIS"
+        ? { massMg: null, field: "NO_PHYSICAL_MASS" }
+        : incomingMass(to);
+    const expectedLeft = left.massMg?.toString() ?? null;
+    const expectedRight = right.massMg?.toString() ?? null;
+    const expectedDelta =
+      left.massMg !== null && right.massMg !== null
+        ? (left.massMg - right.massMg).toString()
+        : null;
+    const expectedStatus: MassStatus =
+      expectedDelta === null
+        ? "NAO_ATESTADO"
+        : expectedDelta === "0"
+          ? "CONFORME"
+          : "DIVERGENTE";
+    reconstructedStatuses.push(expectedStatus);
+
+    if (pair.leftMassMg !== expectedLeft) {
+      errors.push(`${pair.pairId}: leftMassMg nao confere com o JSON comprometido`);
+    }
+    if (pair.rightMassMg !== expectedRight) {
+      errors.push(`${pair.pairId}: rightMassMg nao confere com o JSON comprometido`);
+    }
+    if (pair.leftMassField !== left.field) {
+      errors.push(`${pair.pairId}: leftMassField nao confere com a regra independente`);
+    }
+    if (pair.rightMassField !== right.field) {
+      errors.push(`${pair.pairId}: rightMassField nao confere com a regra independente`);
+    }
+    if (pair.deltaMg !== expectedDelta) {
+      errors.push(`${pair.pairId}: deltaMg nao confere com os JSONs comprometidos`);
+    }
+    if (pair.status !== expectedStatus) {
+      errors.push(`${pair.pairId}: status nao confere com os JSONs comprometidos`);
+    }
+  }
+
+  for (const edgeKey of physicalEdgeKeys) {
+    if (!pairKeys.has(edgeKey)) {
+      errors.push(`${edgeKey}: PHYSICAL_HANDOFF sem par de massa`);
+    }
+  }
+
+  const expectedOverallStatus: MassStatus = reconstructedStatuses.some(
+    (status) => status === "DIVERGENTE",
+  )
+    ? "DIVERGENTE"
+    : reconstructedStatuses.length > 0 &&
+        reconstructedStatuses.every((status) => status === "CONFORME")
+      ? "CONFORME"
+      : "NAO_ATESTADO";
+
+  if (manifest.status !== expectedOverallStatus) {
+    errors.push(
+      `status global privado=${manifest.status} reconstruido dos JSONs=${expectedOverallStatus}`,
+    );
+  }
+
+  return {
+    evidenceCount: documents.size,
+    pairCount: pairKeys.size,
+    rowHashWarnings,
+    errors,
+    documents,
+  };
+}
+
 function recomputeMassVerdict(manifest: PrivatePairwiseResult) {
   const errors: string[] = [];
   const statuses: MassStatus[] = [];
@@ -1522,14 +2095,20 @@ function run(runtime: TeeRuntime<Config>): string {
       ? "CURRENT_V1"
       : "LEGACY_V4_VERIFIED";
 
+  const actors = loadActorDirectory(runtime, key);
+  const independentAudit = independentlyAuditCommittedDocuments(
+    runtime,
+    key,
+    manifest,
+    evidence,
+    actors,
+  );
+
   let elementalAudit: ElementalAudit;
   try {
-    const evidenceDocument = loadEvidenceDocument(
-      runtime,
-      key,
-      row,
-      evidence,
-    );
+    const evidenceDocument =
+      independentAudit.documents.get(lower(evidenceId))?.document ??
+      loadEvidenceDocument(runtime, key, row, evidence);
     elementalAudit = auditElementalBalance(
       evidenceDocument,
       evidence.actorId,
@@ -1650,6 +2229,9 @@ function run(runtime: TeeRuntime<Config>): string {
 
   const allErrors = [
     ...integrityErrors,
+    ...independentAudit.errors.map(
+      (error) => `independent: ${error}`,
+    ),
     ...massAudit.errors,
     ...elementalErrors,
   ];
@@ -1690,7 +2272,7 @@ function run(runtime: TeeRuntime<Config>): string {
     row.storage_bucket,
     auditReceiptPath(evidenceId, resultId),
     {
-      schema: "ExploreChem/PairwiseMassAudit/v1",
+      schema: "ExploreChem/PairwiseMassAudit/v2",
       auditedManifestSchema: manifest.schema,
       compatibilityMode,
       evidenceId,
@@ -1701,6 +2283,16 @@ function run(runtime: TeeRuntime<Config>): string {
       aggregateInputHash: onchainResult.aggregateInputHash,
       calculationVersion: onchainResult.calculationVersion,
       previousResultId: onchainResult.previousResultId,
+      independentVerification: {
+        status:
+          independentAudit.errors.length === 0
+            ? "VERIFIED_FROM_COMMITTED_JSONS"
+            : "DIVERGENT",
+        evidenceCount: independentAudit.evidenceCount,
+        pairCount: independentAudit.pairCount,
+        rowHashWarnings: independentAudit.rowHashWarnings,
+        errors: independentAudit.errors,
+      },
       recalculatedMassStatus: massAudit.expectedOverallStatus,
       elementalBalanceRequired:
         runtime.config.requireElementalBalance === true,
@@ -1732,6 +2324,16 @@ function run(runtime: TeeRuntime<Config>): string {
     compatibilityMode,
     resultHash: onchainResult.resultHash,
     aggregateInputHash: onchainResult.aggregateInputHash,
+    independentVerification: {
+      status:
+        independentAudit.errors.length === 0
+          ? "VERIFIED_FROM_COMMITTED_JSONS"
+          : "DIVERGENT",
+      evidenceCount: independentAudit.evidenceCount,
+      pairCount: independentAudit.pairCount,
+      rowHashWarnings: independentAudit.rowHashWarnings,
+      errors: independentAudit.errors,
+    },
     declaredMassStatus: manifest.status,
     recalculatedMassStatus: massAudit.expectedOverallStatus,
     elementalBalanceRequired:
@@ -1785,4 +2387,3 @@ export async function main() {
 
   await runner.run(initWorkflow);
 }
-
