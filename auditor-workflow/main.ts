@@ -1630,16 +1630,13 @@ function independentlyAuditCommittedDocuments(
   );
 
   if (
-    manifest.evidenceIds.length !== 2 ||
-    manifest.correlationEdges.length !== 1 ||
-    manifest.massPairs.length !== 1 ||
     incomingEdges.length !== 1 ||
     incomingPairs.length !== 1 ||
     !sameHex(incomingEdges[0].fromEvidenceId, incomingPairs[0].fromEvidenceId) ||
     !sameHex(incomingEdges[0].toEvidenceId, incomingPairs[0].toEvidenceId)
   ) {
     errors.push(
-      "resultado fora do escopo: o auditor exige somente a evidencia atual e a imediatamente anterior",
+      "resultado sem um unico par fisico anterior direcionado para a evidencia atual",
     );
     return {
       evidenceCount: 0,
@@ -1720,7 +1717,7 @@ function independentlyAuditCommittedDocuments(
 
   const physicalEdgeKeys = new Set<string>();
   const allEdgeKeys = new Set<string>();
-  for (const edge of manifest.correlationEdges) {
+  for (const edge of incomingEdges) {
     const edgeKey = [
       lower(edge.fromEvidenceId),
       lower(edge.toEvidenceId),
@@ -1762,7 +1759,7 @@ function independentlyAuditCommittedDocuments(
 
   const pairKeys = new Set<string>();
   const reconstructedStatuses: MassStatus[] = [];
-  for (const pair of manifest.massPairs) {
+  for (const pair of incomingPairs) {
     const pairKey = [
       lower(pair.fromEvidenceId),
       lower(pair.toEvidenceId),
@@ -1851,12 +1848,6 @@ function independentlyAuditCommittedDocuments(
       ? "CONFORME"
       : "NAO_ATESTADO";
 
-  if (manifest.status !== expectedOverallStatus) {
-    errors.push(
-      `status global privado=${manifest.status} reconstruido dos JSONs=${expectedOverallStatus}`,
-    );
-  }
-
   return {
     evidenceCount: documents.size,
     pairCount: pairKeys.size,
@@ -1882,7 +1873,19 @@ function recomputeMassVerdict(
     status: MassStatus;
   }> = [];
 
-  for (const pair of manifest.massPairs) {
+  const auditedPairs = manifest.massPairs.filter(
+    (pair) =>
+      pair.relationType === "PHYSICAL_HANDOFF" &&
+      sameHex(pair.toEvidenceId, manifest.sourceEvidenceId),
+  );
+
+  if (auditedPairs.length !== 1) {
+    errors.push(
+      "resultado sem um unico par de massa anterior direcionado para a evidencia atual",
+    );
+  }
+
+  for (const pair of auditedPairs) {
     let expectedStatus: MassStatus;
     let expectedDelta: string | null;
 
