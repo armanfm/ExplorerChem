@@ -3102,6 +3102,7 @@ function clientBalanceRecompute(manifest){
       evidenceIds:manifest.evidenceIds,
       correlationEdges:manifest.correlationEdges,
       massPairs:manifest.massPairs,
+      ...(manifest.elementalCalculations===undefined?{}:{elementalCalculations:manifest.elementalCalculations}),
       status:manifest.status
     };
     const aggregateInputHash=clientBalanceHashStable({
@@ -3634,6 +3635,51 @@ function clientBalanceRenderDashboard(){
 
   $("#clientLiveDashboard")?.classList.remove("client-live-hidden");
   clientBalanceRenderChart(pairs,structuralDivergence);
+  clientBalanceRenderHistoryChart();
+}
+function clientBalanceRenderHistoryChart(){
+  let panel=document.getElementById("clientMassHistoryChart");
+  if(!panel){
+    const history=document.getElementById("clientHistoryRows");
+    if(!history) return;
+    panel=document.createElement("section");
+    panel.id="clientMassHistoryChart";
+    panel.style.cssText="margin:24px 0;padding:20px;border:1px solid #24534f;border-radius:16px;overflow:auto";
+    history.closest("table").parentElement.before(panel);
+  }
+  const points=[];
+  const seen=new Set();
+  for(const result of [...CLIENT_BALANCE_RESULTS].sort((a,b)=>a.createdAt-b.createdAt)){
+    for(const pair of result.manifest.massPairs||[]){
+      if(pair.leftMassMg==null||pair.rightMassMg==null) continue;
+      const left=Number(pair.leftMassMg),right=Number(pair.rightMassMg);
+      if(!Number.isFinite(left)||!Number.isFinite(right)||left<=0) continue;
+      const key=pair.pairId||[pair.fromEvidenceId,pair.toEvidenceId,pair.leftMassField,pair.rightMassField].join("|");
+      if(seen.has(key)) continue;
+      seen.add(key);
+      points.push({result,pair,value:100*(left-right)/left});
+    }
+  }
+  panel.innerHTML='<h3>Mass difference history</h3><p>One point per unique mass pair, ordered by first result date. Reference band: ±2% of outgoing mass [ARBITRATED]. This reference does not change the audit verdict. Hover for details; click a point to open its result.</p>';
+  if(!points.length){panel.insertAdjacentHTML("beforeend","<p>No comparable mass pairs with a positive outgoing mass.</p>");return;}
+  const width=900,height=280,pad=50;
+  const extent=Math.max(3,...points.map(p=>Math.abs(p.value)*1.15));
+  const x=i=>pad+(width-2*pad)*(points.length===1?.5:i/(points.length-1));
+  const y=v=>height/2-v*(height/2-pad)/extent;
+  let svg='<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 280" role="img" aria-label="Historical percentage mass differences with a plus or minus two percent reference band" style="width:100%;min-width:560px">';
+  svg+='<rect x="50" y="'+y(2)+'" width="800" height="'+(y(-2)-y(2))+'" fill="#36bfa0" opacity="0.15"/>';
+  for(const v of [-extent,-2,0,2,extent]) svg+='<line x1="50" x2="850" y1="'+y(v)+'" y2="'+y(v)+'" stroke="#63938a" stroke-dasharray="4 4"/><text x="2" y="'+(y(v)+4)+'" fill="#bbd9d3" font-size="12">'+v.toFixed(1)+'%</text>';
+  points.forEach((p,i)=>{
+    const title=clientBalanceDateFromUnix(p.result.createdAt)+' | '+p.result.manifest.lotReference+' | '+p.value.toFixed(4)+'% | '+clientBalanceKgFromMg(p.pair.leftMassMg)+' → '+clientBalanceKgFromMg(p.pair.rightMassMg)+' | Audit: '+p.result.auditState;
+    svg+='<circle data-history-point="'+i+'" tabindex="0" role="button" aria-label="'+escaparHtml(title)+'" cx="'+x(i)+'" cy="'+y(p.value)+'" r="6" fill="'+(Math.abs(p.value)<=2?'#37d8be':'#ff907b')+'" style="cursor:pointer"><title>'+escaparHtml(title)+'</title></circle>';
+  });
+  svg+='<text x="50" y="275" fill="#bbd9d3" font-size="12">'+escaparHtml(clientBalanceDateFromUnix(points[0].result.createdAt))+'</text><text x="850" y="275" text-anchor="end" fill="#bbd9d3" font-size="12">'+escaparHtml(clientBalanceDateFromUnix(points[points.length-1].result.createdAt))+'</text></svg>';
+  panel.insertAdjacentHTML("beforeend",svg);
+  panel.querySelectorAll("[data-history-point]").forEach(node=>{
+    const open=()=>{document.getElementById("clientLiveResultSelect").value=points[Number(node.dataset.historyPoint)].result.resultId;clientBalanceRenderDashboard();};
+    node.onclick=open;
+    node.onkeydown=e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();open();}};
+  });
 }
 function clientBalanceRenderChart(pairs,structuralDivergence=false){
   if(CLIENT_BALANCE_CHART){
