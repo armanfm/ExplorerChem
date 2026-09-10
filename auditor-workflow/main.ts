@@ -50,8 +50,8 @@ import { z } from "zod";
  * Flow:
  *   MATCHED + pairwise/elemental compliant   -> VERIFIED
  *   MATCHED + DIVERGENT result               -> DIVERGENT
- *   MATCHED + integrity/calculation failure  -> DIVERGENT
- *   MATCHED + NOT_ATTESTED result            -> DIVERGENT
+ *   MATCHED + integrity/business divergence   -> DIVERGENT
+ *   MATCHED + infrastructure/access failure   -> remains MATCHED (RETRY_REQUIRED)
  *   MATCHED with no result yet               -> remains MATCHED
  *
  * The blockchain is always the authority. Supabase is mirrored only after
@@ -81,9 +81,12 @@ const configSchema = z.object({
   gasLimit: z.string().regex(/^\d+$/),
   auditSchedule: z.string().min(1).optional(),
   requireElementalBalance: z.boolean().optional(),
+  massToleranceBps: z.number().int().min(0).max(10_000).optional(),
 });
 
 type Config = z.infer<typeof configSchema>;
+
+class IntegrityViolation extends Error {}
 
 const actorTypeSchema = z.enum([
   "MINER",
@@ -208,39 +211,13 @@ const currentPrivatePairwiseResultSchema = z.object({
   onchain: z.unknown().optional(),
 });
 
-const legacyPrivatePairwiseResultSchema = z.object({
-  schema: z.literal("ExploreChem/PrivateLotCorrelatedPairwiseMass/v4"),
-  sourceEvidenceId: bytes32Schema,
-  sourceActorId: bytes32Schema,
-  sourceEvidenceHash: bytes32Schema,
-  lotReference: z.string().min(1),
-  evidenceIds: z.array(bytes32Schema).min(1),
-  correlationEdges: z.array(correlationEdgeSchema),
-  massPairs: z.array(pairMassResultSchema),
-  relationFingerprint: bytes32Schema,
-  resultPlainHash: bytes32Schema,
-  salt: bytes32Schema,
-  aggregateInputHash: bytes32Schema,
-  resultHash: bytes32Schema,
-  resultId: bytes32Schema,
-  status: massStatusSchema,
-  onchain: z.unknown().optional(),
-});
-
-const privatePairwiseResultSchema = z.discriminatedUnion("schema", [
-  currentPrivatePairwiseResultSchema,
-  legacyPrivatePairwiseResultSchema,
-]);
-
 type CurrentPrivatePairwiseResult = z.infer<
   typeof currentPrivatePairwiseResultSchema
 >;
 
-type LegacyPrivatePairwiseResult = z.infer<
-  typeof legacyPrivatePairwiseResultSchema
->;
+type PrivatePairwiseResult = CurrentPrivatePairwiseResult;
 
-type PrivatePairwiseResult = z.infer<typeof privatePairwiseResultSchema>;
+const privatePairwiseResultSchema = currentPrivatePairwiseResultSchema;
 
 const decimalSchema = z
   .union([z.string(), z.number()])
@@ -702,20 +679,27 @@ function loadEvidenceDocument(
       : keccak256(bytes);
 
   if (!sameHex(recomputedHash, evidence.evidenceHash)) {
-    throw new Error(
+    throw new IntegrityViolation(
       `${evidence.evidenceId}: hash recalculado do JSON diverge da blockchain`,
     );
   }
 
   if (!row.mime_type.toLowerCase().includes("json")) {
-    throw new Error(
+    throw new IntegrityViolation(
       `${evidence.evidenceId}: auditor independente exige JSON; mime=${row.mime_type}`,
     );
   }
 
-  const parsed: unknown = JSON.parse(new TextDecoder().decode(bytes));
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(new TextDecoder().decode(bytes));
+  } catch {
+    throw new IntegrityViolation(
+      `${evidence.evidenceId}: documento comprometido nao e JSON valido`,
+    );
+  }
   if (parsed === null || Array.isArray(parsed) || typeof parsed !== "object") {
-    throw new Error("documento original precisa ser um objeto JSON");
+    throw new IntegrityViolation("documento original precisa ser um objeto JSON");
   }
 
   return parsed as Record<string, unknown>;
@@ -1415,84 +1399,16 @@ function recomputeCurrentManifestCommitments(
   };
 }
 
-function recomputeLegacyManifestCommitments(
-  manifest: LegacyPrivatePairwiseResult,
-) {
-  const result = {
-    schema: "ExploreChem/LotCorrelatedPairwiseMassResult/v4" as const,
-    focusEvidenceId: manifest.sourceEvidenceId,
-    lotReference: manifest.lotReference,
-    evidenceIds: manifest.evidenceIds,
-    correlationEdges: manifest.correlationEdges,
-    massPairs: manifest.massPairs,
-    status: manifest.status,
-  };
-
-  const resultPlainHash = hashText(stableJson(result));
-
-  const relationFingerprint = hashText(
-    stableJson({
-      domain: "ExploreChem/LotRelationFingerprint/v4",
-      lotReference: result.lotReference,
-      evidenceIds: result.evidenceIds,
-      correlationEdges: result.correlationEdges,
-      massPairs: result.massPairs,
-    }),
-  );
-
-  const aggregateInputHash = hashText(
-    stableJson({
-      domain: "ExploreChem/LotComponentInput/v4",
-      salt: manifest.salt,
-      focusEvidenceId: manifest.sourceEvidenceId,
-      lotReference: result.lotReference,
-      evidenceIds: result.evidenceIds,
-      correlationEdges: result.correlationEdges,
-    }),
-  );
-
-  const resultHash = hashText(
-    stableJson({
-      domain: "ExploreChem/LotComponentResult/v4",
-      salt: manifest.salt,
-      relationFingerprint,
-      result,
-    }),
-  );
-
-  const resultId = hashText(
-    `ExploreChem/LotComponentResultId/v4|${manifest.sourceActorId}|${manifest.sourceEvidenceId}|${relationFingerprint}|${resultHash}`,
-  );
-
-  return {
-    resultPlainHash,
-    relationFingerprint,
-    aggregateInputHash,
-    resultHash,
-    resultId,
-  };
-}
-
 type RecomputedManifestCommitments = {
   aggregateInputHash: Hex;
   resultHash: Hex;
   resultId: Hex;
-  resultPlainHash: Hex | null;
-  relationFingerprint: Hex | null;
 };
 
 function recomputeManifestCommitments(
   manifest: PrivatePairwiseResult,
 ): RecomputedManifestCommitments {
-  if (manifest.schema === "ExploreChem/PrivatePairwiseMass/v1") {
-    return {
-      ...recomputeCurrentManifestCommitments(manifest),
-      resultPlainHash: null,
-      relationFingerprint: null,
-    };
-  }
-
-  return recomputeLegacyManifestCommitments(manifest);
+  return recomputeCurrentManifestCommitments(manifest);
 }
 
 function actorIdFromValue(
@@ -1702,7 +1618,44 @@ function independentlyAuditCommittedDocuments(
   const documents = new Map<string, IndependentlyVerifiedEvidence>();
   const seenEvidenceIds = new Set<string>();
 
-  for (const evidenceId of manifest.evidenceIds) {
+  const incomingEdges = manifest.correlationEdges.filter(
+    (edge) =>
+      edge.relationType === "PHYSICAL_HANDOFF" &&
+      sameHex(edge.toEvidenceId, manifest.sourceEvidenceId),
+  );
+  const incomingPairs = manifest.massPairs.filter(
+    (pair) =>
+      pair.relationType === "PHYSICAL_HANDOFF" &&
+      sameHex(pair.toEvidenceId, manifest.sourceEvidenceId),
+  );
+
+  if (
+    manifest.evidenceIds.length !== 2 ||
+    manifest.correlationEdges.length !== 1 ||
+    manifest.massPairs.length !== 1 ||
+    incomingEdges.length !== 1 ||
+    incomingPairs.length !== 1 ||
+    !sameHex(incomingEdges[0].fromEvidenceId, incomingPairs[0].fromEvidenceId) ||
+    !sameHex(incomingEdges[0].toEvidenceId, incomingPairs[0].toEvidenceId)
+  ) {
+    errors.push(
+      "resultado fora do escopo: o auditor exige somente a evidencia atual e a imediatamente anterior",
+    );
+    return {
+      evidenceCount: 0,
+      pairCount: 0,
+      rowHashWarnings,
+      errors,
+      documents,
+    };
+  }
+
+  const directEvidenceIds = [
+    incomingEdges[0].fromEvidenceId,
+    manifest.sourceEvidenceId,
+  ];
+
+  for (const evidenceId of directEvidenceIds) {
     const normalizedId = lower(evidenceId);
     if (seenEvidenceIds.has(normalizedId)) {
       errors.push(`${evidenceId}: evidenceId duplicado no resultado privado`);
@@ -1715,7 +1668,9 @@ function independentlyAuditCommittedDocuments(
         ? focusEvidence
         : readEvidence(runtime, evidenceId);
       if (!sameHex(onchain.evidenceId, evidenceId)) {
-        throw new Error(`${evidenceId}: getEvidence retornou outro evidenceId`);
+        throw new IntegrityViolation(
+          `${evidenceId}: getEvidence retornou outro evidenceId`,
+        );
       }
 
       const row = loadEvidenceRow(runtime, key, evidenceId);
@@ -1728,7 +1683,7 @@ function independentlyAuditCommittedDocuments(
       );
 
       if (normalized.lotReference !== manifest.lotReference) {
-        throw new Error(
+        throw new IntegrityViolation(
           `${evidenceId}: lotId do JSON=${String(normalized.lotReference)} diverge do resultado=${manifest.lotReference}`,
         );
       }
@@ -1751,11 +1706,11 @@ function independentlyAuditCommittedDocuments(
         rowHashMatchesChain,
       });
     } catch (error) {
-      errors.push(
-        error instanceof Error
-          ? error.message
-          : `${evidenceId}: falha desconhecida na verificacao independente`,
-      );
+      if (error instanceof IntegrityViolation) {
+        errors.push(error.message);
+        continue;
+      }
+      throw error;
     }
   }
 
@@ -1818,21 +1773,6 @@ function independentlyAuditCommittedDocuments(
       continue;
     }
     pairKeys.add(pairKey);
-
-    if (manifest.schema === "ExploreChem/PrivateLotCorrelatedPairwiseMass/v4") {
-      const expectedPairId = hashText(
-        stableJson({
-          domain: "ExploreChem/LotPairwiseMassPair/v4",
-          lotReference: pair.lotReference,
-          fromEvidenceId: pair.fromEvidenceId,
-          toEvidenceId: pair.toEvidenceId,
-          relationType: pair.relationType,
-        }),
-      );
-      if (!sameHex(pair.pairId, expectedPairId)) {
-        errors.push(`${pair.pairId}: pairId legado nao e reproduzivel`);
-      }
-    }
 
     if (!allEdgeKeys.has(pairKey)) {
       errors.push(`${pair.pairId}: par nao possui correlationEdge correspondente`);
@@ -1926,9 +1866,21 @@ function independentlyAuditCommittedDocuments(
   };
 }
 
-function recomputeMassVerdict(manifest: PrivatePairwiseResult) {
+function recomputeMassVerdict(
+  manifest: PrivatePairwiseResult,
+  toleranceBps: number,
+) {
   const errors: string[] = [];
   const statuses: MassStatus[] = [];
+  const toleranceChecks: Array<{
+    pairId: Hex;
+    absoluteDeltaMg: string | null;
+    toleranceReference: "OUTGOING_MASS";
+    toleranceReferenceMassMg: string | null;
+    toleranceBps: number;
+    toleranceLimitMg: string | null;
+    status: MassStatus;
+  }> = [];
 
   for (const pair of manifest.massPairs) {
     let expectedStatus: MassStatus;
@@ -1937,20 +1889,35 @@ function recomputeMassVerdict(manifest: PrivatePairwiseResult) {
     if (pair.leftMassMg === null || pair.rightMassMg === null) {
       expectedStatus = "NAO_ATESTADO";
       expectedDelta = null;
+      toleranceChecks.push({
+        pairId: pair.pairId,
+        absoluteDeltaMg: null,
+        toleranceReference: "OUTGOING_MASS",
+        toleranceReferenceMassMg: pair.leftMassMg,
+        toleranceBps,
+        toleranceLimitMg: null,
+        status: expectedStatus,
+      });
     } else {
       const left = BigInt(pair.leftMassMg);
       const right = BigInt(pair.rightMassMg);
-      expectedDelta = (left - right).toString();
-      expectedStatus = left === right ? "CONFORME" : "DIVERGENTE";
+      const delta = left - right;
+      const absoluteDelta = delta < 0n ? -delta : delta;
+      const allowed = absoluteDelta * 10_000n <= left * BigInt(toleranceBps);
+      expectedDelta = delta.toString();
+      expectedStatus = allowed ? "CONFORME" : "DIVERGENTE";
+      toleranceChecks.push({
+        pairId: pair.pairId,
+        absoluteDeltaMg: absoluteDelta.toString(),
+        toleranceReference: "OUTGOING_MASS",
+        toleranceReferenceMassMg: left.toString(),
+        toleranceBps,
+        toleranceLimitMg: ((left * BigInt(toleranceBps)) / 10_000n).toString(),
+        status: expectedStatus,
+      });
     }
 
     statuses.push(expectedStatus);
-
-    if (pair.status !== expectedStatus) {
-      errors.push(
-        `${pair.pairId}: status declarado=${pair.status} esperado=${expectedStatus}`,
-      );
-    }
 
     if (pair.deltaMg !== expectedDelta) {
       errors.push(
@@ -1959,26 +1926,15 @@ function recomputeMassVerdict(manifest: PrivatePairwiseResult) {
     }
   }
 
-  let expectedOverallStatus: MassStatus;
+  const expectedOverallStatus: MassStatus = statuses.some(
+    (status) => status === "DIVERGENTE",
+  )
+    ? "DIVERGENTE"
+    : statuses.length > 0 && statuses.every((status) => status === "CONFORME")
+      ? "CONFORME"
+      : "NAO_ATESTADO";
 
-  if (statuses.some((status) => status === "DIVERGENTE")) {
-    expectedOverallStatus = "DIVERGENTE";
-  } else if (
-    statuses.length > 0 &&
-    statuses.every((status) => status === "CONFORME")
-  ) {
-    expectedOverallStatus = "CONFORME";
-  } else {
-    expectedOverallStatus = "NAO_ATESTADO";
-  }
-
-  if (manifest.status !== expectedOverallStatus) {
-    errors.push(
-      `status global declarado=${manifest.status} esperado=${expectedOverallStatus}`,
-    );
-  }
-
-  return { expectedOverallStatus, errors };
+  return { expectedOverallStatus, toleranceChecks, errors };
 }
 
 function auditReport(
@@ -2090,10 +2046,7 @@ function run(runtime: TeeRuntime<Config>): string {
     row.storage_bucket,
     resultPath,
   );
-  const compatibilityMode =
-    manifest.schema === "ExploreChem/PrivatePairwiseMass/v1"
-      ? "CURRENT_V1"
-      : "LEGACY_V4_VERIFIED";
+  const compatibilityMode = "CURRENT_V1_DIRECT_PREVIOUS_ONLY";
 
   const actors = loadActorDirectory(runtime, key);
   const independentAudit = independentlyAuditCommittedDocuments(
@@ -2152,10 +2105,7 @@ function run(runtime: TeeRuntime<Config>): string {
     integrityErrors.push("resultado on-chain pertence a outro ator");
   }
 
-  const expectedCalculationVersion =
-    manifest.schema === "ExploreChem/PrivatePairwiseMass/v1"
-      ? manifest.calculationVersion
-      : 1;
+  const expectedCalculationVersion = manifest.calculationVersion;
 
   if (onchainResult.calculationVersion !== expectedCalculationVersion) {
     integrityErrors.push(
@@ -2165,25 +2115,8 @@ function run(runtime: TeeRuntime<Config>): string {
 
   const recomputed = recomputeManifestCommitments(manifest);
 
-  if (
-    manifest.schema === "ExploreChem/PrivatePairwiseMass/v1" &&
-    !sameHex(recomputed.resultHash, manifest.canonicalResultHash)
-  ) {
+  if (!sameHex(recomputed.resultHash, manifest.canonicalResultHash)) {
     integrityErrors.push("canonicalResultHash privado nao e reproduzivel");
-  }
-  if (manifest.schema === "ExploreChem/PrivateLotCorrelatedPairwiseMass/v4") {
-    if (
-      recomputed.resultPlainHash === null ||
-      !sameHex(recomputed.resultPlainHash, manifest.resultPlainHash)
-    ) {
-      integrityErrors.push("resultPlainHash legado nao e reproduzivel");
-    }
-    if (
-      recomputed.relationFingerprint === null ||
-      !sameHex(recomputed.relationFingerprint, manifest.relationFingerprint)
-    ) {
-      integrityErrors.push("relationFingerprint legado nao e reproduzivel");
-    }
   }
   if (!sameHex(recomputed.aggregateInputHash, manifest.aggregateInputHash)) {
     integrityErrors.push("aggregateInputHash privado nao e reproduzivel");
@@ -2213,7 +2146,8 @@ function run(runtime: TeeRuntime<Config>): string {
     integrityErrors.push("verifyResultHash retornou false");
   }
 
-  const massAudit = recomputeMassVerdict(manifest);
+  const toleranceBps = runtime.config.massToleranceBps ?? 200;
+  const massAudit = recomputeMassVerdict(manifest, toleranceBps);
   const elementalErrors = elementalAudit.errors.map(
     (error) => `elemental: ${error}`,
   );
@@ -2236,16 +2170,9 @@ function run(runtime: TeeRuntime<Config>): string {
     ...elementalErrors,
   ];
 
-  const onchainExpectedMassStatus =
-    onchainResult.status === 1
-      ? "CONFORME"
-      : onchainResult.status === 2
-        ? "DIVERGENTE"
-        : "NAO_ATESTADO";
-
-  if (onchainExpectedMassStatus !== massAudit.expectedOverallStatus) {
+  if (massAudit.expectedOverallStatus !== "CONFORME") {
     allErrors.push(
-      `status on-chain=${onchainExpectedMassStatus} recalculado=${massAudit.expectedOverallStatus}`,
+      `massa auditada=${massAudit.expectedOverallStatus}; somente CONFORME pode ser VERIFIED`,
     );
   }
 
@@ -2294,6 +2221,12 @@ function run(runtime: TeeRuntime<Config>): string {
         errors: independentAudit.errors,
       },
       recalculatedMassStatus: massAudit.expectedOverallStatus,
+      tolerancePolicy: {
+        reference: "OUTGOING_MASS",
+        toleranceBps,
+        arbitrated: true,
+      },
+      toleranceChecks: massAudit.toleranceChecks,
       elementalBalanceRequired:
         runtime.config.requireElementalBalance === true,
       elementalAudit,
@@ -2336,6 +2269,12 @@ function run(runtime: TeeRuntime<Config>): string {
     },
     declaredMassStatus: manifest.status,
     recalculatedMassStatus: massAudit.expectedOverallStatus,
+    tolerancePolicy: {
+      reference: "OUTGOING_MASS",
+      toleranceBps,
+      arbitrated: true,
+    },
+    toleranceChecks: massAudit.toleranceChecks,
     elementalBalanceRequired:
       runtime.config.requireElementalBalance === true,
     elementalAudit,
@@ -2358,7 +2297,17 @@ function onCron(
   runtime: TeeRuntime<Config>,
   _payload: CronPayload,
 ): string {
-  return run(runtime);
+  try {
+    return run(runtime);
+  } catch (error) {
+    return JSON.stringify({
+      workflow: "PAIRWISE_MASS_AUDITOR",
+      status: "RETRY_REQUIRED",
+      message: error instanceof Error ? error.message : "falha tecnica desconhecida",
+      instruction:
+        "Nenhum veredito foi derivado da falha; a evidencia permanece MATCHED para nova tentativa.",
+    });
+  }
 }
 
 const initWorkflow = (config: Config) => {
