@@ -135,6 +135,7 @@ type EvidenceRow = z.infer<typeof evidenceRowSchema>;
 type ActorDirectory = {
   byDbId: Map<string, ActorRow>;
   byName: Map<string, Hex>;
+  byActorId: Map<string, ActorRow>;
 };
 
 type OnchainEvidence = {
@@ -163,9 +164,7 @@ type NormalizedEvidence = {
 };
 
 type IntegrityCheck = {
-  rowHashMatchesChain: boolean;
   documentHashMatchesChain: boolean;
-  ownerActorMatchesChain: boolean;
 };
 
 type VerifiedEvidence = {
@@ -211,6 +210,23 @@ type PairMassResult = {
   status: Status;
 };
 
+type ElementalCalculation = {
+  evidenceId: Hex;
+  actorId: Hex;
+  element: "Nd";
+  compound: "Nd2O3" | null;
+  calculationType: "COMPOUND_TO_ELEMENT" | "ELEMENTAL_PARTITION";
+  sourceMassField: string | null;
+  sourceMassMg: string | null;
+  gradeField: string | null;
+  gradePpm: string | null;
+  declaredElementalMassField: string;
+  declaredElementalMassMg: string;
+  calculatedElementalMassMg: string;
+  signedDifferenceMg: string;
+  formula: string;
+};
+
 type ComponentMassResult = {
   schema: "ExploreChem/PairwiseMassResult/v1";
   calculationVersion: 1;
@@ -225,6 +241,7 @@ type ComponentMassResult = {
     lotReference: string;
   }>;
   massPairs: PairMassResult[];
+  elementalCalculations: ElementalCalculation[];
   status: Status;
 };
 
@@ -391,6 +408,33 @@ function kgToMg(value: string | null): bigint | null {
   return result;
 }
 
+function decimalToScaledInteger(
+  value: unknown,
+  scaleDigits: number,
+): bigint | null {
+  const rendered = decimalString(value);
+  if (rendered === null) return null;
+
+  const [wholePart, fractionalPart = ""] = rendered.split(".");
+  const kept = fractionalPart.slice(0, scaleDigits).padEnd(scaleDigits, "0");
+  let result = BigInt(wholePart) * 10n ** BigInt(scaleDigits) + BigInt(kept || "0");
+
+  if (fractionalPart.length > scaleDigits && Number(fractionalPart[scaleDigits]) >= 5) {
+    result += 1n;
+  }
+
+  return result;
+}
+
+function percentToPpm(value: unknown): bigint | null {
+  const percentScaled = decimalToScaledInteger(value, 4);
+  return percentScaled;
+}
+
+function roundedDivide(numerator: bigint, denominator: bigint): bigint {
+  return (numerator + denominator / 2n) / denominator;
+}
+
 function idEquals(left: Hex | null, right: Hex): boolean {
   return left !== null && lower(left) === lower(right);
 }
@@ -516,6 +560,9 @@ function loadActorDirectory(
     byName: new Map(
       rows.map((row) => [canonicalName(row.display_name), row.actor_id]),
     ),
+    byActorId: new Map(
+      rows.map((row) => [lower(row.actor_id), row]),
+    ),
   };
 }
 
@@ -539,24 +586,27 @@ function loadOneEvidenceRow(
   return rows[0];
 }
 
-function loadEvidenceRowsByLot(
+function loadPreviousEvidenceRow(
   runtime: TeeRuntime<Config>,
   key: string,
   lotReference: string,
-): EvidenceRow[] {
-  /*
-   * Descoberta indexada: esta consulta nao prova correlacao. Ela so reduz o
-   * universo de candidatos. Cada linha retornada ainda tera blockchain + JSON
-   * verificados pelo TEE antes de participar da correlacao direta.
-   */
+  previousActorDbId: string,
+  focusActorDbId: string,
+  focusEvidenceId: Hex,
+): EvidenceRow | null {
   const path =
     `/rest/v1/explorerchem_evidences?select=${EVIDENCE_SELECT}` +
     `&lot_reference=eq.${encodeURIComponent(lotReference)}` +
-    `&order=chain_created_at.asc,evidence_id.asc`;
+    `&actor_db_id=eq.${encodeURIComponent(previousActorDbId)}` +
+    `&destination_actor_db_id=eq.${encodeURIComponent(focusActorDbId)}` +
+    `&evidence_id=neq.${encodeURIComponent(focusEvidenceId)}` +
+    `&order=chain_created_at.desc,evidence_id.desc&limit=1`;
 
-  return z.array(evidenceRowSchema).parse(
+  const rows = z.array(evidenceRowSchema).parse(
     getJson<unknown>(runtime, key, path),
   );
+
+  return rows[0] ?? null;
 }
 
 function loadSimulationPendingRows(
@@ -671,6 +721,37 @@ function mirrorMatch(
     },
     {
       prefer: { values: ["return=minimal"] },
+    },
+  );
+}
+
+function mirrorBalanceResult(
+  runtime: TeeRuntime<Config>,
+  key: string,
+  focus: VerifiedEvidence,
+  committed: ReturnType<typeof commitment>,
+  privateResult: Record<string, unknown>,
+  resultTxHash: Hex,
+) {
+  request(
+    runtime,
+    key,
+    "/rest/v1/explorerchem_balance_results?on_conflict=result_id",
+    "POST",
+    {
+      result_id: committed.resultId,
+      actor_db_id: focus.row.actor_db_id,
+      result_hash: committed.resultHash,
+      status: privateResult.status as Status,
+      calculation_version: privateResult.calculationVersion,
+      summary: privateResult,
+      anchor_tx_hash: resultTxHash,
+      anchored_at: new Date(runtime.now()).toISOString(),
+    },
+    {
+      prefer: {
+        values: ["resolution=merge-duplicates,return=minimal"],
+      },
     },
   );
 }
@@ -885,18 +966,6 @@ function normalizeEvidence(
    * lotId, originActor e destinationActor.
    */
 
-  if (typeof document.actorType === "string") {
-    const declaredType = document.actorType.trim().toUpperCase();
-    if (
-      (actorTypeSchema.options as readonly string[]).includes(declaredType) &&
-      declaredType !== actor.actor_type
-    ) {
-      throw new Error(
-        `${row.evidence_id}: actorType do documento diverge do cadastro`,
-      );
-    }
-  }
-
   const massBalance = recordOf(document.massBalance);
   const custody = recordOf(document.custody);
   const transformation = recordOf(document.transformation);
@@ -970,30 +1039,18 @@ function loadVerifiedEvidence(
 ): VerifiedEvidence {
   const chainEvidence = onchain ?? readEvidence(runtime, row.evidence_id);
 
-  if (lower(chainEvidence.evidenceId) !== lower(row.evidence_id)) {
-    throw new Error(`${row.evidence_id}: evidenceId on-chain divergente`);
-  }
-
   const bytes = downloadEvidenceDocument(runtime, key, row);
   const recomputedHash = recomputeEvidenceHash(row, bytes);
   const document = parseJsonDocument(row, bytes);
   const normalized = normalizeEvidence(document, row, actors);
 
   const integrity: IntegrityCheck = {
-    rowHashMatchesChain:
-      lower(row.evidence_hash) === lower(chainEvidence.evidenceHash),
     documentHashMatchesChain:
       lower(recomputedHash) === lower(chainEvidence.evidenceHash),
-    ownerActorMatchesChain:
-      lower(normalized.ownerActorId) === lower(chainEvidence.actorId),
   };
 
   if (!integrity.documentHashMatchesChain) {
     throw new Error(`${row.evidence_id}: hash do JSON diverge da blockchain`);
-  }
-
-  if (!integrity.ownerActorMatchesChain) {
-    throw new Error(`${row.evidence_id}: ator dono diverge da blockchain`);
   }
 
   return {
@@ -1426,6 +1483,143 @@ function calculatePairMass(
   };
 }
 
+const ND_IN_ND2O3_NUMERATOR = 288_484n;
+const ND2O3_MOLAR_MASS_DENOMINATOR = 336_481n;
+const PPM_DENOMINATOR = 1_000_000n;
+
+function compoundToNdCalculation(
+  evidence: VerifiedEvidence,
+  sectionName: string,
+  section: Record<string, unknown>,
+  massKey: string,
+  gradeKey: string,
+  declaredKey: string,
+  compoundValue: unknown,
+): ElementalCalculation | null {
+  const sourceMassMg = kgToMg(decimalString(section[massKey]));
+  const gradePpm = percentToPpm(section[gradeKey]);
+  const declaredMassMg = decimalToScaledInteger(section[declaredKey], 0);
+  const compound = nullableString(compoundValue)?.toUpperCase();
+
+  if (
+    sourceMassMg === null ||
+    gradePpm === null ||
+    declaredMassMg === null ||
+    compound !== "ND2O3"
+  ) {
+    return null;
+  }
+
+  const calculatedMassMg = roundedDivide(
+    sourceMassMg * gradePpm * ND_IN_ND2O3_NUMERATOR,
+    PPM_DENOMINATOR * ND2O3_MOLAR_MASS_DENOMINATOR,
+  );
+
+  return {
+    evidenceId: evidence.row.evidence_id,
+    actorId: evidence.onchain.actorId,
+    element: "Nd",
+    compound: "Nd2O3",
+    calculationType: "COMPOUND_TO_ELEMENT",
+    sourceMassField: `${sectionName}.${massKey}`,
+    sourceMassMg: sourceMassMg.toString(),
+    gradeField: `${sectionName}.${gradeKey}`,
+    gradePpm: gradePpm.toString(),
+    declaredElementalMassField: `${sectionName}.${declaredKey}`,
+    declaredElementalMassMg: declaredMassMg.toString(),
+    calculatedElementalMassMg: calculatedMassMg.toString(),
+    signedDifferenceMg: (declaredMassMg - calculatedMassMg).toString(),
+    formula: "massMg * gradePpm / 1000000 * (2*Nd)/(2*Nd+3*O)",
+  };
+}
+
+function calculateElementalEvidence(
+  evidence: VerifiedEvidence,
+): ElementalCalculation[] {
+  const document = evidence.document;
+  const material = recordOf(document.material);
+  const massBalance = recordOf(document.massBalance);
+  const transformation = recordOf(document.transformation);
+  const recovery = recordOf(document.recovery);
+  const calculations: ElementalCalculation[] = [];
+
+  const miner = compoundToNdCalculation(
+    evidence,
+    "massBalance",
+    massBalance,
+    "dryMassKg",
+    "gradeNd2O3Pct",
+    "elementalNdMassMg",
+    material.compound,
+  );
+  if (miner !== null) calculations.push(miner);
+
+  const refinerOutput = compoundToNdCalculation(
+    evidence,
+    "transformation",
+    transformation,
+    "outputProductMassKg",
+    "outputProductGradePct",
+    "elementalNdOutputMassMg",
+    transformation.outputProductCompound,
+  );
+  if (refinerOutput !== null) calculations.push(refinerOutput);
+
+  const recycler = compoundToNdCalculation(
+    evidence,
+    "recovery",
+    recovery,
+    "recoveredProductMassKg",
+    "recoveredProductGradePct",
+    "elementalNdRecoveredMassMg",
+    recovery.recoveredCompound,
+  );
+  if (recycler !== null) calculations.push(recycler);
+
+  const input = decimalToScaledInteger(
+    transformation.inputElementalNdMassMg,
+    0,
+  );
+  const finished = decimalToScaledInteger(
+    transformation.elementalNdFinishedProductMassMg,
+    0,
+  );
+  const scrap = decimalToScaledInteger(
+    transformation.elementalNdScrapMassMg,
+    0,
+  );
+
+  if (input !== null && finished !== null && scrap !== null) {
+    const calculated = finished + scrap;
+    calculations.push({
+      evidenceId: evidence.row.evidence_id,
+      actorId: evidence.onchain.actorId,
+      element: "Nd",
+      compound: nullableString(transformation.inputCompound)?.toUpperCase() === "ND2O3"
+        ? "Nd2O3"
+        : null,
+      calculationType: "ELEMENTAL_PARTITION",
+      sourceMassField: null,
+      sourceMassMg: null,
+      gradeField: null,
+      gradePpm: null,
+      declaredElementalMassField: "transformation.inputElementalNdMassMg",
+      declaredElementalMassMg: input.toString(),
+      calculatedElementalMassMg: calculated.toString(),
+      signedDifferenceMg: (input - calculated).toString(),
+      formula: "elementalNdFinishedProductMassMg + elementalNdScrapMassMg",
+    });
+  }
+
+  return calculations;
+}
+
+function calculateElementalComponent(
+  component: CorrelationComponent,
+): ElementalCalculation[] {
+  return component.evidences.flatMap(calculateElementalEvidence);
+}
+
 function calculateComponentMass(
   focus: VerifiedEvidence,
   component: CorrelationComponent,
@@ -1503,6 +1697,7 @@ function calculateComponentMass(
         }),
       ),
     massPairs,
+    elementalCalculations: calculateElementalComponent(component),
     status,
   };
 }
@@ -1822,16 +2017,6 @@ function run(
         ? "MISSING_IGNORED"
         : "MISMATCH_IGNORED";
 
-  /*
-   * Aqui esta a mudanca de escala: uma unica consulta indexada traz somente as
-   * evidencias do lote do foco. Nenhuma evidencia de outros lotes e baixada.
-   */
-  const lotRows = loadEvidenceRowsByLot(
-    runtime,
-    key,
-    focus.normalized.lotReference,
-  );
-
   if (
     focus.normalized
       .originActorId === null &&
@@ -1887,17 +2072,11 @@ function run(
         : null;
 
   /*
-   * 3) Candidatos DO MESMO LOTE, vindos da consulta indexada.
+   * 3) Busca somente a evidencia anterior direta.
    *
-   * PENDING, MATCHED, VERIFIED e DIVERGENT podem ser consultados.
-   * Um MATCH anterior continua participando da reconstituicao da cadeia.
-   *
-   * O Supabase so aponta os candidatos. Para cada linha retornada, o TEE ainda:
-   *   - le o estado/evidenceHash on-chain;
-   *   - baixa o JSON;
-   *   - recomputa o hash;
-   *   - confirma ownerActor;
-   *   - confirma que o lotId real do JSON e o mesmo do foco.
+   * O originActor comprometido no JSON do foco identifica o ator anterior.
+   * O indice filtra esse ator, o mesmo lote e o foco como destino. A consulta
+   * retorna no maximo uma linha; nenhum outro documento do lote e baixado.
    */
   const candidates:
     VerifiedEvidence[] = [];
@@ -1908,63 +2087,49 @@ function run(
       error: string;
     }> = [];
 
-  for (
-    const row of lotRows
-  ) {
-    if (
-      lower(row.evidence_id) ===
-      lower(
-        focus.row.evidence_id,
-      )
-    ) {
-      continue;
-    }
+  const previousActor =
+    focus.normalized.originActorId === null
+      ? undefined
+      : actors.byActorId.get(lower(focus.normalized.originActorId));
 
+  const previousRow = previousActor === undefined
+    ? null
+    : loadPreviousEvidenceRow(
+        runtime,
+        key,
+        focus.normalized.lotReference,
+        previousActor.id,
+        focus.row.actor_db_id,
+        focus.row.evidence_id,
+      );
+
+  if (previousRow !== null) {
     try {
       const candidateOnchain =
         readEvidence(
           runtime,
-          row.evidence_id,
+          previousRow.evidence_id,
         );
 
       if (
-        ![1, 2, 3, 4].includes(
+        [1, 2, 3, 4].includes(
           candidateOnchain.status,
         )
       ) {
-        continue;
-      }
-
-      const verified =
-        loadVerifiedEvidence(
-          runtime,
-          key,
-          row,
-          actors,
-          candidateOnchain,
+        candidates.push(
+          loadVerifiedEvidence(
+            runtime,
+            key,
+            previousRow,
+            actors,
+            candidateOnchain,
+          ),
         );
-
-      if (
-        !sameLot(
-          focus.normalized,
-          verified.normalized,
-        )
-      ) {
-        candidateErrors.push({
-          evidenceId: row.evidence_id,
-          error:
-            "candidato retornado pelo indice nao pertence ao mesmo lotId no JSON comprometido",
-        });
-        continue;
       }
-
-      candidates.push(
-        verified,
-      );
     } catch (error) {
       candidateErrors.push({
         evidenceId:
-          row.evidence_id,
+          previousRow.evidence_id,
         error:
           error instanceof Error
             ? error.message
@@ -2005,7 +2170,7 @@ function run(
       pendingSelectionMode:
         selection.mode,
       correlation:
-        "SAME_LOT_PLUS_STRICT_ORIGIN_DESTINATION_DIRECT",
+        "COMMITTED_JSON_HASH_PLUS_DIRECT_PREVIOUS_EVIDENCE",
       focusEvidenceId:
         focus.row.evidence_id,
       focusActorId:
@@ -2029,10 +2194,10 @@ function run(
             item.row.evidence_id,
         ),
       candidateDiscovery:
-        "SUPABASE_INDEX_BY_LOT_ONLY",
-      indexedLotRowCount:
-        lotRows.length,
-      verifiedSameLotCandidateCount:
+        "SUPABASE_DIRECT_PREVIOUS_EVIDENCE_ONLY",
+      indexedPreviousEvidenceCount:
+        previousRow === null ? 0 : 1,
+      verifiedPreviousEvidenceCount:
         candidates.length,
       candidateErrors,
       message:
@@ -2060,6 +2225,7 @@ function run(
           ],
           correlationEdges: [],
           massPairs: [],
+          elementalCalculations: [],
           status: "DIVERGENTE",
         }
       : calculateComponentMass(
@@ -2096,6 +2262,8 @@ function run(
       mass.correlationEdges,
     massPairs:
       mass.massPairs,
+    elementalCalculations:
+      mass.elementalCalculations,
     calculationVersion:
       mass.calculationVersion,
     relationFingerprint:
@@ -2122,9 +2290,15 @@ function run(
     resultPath,
     {
       ...privateBase,
+      privateResult: {
+        bucket: focus.row.storage_bucket,
+        path: resultPath,
+      },
       onchain: {
+        matchedEvidenceId: focus.onchain.evidenceId,
         matchTxHash: null,
         resultTxHash: null,
+        divergenceTxHash: null,
       },
     },
   );
@@ -2205,19 +2379,27 @@ function run(
    * a linha ja MATCHED no Supabase e escolhe outro row PENDING cujo status
    * on-chain tambem seja 1.
    */
-  savePrivateResult(
+  const finalPrivateResult = {
+    ...privateBase,
+    privateResult: {
+      bucket: focus.row.storage_bucket,
+      path: resultPath,
+    },
+    onchain: {
+      matchedEvidenceId: focus.onchain.evidenceId,
+      matchTxHash,
+      resultTxHash,
+      divergenceTxHash,
+    },
+  };
+
+  mirrorBalanceResult(
     runtime,
     key,
-    focus.row.storage_bucket,
-    resultPath,
-    {
-      ...privateBase,
-      onchain: {
-        matchTxHash,
-        resultTxHash,
-        divergenceTxHash,
-      },
-    },
+    focus,
+    committed,
+    finalPrivateResult,
+    resultTxHash,
   );
 
   mirrorMatch(
@@ -2245,14 +2427,14 @@ function run(
     simulationProgress:
       "SUPABASE_MATCHED_MIRROR_ONLY_WHEN_CHAIN_SIMULATION_DOES_NOT_ADVANCE",
     candidateDiscovery:
-      "SUPABASE_INDEX_BY_LOT_ONLY",
-    indexedLotRowCount:
-      lotRows.length,
+      "SUPABASE_DIRECT_PREVIOUS_EVIDENCE_ONLY",
+    indexedPreviousEvidenceCount:
+      previousRow === null ? 0 : 1,
     initialBlockchainPendingId,
     pendingSelectionMode:
       selection.mode,
     correlation:
-      "SAME_LOT_PLUS_STRICT_ORIGIN_DESTINATION_DIRECT",
+      "COMMITTED_JSON_HASH_PLUS_DIRECT_PREVIOUS_EVIDENCE",
     massPolicy:
       "FOCUS_DIRECT_PAIRWISE_EDGES_NO_GLOBAL_SUM",
     focusEvidenceId:
@@ -2274,6 +2456,10 @@ function run(
       mass.massPairs.length,
     massPairs:
       mass.massPairs,
+    elementalCalculationCount:
+      mass.elementalCalculations.length,
+    elementalCalculations:
+      mass.elementalCalculations,
     massStatus:
       mass.status,
     structuralDivergence:
@@ -2347,3 +2533,4 @@ export async function main() {
 
   await runner.run(initWorkflow);
 }
+
