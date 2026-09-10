@@ -4,10 +4,8 @@ Independent Chainlink CRE workflow configured with `handlerInTee` to audit match
 
 This workflow is separate from `LOT_CHAIN_PAIRWISE_MASS`. It does not discover `PENDING` evidence, rebuild the custody graph, or replace the result created by the primary workflow.
 
-- Network: Ethereum Sepolia
-- Chain ID: `11155111`
-- Registry contract: [`0xcd5eDA10c0b3424999626e6A2DaB2909B982866c`](https://sepolia.etherscan.io/address/0xcd5eDA10c0b3424999626e6A2DaB2909B982866c)
 - Current workflow name: `PAIRWISE_MASS_AUDITOR`
+- Network and registry contract: defined by the active environment configuration
 
 ## Responsibility
 
@@ -197,6 +195,8 @@ The workflow requires these configuration properties:
 
 The TEE retrieves `SUPABASE_SERVICE_ROLE_KEY` from the configured secret namespace. The service-role key must not be committed to Git.
 
+Network selector, registry address, workflow ID, forwarder configuration, storage settings, and secret identifiers are environment-specific. They must be read from the active configuration and are intentionally not fixed in this README.
+
 ## Running the workflow
 
 From the repository root:
@@ -262,4 +262,5 @@ auditor-workflow/
 
 ## License
 
+Apache License 2.0. See the repository root [LICENSE](../LICENSE).
 Apache License 2.0. See the repository root [LICENSE](../LICENSE).
