@@ -586,6 +586,27 @@ function loadOneEvidenceRow(
   return rows[0];
 }
 
+function loadNextEvidenceRow(
+  runtime: TeeRuntime<Config>,
+  key: string,
+  lotReference: string,
+  nextActorDbId: string,
+  focusActorDbId: string,
+  focusEvidenceId: Hex,
+): EvidenceRow | null {
+  const path =
+    `/rest/v1/explorerchem_evidences?select=${EVIDENCE_SELECT}` +
+    `&lot_reference=eq.${encodeURIComponent(lotReference)}` +
+    `&actor_db_id=eq.${encodeURIComponent(nextActorDbId)}` +
+    `&origin_actor_db_id=eq.${encodeURIComponent(focusActorDbId)}` +
+    `&evidence_id=neq.${encodeURIComponent(focusEvidenceId)}` +
+    `&order=chain_created_at.desc,evidence_id.desc&limit=1`;
+  const rows = z.array(evidenceRowSchema).parse(
+    getJson<unknown>(runtime, key, path),
+  );
+  return rows[0] ?? null;
+}
+
 function loadPreviousEvidenceRow(
   runtime: TeeRuntime<Config>,
   key: string,
@@ -725,6 +746,38 @@ function mirrorMatch(
   );
 }
 
+function ensureLot(
+  runtime: TeeRuntime<Config>, key: string, focus: VerifiedEvidence,
+  related: VerifiedEvidence[],
+): string {
+  const lotReference = focus.normalized.lotReference;
+  if (!lotReference) throw new Error("lotReference ausente; nenhuma transacao enviada");
+  const rowsSchema = z.array(z.object({ id: z.string().uuid() }));
+  const existing = rowsSchema.parse(getJson<unknown>(runtime, key,
+    `/rest/v1/explorerchem_lots?select=id&lot_id=eq.${encodeURIComponent(lotReference)}&limit=2`));
+  if (existing.length > 1) throw new Error(`lote ambiguo: ${lotReference}`);
+  if (existing.length === 1) return existing[0].id;
+  // Do not invent a lot owner or material from a downstream actor.
+  const source = [focus, ...related].find(e =>
+    e.normalized.actorType === "MINER" &&
+    e.normalized.lotReference === lotReference &&
+    idEquals(e.normalized.originActorId, e.onchain.actorId));
+  const material = source?.document.material;
+  const name = material && typeof material === "object" && !Array.isArray(material)
+    ? (material as Record<string, unknown>).name : undefined;
+  if (!source || typeof name !== "string" || !name.trim()) {
+    throw new Error(`lote ${lotReference} nao cadastrado: processe primeiro o minerador com material.name; nenhuma transacao enviada`);
+  }
+  const created = rowsSchema.parse(JSON.parse(text(request(runtime, key,
+    "/rest/v1/explorerchem_lots?select=id", "POST", {
+      lot_id: lotReference,
+      owner_actor_db_id: source.row.actor_db_id,
+      material_name: name.trim(),
+    }, { prefer: { values: ["return=representation"] } }))));
+  if (created.length !== 1) throw new Error(`cadastro do lote ${lotReference} nao retornou UUID`);
+  return created[0].id;
+}
+
 function mirrorBalanceResult(
   runtime: TeeRuntime<Config>,
   key: string,
@@ -732,6 +785,7 @@ function mirrorBalanceResult(
   committed: ReturnType<typeof commitment>,
   privateResult: Record<string, unknown>,
   resultTxHash: Hex,
+  lotDbId: string,
 ) {
   request(
     runtime,
@@ -740,6 +794,7 @@ function mirrorBalanceResult(
     "POST",
     {
       result_id: committed.resultId,
+      lot_db_id: lotDbId,
       actor_db_id: focus.row.actor_db_id,
       result_hash: committed.resultHash,
       status: privateResult.status as Status,
@@ -2087,12 +2142,23 @@ function run(
       error: string;
     }> = [];
 
+  // A miner at the start has no upstream evidence. Compare only its receiver.
+  const useDirectNext = focus.normalized.actorType === "MINER" &&
+    idEquals(focus.normalized.originActorId, focus.onchain.actorId);
+  const nextActor = focus.normalized.destinationActorId === null
+    ? undefined
+    : actors.byActorId.get(lower(focus.normalized.destinationActorId));
   const previousActor =
     focus.normalized.originActorId === null
       ? undefined
       : actors.byActorId.get(lower(focus.normalized.originActorId));
 
-  const previousRow = previousActor === undefined
+  const previousRow = useDirectNext
+    ? nextActor === undefined ? null : loadNextEvidenceRow(
+        runtime, key, focus.normalized.lotReference, nextActor.id,
+        focus.row.actor_db_id, focus.row.evidence_id,
+      )
+    : previousActor === undefined
     ? null
     : loadPreviousEvidenceRow(
         runtime,
@@ -2170,7 +2236,7 @@ function run(
       pendingSelectionMode:
         selection.mode,
       correlation:
-        "COMMITTED_JSON_HASH_PLUS_DIRECT_PREVIOUS_EVIDENCE",
+        useDirectNext ? "COMMITTED_JSON_HASH_PLUS_DIRECT_NEXT_EVIDENCE" : "COMMITTED_JSON_HASH_PLUS_DIRECT_PREVIOUS_EVIDENCE",
       focusEvidenceId:
         focus.row.evidence_id,
       focusActorId:
@@ -2194,7 +2260,8 @@ function run(
             item.row.evidence_id,
         ),
       candidateDiscovery:
-        "SUPABASE_DIRECT_PREVIOUS_EVIDENCE_ONLY",
+        useDirectNext ? "SUPABASE_DIRECT_NEXT_EVIDENCE_ONLY" : "SUPABASE_DIRECT_PREVIOUS_EVIDENCE_ONLY",
+      directNeighborDirection: useDirectNext ? "NEXT" : "PREVIOUS",
       indexedPreviousEvidenceCount:
         previousRow === null ? 0 : 1,
       verifiedPreviousEvidenceCount:
@@ -2283,6 +2350,7 @@ function run(
   /*
    * 6) Salva manifest privado antes das transacoes.
    */
+  const lotDbId = ensureLot(runtime, key, focus, candidates);
   savePrivateResult(
     runtime,
     key,
@@ -2400,6 +2468,7 @@ function run(
     committed,
     finalPrivateResult,
     resultTxHash,
+    lotDbId,
   );
 
   mirrorMatch(
@@ -2427,14 +2496,15 @@ function run(
     simulationProgress:
       "SUPABASE_MATCHED_MIRROR_ONLY_WHEN_CHAIN_SIMULATION_DOES_NOT_ADVANCE",
     candidateDiscovery:
-      "SUPABASE_DIRECT_PREVIOUS_EVIDENCE_ONLY",
+      useDirectNext ? "SUPABASE_DIRECT_NEXT_EVIDENCE_ONLY" : "SUPABASE_DIRECT_PREVIOUS_EVIDENCE_ONLY",
+    directNeighborDirection: useDirectNext ? "NEXT" : "PREVIOUS",
     indexedPreviousEvidenceCount:
       previousRow === null ? 0 : 1,
     initialBlockchainPendingId,
     pendingSelectionMode:
       selection.mode,
     correlation:
-      "COMMITTED_JSON_HASH_PLUS_DIRECT_PREVIOUS_EVIDENCE",
+      useDirectNext ? "COMMITTED_JSON_HASH_PLUS_DIRECT_NEXT_EVIDENCE" : "COMMITTED_JSON_HASH_PLUS_DIRECT_PREVIOUS_EVIDENCE",
     massPolicy:
       "FOCUS_DIRECT_PAIRWISE_EDGES_NO_GLOBAL_SUM",
     focusEvidenceId:
@@ -2533,4 +2603,3 @@ export async function main() {
 
   await runner.run(initWorkflow);
 }
-
