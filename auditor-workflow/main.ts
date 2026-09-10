@@ -32,48 +32,61 @@ import {
 
 import { z } from "zod";
 
-
 /**
- * ExploreChem — direct pairwise mass by lotId + strict origin/destination
+ * ExploreChem — Independent Auditor.
  *
- * RULES FOR THIS VERSION
- * ------------------------------------------------------------
- * 1. The blockchain is queried first using getNextPending().
- * 2. In real execution, this PENDING evidence naturally advances after each MATCH.
- * 3. In SIMULATION, since writeReport does not persist the on-chain state between
- *    executions, the Supabase MATCHED mirror is used ONLY as simulation progress
- *    tracking to avoid selecting the same focus again. The on-chain PENDING status
- *    remains mandatory for the newly selected focus.
- * 4. The TEE downloads the original JSON and verifies the evidenceHash.
- * 5. lotId is the logical correlation token for the MVP. Supabase keeps only
- *    lot_reference as a discovery INDEX, never as an authority. The TEE uses the
- *    lotId from the JSON whose hash was verified against the blockchain.
- * 6. There is no longer a global scan of explorerchem_evidences: after verifying
- *    the focus evidence, the workflow queries only rows indexed under the same lot.
- * 7. A physical edge STRICTLY requires:
- *      from.lotId             == to.lotId
- *      from.destinationActor  == owner actor of to
- *      to.originActor         == owner actor of from
- * 8. There is no temporal window in this version. Timestamps do not determine
- *    correlation.
- * 9. Only relations directly connected to the selected PENDING focus are included.
- *    The workflow does not expand the complete lot component through BFS.
- * 10. Laboratory evidence may be attached as LAB_ANALYSIS when it belongs to the
- *     same lotId and points to the destination actor. It does not create mass flow.
- * 11. Mass does NOT determine correlation. Each physical link is calculated
- *     pairwise.
- * 12. Each execution anchors only the result of the NEW PENDING focus evidence.
- * 13. An invalid physical self-relation finalizes the focus as DIVERGENT on-chain
- *     and mirrors the same state in Supabase. MINER and LABORATORY are excluded
- *     from the rule that prohibits origin from being equal to the actor itself.
+ * This workflow does NOT search for PENDING evidence, does NOT correlate
+ * documents, and does NOT create the original bilateral result. It consumes
+ * a MATCHED evidence that already has a BalanceResult anchored by the
+ * primary workflow.
+ *
+ * When the committed document contains elementalBalance, the Auditor also:
+ *   - normalizes each stream to the correct basis;
+ *   - converts oxides into elemental Nd, Pr, Dy, or Tb;
+ *   - recalculates elementalMassMg for each stream;
+ *   - aggregates inputs, outputs, and inventories;
+ *   - recalculates MUF per element and private product recovery.
+ *
+ * Flow:
+ *   MATCHED + pairwise/elemental compliant   -> VERIFIED
+ *   MATCHED + DIVERGENT result               -> DIVERGENT
+ *   MATCHED + integrity/business divergence   -> DIVERGENT
+ *   MATCHED + infrastructure/access failure   -> remains MATCHED (RETRY_REQUIRED)
+ *   MATCHED with no result yet               -> remains MATCHED
+ *
+ * The blockchain is always the authority. Supabase is mirrored only after
+ * rereading the final on-chain state.
  */
 
 
-const DEFAULT_SCHEDULE = "0 0 0 * * 0";
+const DEFAULT_AUDIT_SCHEDULE = "0 */5 * * * *";
 
 const bytes32Schema = z
   .string()
   .regex(/^0x[0-9a-fA-F]{64}$/) as z.ZodType<Hex>;
+
+const massStatusSchema = z.enum([
+  "CONFORME",
+  "DIVERGENTE",
+  "NAO_ATESTADO",
+]);
+
+type MassStatus = z.infer<typeof massStatusSchema>;
+
+const configSchema = z.object({
+  supabaseUrl: z.string().min(1),
+  secretNamespace: z.string().min(1),
+  chainSelectorName: z.string().min(1),
+  contractAddress: z.string().regex(/^0x[0-9a-fA-F]{40}$/),
+  gasLimit: z.string().regex(/^\d+$/),
+  auditSchedule: z.string().min(1).optional(),
+  requireElementalBalance: z.boolean().optional(),
+  massToleranceBps: z.number().int().min(0).max(10_000).optional(),
+});
+
+type Config = z.infer<typeof configSchema>;
+
+class IntegrityViolation extends Error {}
 
 const actorTypeSchema = z.enum([
   "MINER",
@@ -87,21 +100,6 @@ const actorTypeSchema = z.enum([
 ]);
 
 type ActorType = z.infer<typeof actorTypeSchema>;
-
-type Status = "CONFORME" | "DIVERGENTE" | "NAO_ATESTADO";
-
-type RelationType = "PHYSICAL_HANDOFF" | "LAB_ANALYSIS";
-
-const configSchema = z.object({
-  supabaseUrl: z.string().min(1),
-  secretNamespace: z.string().min(1),
-  chainSelectorName: z.string().min(1),
-  contractAddress: z.string().regex(/^0x[0-9a-fA-F]{40}$/),
-  gasLimit: z.string().regex(/^\d+$/),
-  correlationSchedule: z.string().min(1).optional(),
-});
-
-type Config = z.infer<typeof configSchema>;
 
 const actorRowSchema = z.object({
   id: z.string().uuid(),
@@ -126,8 +124,6 @@ const evidenceRowSchema = z.object({
   storage_bucket: z.string().min(1),
   storage_path: z.string().min(1),
   mime_type: z.string().min(1),
-  lot_reference: z.string().min(1).nullable(),
-  chain_created_at: z.string().nullable().optional(),
 });
 
 type EvidenceRow = z.infer<typeof evidenceRowSchema>;
@@ -137,21 +133,11 @@ type ActorDirectory = {
   byName: Map<string, Hex>;
 };
 
-type OnchainEvidence = {
-  evidenceId: Hex;
-  actorId: Hex;
-  evidenceHash: Hex;
-  status: number;
-};
-
 type NormalizedEvidence = {
   actorType: ActorType;
   ownerActorId: Hex;
   originActorId: Hex | null;
   destinationActorId: Hex | null;
-  carrierActorId: Hex | null;
-  originSite: string | null;
-  destinationSite: string | null;
   lotReference: string | null;
   grossMassKg: string | null;
   collectedMassKg: string | null;
@@ -162,18 +148,12 @@ type NormalizedEvidence = {
   recoveredMassKg: string | null;
 };
 
-type IntegrityCheck = {
-  rowHashMatchesChain: boolean;
-  documentHashMatchesChain: boolean;
-  ownerActorMatchesChain: boolean;
-};
-
-type VerifiedEvidence = {
+type IndependentlyVerifiedEvidence = {
   row: EvidenceRow;
   onchain: OnchainEvidence;
   document: Record<string, unknown>;
   normalized: NormalizedEvidence;
-  integrity: IntegrityCheck;
+  rowHashMatchesChain: boolean;
 };
 
 type MassEndpoint = {
@@ -181,71 +161,208 @@ type MassEndpoint = {
   field: string;
 };
 
-type CorrelationEdge = {
-  from: VerifiedEvidence;
-  to: VerifiedEvidence;
-  relationType: RelationType;
-  lotReference: string;
-  left: MassEndpoint;
-  right: MassEndpoint;
+type IndependentAudit = {
+  evidenceCount: number;
+  pairCount: number;
+  rowHashWarnings: string[];
+  errors: string[];
+  documents: Map<string, IndependentlyVerifiedEvidence>;
 };
 
-type CorrelationComponent = {
-  evidences: VerifiedEvidence[];
-  edges: CorrelationEdge[];
+const correlationEdgeSchema = z.object({
+  fromEvidenceId: bytes32Schema,
+  toEvidenceId: bytes32Schema,
+  relationType: z.enum(["PHYSICAL_HANDOFF", "LAB_ANALYSIS"]),
+  lotReference: z.string().min(1),
+});
+
+const pairMassResultSchema = z.object({
+  pairId: bytes32Schema,
+  relationType: z.enum(["PHYSICAL_HANDOFF", "LAB_ANALYSIS"]),
+  fromEvidenceId: bytes32Schema,
+  toEvidenceId: bytes32Schema,
+  fromActorId: bytes32Schema,
+  toActorId: bytes32Schema,
+  lotReference: z.string().min(1),
+  leftMassMg: z.string().regex(/^\d+$/).nullable(),
+  rightMassMg: z.string().regex(/^\d+$/).nullable(),
+  leftMassField: z.string(),
+  rightMassField: z.string(),
+  deltaMg: z.string().regex(/^-?\d+$/).nullable(),
+  status: massStatusSchema,
+});
+
+const currentPrivatePairwiseResultSchema = z.object({
+  schema: z.literal("ExploreChem/PrivatePairwiseMass/v1"),
+  sourceEvidenceId: bytes32Schema,
+  sourceActorId: bytes32Schema,
+  sourceEvidenceHash: bytes32Schema,
+  lotReference: z.string().min(1),
+  evidenceIds: z.array(bytes32Schema).min(1),
+  correlationEdges: z.array(correlationEdgeSchema),
+  massPairs: z.array(pairMassResultSchema),
+  calculationVersion: z.number().int().positive(),
+  relationFingerprint: bytes32Schema,
+  aggregateInputHash: bytes32Schema,
+  canonicalResultHash: bytes32Schema,
+  resultHash: bytes32Schema,
+  resultId: bytes32Schema,
+  status: massStatusSchema,
+  onchain: z.unknown().optional(),
+});
+
+type CurrentPrivatePairwiseResult = z.infer<
+  typeof currentPrivatePairwiseResultSchema
+>;
+
+type PrivatePairwiseResult = CurrentPrivatePairwiseResult;
+
+const privatePairwiseResultSchema = currentPrivatePairwiseResultSchema;
+
+const decimalSchema = z
+  .union([z.string(), z.number()])
+  .transform((value) => String(value))
+  .refine(
+    (value) => /^(?:0|[1-9]\d*)(?:\.\d+)?$/.test(value),
+    "decimal nao negativo invalido",
+  );
+
+const signedIntegerSchema = z.string().regex(/^-?\d+$/);
+const unsignedIntegerSchema = z.string().regex(/^\d+$/);
+
+const elementSchema = z.enum(["ND", "PR", "DY", "TB"]);
+type ElementSymbol = z.infer<typeof elementSchema>;
+
+const streamTypeSchema = z.enum([
+  "INPUT",
+  "PRODUCT",
+  "WASTE",
+  "PURGE",
+  "EFFLUENT",
+  "OPENING_INVENTORY",
+  "CLOSING_INVENTORY",
+]);
+
+const declaredBasisSchema = z.enum([
+  "AS_RECEIVED",
+  "DRY_105C",
+  "CALCINED",
+  "LIQUID_TOTAL",
+]);
+
+const reportedFormSchema = z.enum([
+  "ND2O3",
+  "PR6O11",
+  "PR2O3",
+  "DY2O3",
+  "TB4O7",
+  "TB2O3",
+  "DIRECT_ELEMENTAL",
+]);
+
+const elementalAnalysisSchema = z.object({
+  element: elementSchema,
+  reportedForm: reportedFormSchema,
+  reportedContent: decimalSchema,
+  reportedContentUnit: z.enum(["PERCENT", "MG_PER_KG"]),
+  contentBasis: declaredBasisSchema,
+  declaredElementalMassMg: unsignedIntegerSchema,
+});
+
+const elementalStreamSchema = z.object({
+  streamId: z.string().min(1),
+  streamType: streamTypeSchema,
+  grossMassKg: decimalSchema,
+  declaredBasis: declaredBasisSchema,
+  measurementPoint: z.string().min(1),
+  weighingTimestamp: z.string().datetime({ offset: true }),
+  freeMoisturePct: decimalSchema.optional(),
+  moistureMethod: z.string().min(1).optional(),
+  dryingTemperatureC: decimalSchema.optional(),
+  moistureSamplingTimestamp: z.string().datetime({ offset: true }).optional(),
+  hoursBetweenDeterminations: decimalSchema.optional(),
+  lossOnIgnitionPct: decimalSchema.optional(),
+  ignitionTemperatureC: decimalSchema.optional(),
+  ignitionAtmosphere: z.string().min(1).optional(),
+  ignitionResidenceMinutes: decimalSchema.optional(),
+  elements: z.array(elementalAnalysisSchema).min(1),
+});
+
+const declaredMufSchema = z
+  .object({
+    ND: signedIntegerSchema.optional(),
+    PR: signedIntegerSchema.optional(),
+    DY: signedIntegerSchema.optional(),
+    TB: signedIntegerSchema.optional(),
+  })
+  .refine(
+    (value) => Object.values(value).some((item) => item !== undefined),
+    "ao menos um MUF elementar deve ser declarado",
+  );
+
+const elementalBalanceSchema = z.object({
+  schema: z.literal("ExploreChem/PeriodicElementalBalance/v1"),
+  actorId: bytes32Schema,
+  periodStart: z.string().datetime({ offset: true }),
+  periodEnd: z.string().datetime({ offset: true }),
+  factorTableVersion: z.literal("1.0.0"),
+  previousBalanceHash: bytes32Schema.optional(),
+  streams: z.array(elementalStreamSchema).min(1),
+  declaredMufMg: declaredMufSchema,
+});
+
+type ElementalBalance = z.infer<typeof elementalBalanceSchema>;
+
+type ElementTotals = {
+  inputMg: string;
+  productMg: string;
+  otherOutputMg: string;
+  openingInventoryMg: string;
+  closingInventoryMg: string;
+  mufMg: string;
+  productRecoveryPpm: string | null;
 };
 
-type PairMassResult = {
-  pairId: Hex;
-  relationType: RelationType;
-  fromEvidenceId: Hex;
-  toEvidenceId: Hex;
-  fromActorId: Hex;
-  toActorId: Hex;
-  lotReference: string;
-  leftMassMg: string | null;
-  rightMassMg: string | null;
-  leftMassField: string;
-  rightMassField: string;
-  deltaMg: string | null;
-  status: Status;
+type ElementalAudit =
+  | {
+      status: "NOT_PRESENT";
+      resultHash: null;
+      periodStart: null;
+      periodEnd: null;
+      totals: Record<string, never>;
+      errors: string[];
+    }
+  | {
+      status: "CONFORME" | "DIVERGENTE";
+      resultHash: Hex;
+      periodStart: string | null;
+      periodEnd: string | null;
+      totals: Partial<Record<ElementSymbol, ElementTotals>>;
+      errors: string[];
+    };
+
+type OnchainEvidence = {
+  evidenceId: Hex;
+  actorId: Hex;
+  evidenceHash: Hex;
+  status: number;
 };
 
-type ComponentMassResult = {
-  schema: "ExploreChem/PairwiseMassResult/v1";
-  calculationVersion: 1;
-  focusActorId: Hex;
-  focusEvidenceId: Hex;
-  lotReference: string;
-  evidenceIds: Hex[];
-  correlationEdges: Array<{
-    fromEvidenceId: Hex;
-    toEvidenceId: Hex;
-    relationType: RelationType;
-    lotReference: string;
-  }>;
-  massPairs: PairMassResult[];
-  status: Status;
+type OnchainBalanceResult = {
+  resultId: Hex;
+  evidenceId: Hex;
+  actorId: Hex;
+  resultHash: Hex;
+  previousResultId: Hex;
+  aggregateInputHash: Hex;
+  status: number;
+  calculationVersion: number;
 };
-
-type PendingSelection = {
-  initialBlockchainPendingId: Hex;
-  row: EvidenceRow;
-  onchain: OnchainEvidence;
-  mode:
-    | "CHAIN_GET_NEXT_PENDING"
-    | "SIMULATION_PROGRESS_FALLBACK";
-};
-
-/* ============================================================
- * ABI
- * ============================================================
- */
 
 const ABI = [
   {
     type: "function",
-    name: "getNextPending",
+    name: "getNextMatched",
     stateMutability: "view",
     inputs: [],
     outputs: [{ name: "", type: "bytes32" }],
@@ -272,25 +389,47 @@ const ABI = [
       },
     ],
   },
+  {
+    type: "function",
+    name: "latestResultIdByEvidence",
+    stateMutability: "view",
+    inputs: [{ name: "evidenceId", type: "bytes32" }],
+    outputs: [{ name: "", type: "bytes32" }],
+  },
+  {
+    type: "function",
+    name: "getResult",
+    stateMutability: "view",
+    inputs: [{ name: "resultId", type: "bytes32" }],
+    outputs: [
+      {
+        name: "",
+        type: "tuple",
+        components: [
+          { name: "resultId", type: "bytes32" },
+          { name: "evidenceId", type: "bytes32" },
+          { name: "actorId", type: "bytes32" },
+          { name: "resultHash", type: "bytes32" },
+          { name: "previousResultId", type: "bytes32" },
+          { name: "aggregateInputHash", type: "bytes32" },
+          { name: "status", type: "uint8" },
+          { name: "calculationVersion", type: "uint32" },
+          { name: "createdAt", type: "uint64" },
+        ],
+      },
+    ],
+  },
+  {
+    type: "function",
+    name: "verifyResultHash",
+    stateMutability: "view",
+    inputs: [
+      { name: "resultId", type: "bytes32" },
+      { name: "candidateHash", type: "bytes32" },
+    ],
+    outputs: [{ name: "", type: "bool" }],
+  },
 ] as const;
-
-const EVIDENCE_SELECT = [
-  "evidence_id",
-  "actor_db_id",
-  "state",
-  "evidence_hash",
-  "hash_algorithm",
-  "storage_bucket",
-  "storage_path",
-  "mime_type",
-  "lot_reference",
-  "chain_created_at",
-].join(",");
-
-/* ============================================================
- * Helpers
- * ============================================================
- */
 
 function lower(value: string): string {
   return value.toLowerCase();
@@ -300,14 +439,12 @@ function canonicalName(value: string): string {
   return value.trim().toLowerCase();
 }
 
-function hashText(value: string): Hex {
-  return keccak256(toHex(value));
+function sameHex(left: string, right: string): boolean {
+  return lower(left) === lower(right);
 }
 
 function stable(value: unknown): unknown {
-  if (Array.isArray(value)) {
-    return value.map(stable);
-  }
+  if (Array.isArray(value)) return value.map(stable);
 
   if (value !== null && typeof value === "object") {
     const objectValue = value as Record<string, unknown>;
@@ -325,6 +462,10 @@ function stableJson(value: unknown): string {
   return JSON.stringify(stable(value));
 }
 
+function hashText(value: string): Hex {
+  return keccak256(toHex(value));
+}
+
 function recordOf(value: unknown): Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value)
     ? (value as Record<string, unknown>)
@@ -337,62 +478,38 @@ function nullableString(value: unknown): string | null {
     : null;
 }
 
-function sameLot(
-  left: NormalizedEvidence,
-  right: NormalizedEvidence,
-): boolean {
-  return (
-    left.lotReference !== null &&
-    right.lotReference !== null &&
-    left.lotReference === right.lotReference
-  );
-}
-
 function decimalString(value: unknown): string | null {
-  if (value === null || value === undefined) {
-    return null;
-  }
+  if (value === null || value === undefined) return null;
 
   if (typeof value === "number") {
-    if (!Number.isFinite(value) || value < 0) {
-      return null;
-    }
+    if (!Number.isFinite(value) || value < 0) return null;
     const rendered = value.toString();
     return /^\d+(?:\.\d+)?$/.test(rendered) ? rendered : null;
   }
 
-  if (typeof value !== "string") {
-    return null;
-  }
-
+  if (typeof value !== "string") return null;
   const rendered = value.trim();
   return /^\d+(?:\.\d+)?$/.test(rendered) ? rendered : null;
 }
 
 function kgToMg(value: string | null): bigint | null {
-  if (value === null) {
-    return null;
-  }
+  if (value === null) return null;
 
   const parts = value.split(".");
   const whole = BigInt(parts[0]);
   const fractional = parts[1] ?? "";
   const firstSix = fractional.slice(0, 6).padEnd(6, "0");
-
   let result = whole * 1_000_000n + BigInt(firstSix);
 
-  if (fractional.length > 6) {
-    const seventhDigit = Number(fractional[6]);
-    if (seventhDigit >= 5) {
-      result += 1n;
-    }
+  if (fractional.length > 6 && Number(fractional[6]) >= 5) {
+    result += 1n;
   }
 
   return result;
 }
 
 function idEquals(left: Hex | null, right: Hex): boolean {
-  return left !== null && lower(left) === lower(right);
+  return left !== null && sameHex(left, right);
 }
 
 function encPath(path: string): string {
@@ -401,11 +518,6 @@ function encPath(path: string): string {
     .map((part) => encodeURIComponent(part))
     .join("/");
 }
-
-/* ============================================================
- * CRE network / secrets
- * ============================================================
- */
 
 function network(runtime: TeeRuntime<Config>) {
   const found = getNetwork({
@@ -432,18 +544,10 @@ function secrets(runtime: TeeRuntime<Config>) {
     .result();
 
   const key = result.SUPABASE_SERVICE_ROLE_KEY?.value;
-
-  if (!key) {
-    throw new Error("SUPABASE_SERVICE_ROLE_KEY ausente");
-  }
+  if (!key) throw new Error("SUPABASE_SERVICE_ROLE_KEY ausente");
 
   return { key };
 }
-
-/* ============================================================
- * HTTP / Supabase
- * ============================================================
- */
 
 type Method = "GET" | "POST" | "PATCH";
 
@@ -490,237 +594,186 @@ function request(
   return response;
 }
 
-function getJson<T>(
+function loadEvidenceRow(
   runtime: TeeRuntime<Config>,
   key: string,
-  path: string,
-): T {
+  evidenceId: Hex,
+): EvidenceRow {
+  const path =
+    "/rest/v1/explorerchem_evidences" +
+    "?select=evidence_id,actor_db_id,state,evidence_hash,hash_algorithm,storage_bucket,storage_path,mime_type" +
+    `&evidence_id=eq.${encodeURIComponent(evidenceId)}&limit=1`;
+
   const raw = text(request(runtime, key, path, "GET"));
-  return (raw.length > 0 ? JSON.parse(raw) : null) as T;
+  const rows = z.array(evidenceRowSchema).parse(JSON.parse(raw));
+
+  if (rows.length !== 1) {
+    throw new Error(`${evidenceId}: evidencia ausente no Supabase`);
+  }
+
+  return rows[0];
 }
 
 function loadActorDirectory(
   runtime: TeeRuntime<Config>,
   key: string,
 ): ActorDirectory {
-  const rows = z.array(actorRowSchema).parse(
-    getJson<unknown>(
-      runtime,
-      key,
-      "/rest/v1/explorerchem_actors?select=id,actor_id,display_name,actor_type&active=eq.true&order=created_at.asc",
-    ),
-  );
+  const path =
+    "/rest/v1/explorerchem_actors" +
+    "?select=id,actor_id,display_name,actor_type" +
+    "&active=eq.true&order=created_at.asc";
+
+  const raw = text(request(runtime, key, path, "GET"));
+  const rows = z.array(actorRowSchema).parse(JSON.parse(raw));
 
   return {
-    byDbId: new Map(rows.map((row) => [row.id, row])),
+    byDbId: new Map(rows.map((actor) => [actor.id, actor])),
     byName: new Map(
-      rows.map((row) => [canonicalName(row.display_name), row.actor_id]),
+      rows.map((actor) => [canonicalName(actor.display_name), actor.actor_id]),
     ),
   };
 }
 
-function loadOneEvidenceRow(
-  runtime: TeeRuntime<Config>,
-  key: string,
-  evidenceId: Hex,
-): EvidenceRow {
-  const path =
-    `/rest/v1/explorerchem_evidences?select=${EVIDENCE_SELECT}` +
-    `&evidence_id=eq.${encodeURIComponent(evidenceId)}&limit=1`;
-
-  const rows = z.array(evidenceRowSchema).parse(
-    getJson<unknown>(runtime, key, path),
-  );
-
-  if (rows.length !== 1) {
-    throw new Error(`${evidenceId}: nao encontrado no Supabase`);
-  }
-
-  return rows[0];
+function privateResultPath(evidenceId: Hex, resultId: Hex): string {
+  return `mass-results/${evidenceId.slice(2)}/${resultId.slice(2)}.json`;
 }
 
-function loadEvidenceRowsByLot(
-  runtime: TeeRuntime<Config>,
-  key: string,
-  lotReference: string,
-): EvidenceRow[] {
-  /*
-   * Descoberta indexada: esta consulta nao prova correlacao. Ela so reduz o
-   * universo de candidatos. Cada linha retornada ainda tera blockchain + JSON
-   * verificados pelo TEE antes de participar da correlacao direta.
-   */
-  const path =
-    `/rest/v1/explorerchem_evidences?select=${EVIDENCE_SELECT}` +
-    `&lot_reference=eq.${encodeURIComponent(lotReference)}` +
-    `&order=chain_created_at.asc,evidence_id.asc`;
-
-  return z.array(evidenceRowSchema).parse(
-    getJson<unknown>(runtime, key, path),
-  );
+function auditReceiptPath(evidenceId: Hex, resultId: Hex): string {
+  return `audit-results/${evidenceId.slice(2)}/${resultId.slice(2)}.json`;
 }
 
-function loadSimulationPendingRows(
+function loadPrivateResult(
   runtime: TeeRuntime<Config>,
   key: string,
-  excludedEvidenceId: Hex,
-): EvidenceRow[] {
-  /*
-   * Fallback EXCLUSIVO da simulacao: nao varre todas as evidencias. Busca apenas
-   * um pequeno lote de linhas ainda PENDING no espelho e confirma status=1
-   * on-chain antes de escolher qualquer uma.
-   */
-  const path =
-    `/rest/v1/explorerchem_evidences?select=${EVIDENCE_SELECT}` +
-    `&state=eq.PENDING` +
-    `&evidence_id=neq.${encodeURIComponent(excludedEvidenceId)}` +
-    `&order=chain_created_at.asc,evidence_id.asc` +
-    `&limit=32`;
-
-  return z.array(evidenceRowSchema).parse(
-    getJson<unknown>(runtime, key, path),
-  );
-}
-
-function downloadEvidenceDocument(
-  runtime: TeeRuntime<Config>,
-  key: string,
-  row: EvidenceRow,
-): Uint8Array {
-  const path =
-    `/storage/v1/object/authenticated/${encodeURIComponent(row.storage_bucket)}/` +
-    `${encPath(row.storage_path)}`;
-
+  bucket: string,
+  path: string,
+): PrivatePairwiseResult {
   const response = request(
     runtime,
     key,
-    path,
+    `/storage/v1/object/authenticated/${encodeURIComponent(bucket)}/${encPath(path)}`,
     "GET",
-    undefined,
-    {
-      accept: { values: [row.mime_type] },
-    },
   );
 
-  return new Uint8Array(response.body);
+  const parsed = JSON.parse(new TextDecoder().decode(response.body));
+  return privatePairwiseResultSchema.parse(parsed);
 }
 
-function parseJsonDocument(
+function loadEvidenceDocument(
+  runtime: TeeRuntime<Config>,
+  key: string,
   row: EvidenceRow,
-  bytes: Uint8Array,
+  evidence: OnchainEvidence,
 ): Record<string, unknown> {
-  if (!row.mime_type.toLowerCase().includes("json")) {
-    throw new Error(
-      `${row.evidence_id}: este workflow bilateral do MVP exige JSON; mime=${row.mime_type}`,
+  const response = request(
+    runtime,
+    key,
+    `/storage/v1/object/authenticated/${encodeURIComponent(row.storage_bucket)}/${encPath(row.storage_path)}`,
+    "GET",
+  );
+
+  const bytes = new Uint8Array(response.body);
+  const recomputedHash =
+    row.hash_algorithm === "SHA-256" || row.hash_algorithm === "SHA256"
+      ? sha256(bytes)
+      : keccak256(bytes);
+
+  if (!sameHex(recomputedHash, evidence.evidenceHash)) {
+    throw new IntegrityViolation(
+      `${evidence.evidenceId}: hash recalculado do JSON diverge da blockchain`,
     );
   }
 
-  const parsed = JSON.parse(new TextDecoder().decode(bytes));
+  if (!row.mime_type.toLowerCase().includes("json")) {
+    throw new IntegrityViolation(
+      `${evidence.evidenceId}: auditor independente exige JSON; mime=${row.mime_type}`,
+    );
+  }
 
-  if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
-    throw new Error(`${row.evidence_id}: JSON invalido`);
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(new TextDecoder().decode(bytes));
+  } catch {
+    throw new IntegrityViolation(
+      `${evidence.evidenceId}: documento comprometido nao e JSON valido`,
+    );
+  }
+  if (parsed === null || Array.isArray(parsed) || typeof parsed !== "object") {
+    throw new IntegrityViolation("documento original precisa ser um objeto JSON");
   }
 
   return parsed as Record<string, unknown>;
 }
 
-function savePrivateResult(
+function saveAuditReceipt(
   runtime: TeeRuntime<Config>,
   key: string,
   bucket: string,
   path: string,
   value: unknown,
 ) {
-  const response = new HTTPClient()
-    .sendRequest(runtime, {
-      url:
-        `${runtime.config.supabaseUrl}/storage/v1/object/` +
-        `${encodeURIComponent(bucket)}/${encPath(path)}`,
-      method: "POST",
-      multiHeaders: {
-        apikey: { values: [key] },
-        authorization: { values: [`Bearer ${key}`] },
-        "content-type": { values: ["application/json"] },
-        "x-upsert": { values: ["true"] },
-      },
-      body: Buffer.from(JSON.stringify(value)).toString("base64"),
-    })
-    .result();
-
-  if (!ok(response)) {
-    throw new Error(
-      `falha ao salvar resultado privado: ${response.statusCode} ${text(response)}`,
-    );
-  }
-}
-
-function mirrorMatch(
-  runtime: TeeRuntime<Config>,
-  key: string,
-  evidenceId: Hex,
-  txHash: Hex,
-) {
   request(
     runtime,
     key,
-    `/rest/v1/explorerchem_evidences?evidence_id=eq.${encodeURIComponent(evidenceId)}&state=eq.PENDING`,
-    "PATCH",
+    `/storage/v1/object/${encodeURIComponent(bucket)}/${encPath(path)}`,
+    "POST",
+    value,
     {
-      state: "MATCHED",
-      matched_at: new Date(runtime.now()).toISOString(),
-      match_tx_hash: txHash,
-    },
-    {
-      prefer: { values: ["return=minimal"] },
+      "x-upsert": { values: ["true"] },
     },
   );
 }
 
-function mirrorDivergent(
+function mirrorFinalState(
   runtime: TeeRuntime<Config>,
   key: string,
   evidenceId: Hex,
+  state: "VERIFIED" | "DIVERGENT",
 ) {
   request(
     runtime,
     key,
     `/rest/v1/explorerchem_evidences?evidence_id=eq.${encodeURIComponent(evidenceId)}&state=eq.MATCHED`,
     "PATCH",
-    {
-      state: "DIVERGENT",
-    },
+    { state },
     {
       prefer: { values: ["return=minimal"] },
     },
   );
 }
 
-/* ============================================================
- * Blockchain FIRST
- * ============================================================
- */
-
-function getNextPending(runtime: TeeRuntime<Config>): Hex {
-  const callData = encodeFunctionData({
-    abi: ABI,
-    functionName: "getNextPending",
-    args: [],
-  });
-
+function callContract(
+  runtime: TeeRuntime<Config>,
+  data: Hex,
+): Hex {
   const response = new EVMClient(network(runtime).chainSelector.selector)
     .callContract(runtime.usingTheDons(), {
       call: encodeCallMsg({
         from: zeroAddress,
         to: runtime.config.contractAddress as Address,
-        data: callData,
+        data,
       }),
       blockNumber: LATEST_BLOCK_NUMBER,
     })
     .result();
 
+  return bytesToHex(response.data) as Hex;
+}
+
+function getNextMatched(runtime: TeeRuntime<Config>): Hex {
+  const data = callContract(
+    runtime,
+    encodeFunctionData({
+      abi: ABI,
+      functionName: "getNextMatched",
+      args: [],
+    }),
+  );
+
   return decodeFunctionResult({
     abi: ABI,
-    functionName: "getNextPending",
-    data: bytesToHex(response.data),
+    functionName: "getNextMatched",
+    data,
   }) as Hex;
 }
 
@@ -728,27 +781,19 @@ function readEvidence(
   runtime: TeeRuntime<Config>,
   evidenceId: Hex,
 ): OnchainEvidence {
-  const callData = encodeFunctionData({
-    abi: ABI,
-    functionName: "getEvidence",
-    args: [evidenceId],
-  });
-
-  const response = new EVMClient(network(runtime).chainSelector.selector)
-    .callContract(runtime.usingTheDons(), {
-      call: encodeCallMsg({
-        from: zeroAddress,
-        to: runtime.config.contractAddress as Address,
-        data: callData,
-      }),
-      blockNumber: LATEST_BLOCK_NUMBER,
-    })
-    .result();
+  const data = callContract(
+    runtime,
+    encodeFunctionData({
+      abi: ABI,
+      functionName: "getEvidence",
+      args: [evidenceId],
+    }),
+  );
 
   const decoded = decodeFunctionResult({
     abi: ABI,
     functionName: "getEvidence",
-    data: bytesToHex(response.data),
+    data,
   });
 
   return {
@@ -759,103 +804,618 @@ function readEvidence(
   };
 }
 
-/**
- * Seleciona o foco efetivo sem perder a regra "blockchain first".
- *
- * A PRIMEIRA consulta sempre e getNextPending() on-chain.
- *
- * Em rede real:
- *   - o id retornado deve estar PENDING tambem no espelho Supabase;
- *   - ele e usado diretamente.
- *
- * Em SIMULATION:
- *   - writeReport nao persiste o status para a proxima execucao;
- *   - o Supabase, porem, pode ja ter sido espelhado como MATCHED;
- *   - nesse caso varremos somente linhas ainda PENDING no Supabase e
- *     CONFIRMAMOS on-chain que o candidato escolhido continua status=1.
- *
- * Assim a simulacao consegue avancar E1 -> E2 -> E3 sem transformar
- * Supabase em autoridade: nenhum foco e aceito sem status PENDING on-chain.
- */
-function selectEffectivePending(
+function latestResultId(
   runtime: TeeRuntime<Config>,
-  key: string,
-  initialBlockchainPendingId: Hex,
-): PendingSelection | null {
-  /*
-   * Caminho normal: consulta pontual pelo evidenceId que veio da blockchain.
-   * Nenhuma lista global e carregada.
-   */
-  try {
-    const initialRow = loadOneEvidenceRow(
-      runtime,
-      key,
-      initialBlockchainPendingId,
-    );
-    const initialOnchain = readEvidence(
-      runtime,
-      initialBlockchainPendingId,
-    );
-
-    if (
-      initialOnchain.status === 1 &&
-      initialRow.state.trim().toUpperCase() === "PENDING"
-    ) {
-      return {
-        initialBlockchainPendingId,
-        row: initialRow,
-        onchain: initialOnchain,
-        mode: "CHAIN_GET_NEXT_PENDING",
-      };
-    }
-  } catch {
-    // Em SIMULATION pode existir divergencia de espelho; segue ao fallback.
-  }
-
-  /*
-   * Fallback controlado da SIMULATION. O Supabase serve apenas como cursor de
-   * progresso. Nenhum candidato e aceito sem readEvidence(...).status === 1.
-   */
-  const pendingRows = loadSimulationPendingRows(
+  evidenceId: Hex,
+): Hex {
+  const data = callContract(
     runtime,
-    key,
-    initialBlockchainPendingId,
+    encodeFunctionData({
+      abi: ABI,
+      functionName: "latestResultIdByEvidence",
+      args: [evidenceId],
+    }),
   );
 
-  for (const row of pendingRows) {
-    try {
-      const onchain = readEvidence(runtime, row.evidence_id);
-      if (onchain.status !== 1) {
+  return decodeFunctionResult({
+    abi: ABI,
+    functionName: "latestResultIdByEvidence",
+    data,
+  }) as Hex;
+}
+
+function readResult(
+  runtime: TeeRuntime<Config>,
+  resultId: Hex,
+): OnchainBalanceResult {
+  const data = callContract(
+    runtime,
+    encodeFunctionData({
+      abi: ABI,
+      functionName: "getResult",
+      args: [resultId],
+    }),
+  );
+
+  const decoded = decodeFunctionResult({
+    abi: ABI,
+    functionName: "getResult",
+    data,
+  });
+
+  return {
+    resultId: decoded.resultId,
+    evidenceId: decoded.evidenceId,
+    actorId: decoded.actorId,
+    resultHash: decoded.resultHash,
+    previousResultId: decoded.previousResultId,
+    aggregateInputHash: decoded.aggregateInputHash,
+    status: Number(decoded.status),
+    calculationVersion: Number(decoded.calculationVersion),
+  };
+}
+
+function verifyResultHash(
+  runtime: TeeRuntime<Config>,
+  resultId: Hex,
+  candidateHash: Hex,
+): boolean {
+  const data = callContract(
+    runtime,
+    encodeFunctionData({
+      abi: ABI,
+      functionName: "verifyResultHash",
+      args: [resultId, candidateHash],
+    }),
+  );
+
+  return decodeFunctionResult({
+    abi: ABI,
+    functionName: "verifyResultHash",
+    data,
+  }) as boolean;
+}
+
+type Fraction = {
+  numerator: bigint;
+  denominator: bigint;
+};
+
+function gcd(left: bigint, right: bigint): bigint {
+  let a = left < 0n ? -left : left;
+  let b = right < 0n ? -right : right;
+
+  while (b !== 0n) {
+    const next = a % b;
+    a = b;
+    b = next;
+  }
+
+  return a === 0n ? 1n : a;
+}
+
+function fraction(numerator: bigint, denominator = 1n): Fraction {
+  if (denominator === 0n) throw new Error("divisao por zero");
+
+  const sign = denominator < 0n ? -1n : 1n;
+  const divisor = gcd(numerator, denominator);
+
+  return {
+    numerator: (numerator / divisor) * sign,
+    denominator: (denominator / divisor) * sign,
+  };
+}
+
+function decimalFraction(value: string): Fraction {
+  const [whole, decimals = ""] = value.split(".");
+  const denominator = 10n ** BigInt(decimals.length);
+  return fraction(BigInt(`${whole}${decimals}`), denominator);
+}
+
+function addFraction(left: Fraction, right: Fraction): Fraction {
+  return fraction(
+    left.numerator * right.denominator +
+      right.numerator * left.denominator,
+    left.denominator * right.denominator,
+  );
+}
+
+function subtractFraction(left: Fraction, right: Fraction): Fraction {
+  return fraction(
+    left.numerator * right.denominator -
+      right.numerator * left.denominator,
+    left.denominator * right.denominator,
+  );
+}
+
+function multiplyFraction(left: Fraction, right: Fraction): Fraction {
+  return fraction(
+    left.numerator * right.numerator,
+    left.denominator * right.denominator,
+  );
+}
+
+function divideFraction(left: Fraction, right: Fraction): Fraction {
+  if (right.numerator === 0n) throw new Error("divisao por zero");
+
+  return fraction(
+    left.numerator * right.denominator,
+    left.denominator * right.numerator,
+  );
+}
+
+function compareFraction(left: Fraction, right: Fraction): number {
+  const delta =
+    left.numerator * right.denominator -
+    right.numerator * left.denominator;
+
+  return delta < 0n ? -1 : delta > 0n ? 1 : 0;
+}
+
+function roundHalfUp(value: Fraction): bigint {
+  if (value.numerator < 0n) {
+    throw new Error("roundHalfUp recebeu valor negativo");
+  }
+
+  const quotient = value.numerator / value.denominator;
+  const remainder = value.numerator % value.denominator;
+  return remainder * 2n >= value.denominator ? quotient + 1n : quotient;
+}
+
+function percentMultiplier(percent: string): Fraction {
+  const parsed = decimalFraction(percent);
+  const zero = fraction(0n);
+  const hundred = fraction(100n);
+
+  if (
+    compareFraction(parsed, zero) < 0 ||
+    compareFraction(parsed, hundred) >= 0
+  ) {
+    throw new Error(`percentual fora da faixa [0,100): ${percent}`);
+  }
+
+  return divideFraction(parsed, hundred);
+}
+
+const OXIDE_TO_ELEMENT_FACTOR: Record<
+  ElementSymbol,
+  Partial<Record<z.infer<typeof reportedFormSchema>, string>>
+> = {
+  ND: {
+    ND2O3: "0.857356",
+    DIRECT_ELEMENTAL: "1.000000",
+  },
+  PR: {
+    PR6O11: "0.827704",
+    PR2O3: "0.854472",
+    DIRECT_ELEMENTAL: "1.000000",
+  },
+  DY: {
+    DY2O3: "0.871321",
+    DIRECT_ELEMENTAL: "1.000000",
+  },
+  TB: {
+    TB4O7: "0.850215",
+    TB2O3: "0.868806",
+    DIRECT_ELEMENTAL: "1.000000",
+  },
+};
+
+function requireFields(
+  stream: z.infer<typeof elementalStreamSchema>,
+  fields: Array<keyof z.infer<typeof elementalStreamSchema>>,
+) {
+  const missing = fields.filter((field) => stream[field] === undefined);
+  if (missing.length > 0) {
+    throw new Error(
+      `${stream.streamId}: campos obrigatorios ausentes: ${missing.join(", ")}`,
+    );
+  }
+}
+
+function normalizedMassKg(
+  stream: z.infer<typeof elementalStreamSchema>,
+): Fraction {
+  const gross = decimalFraction(stream.grossMassKg);
+
+  if (stream.declaredBasis === "DRY_105C") return gross;
+  if (stream.declaredBasis === "LIQUID_TOTAL") return gross;
+
+  if (stream.declaredBasis === "AS_RECEIVED") {
+    requireFields(stream, [
+      "freeMoisturePct",
+      "moistureMethod",
+      "dryingTemperatureC",
+      "moistureSamplingTimestamp",
+      "hoursBetweenDeterminations",
+    ]);
+
+    const temperature = decimalFraction(stream.dryingTemperatureC!);
+    if (
+      compareFraction(temperature, fraction(100n)) < 0 ||
+      compareFraction(temperature, fraction(110n)) > 0
+    ) {
+      throw new Error(
+        `${stream.streamId}: dryingTemperatureC deve estar entre 100 e 110`,
+      );
+    }
+
+    return multiplyFraction(
+      gross,
+      subtractFraction(
+        fraction(1n),
+        percentMultiplier(stream.freeMoisturePct!),
+      ),
+    );
+  }
+
+  requireFields(stream, [
+    "lossOnIgnitionPct",
+    "ignitionTemperatureC",
+    "ignitionAtmosphere",
+    "ignitionResidenceMinutes",
+  ]);
+
+  return divideFraction(
+    gross,
+    subtractFraction(
+      fraction(1n),
+      percentMultiplier(stream.lossOnIgnitionPct!),
+    ),
+  );
+}
+
+function elementalMassMg(
+  stream: z.infer<typeof elementalStreamSchema>,
+  analysis: z.infer<typeof elementalAnalysisSchema>,
+): bigint {
+  const massKg = normalizedMassKg(stream);
+
+  if (stream.declaredBasis === "LIQUID_TOTAL") {
+    if (
+      analysis.reportedContentUnit !== "MG_PER_KG" ||
+      analysis.contentBasis !== "LIQUID_TOTAL" ||
+      analysis.reportedForm !== "DIRECT_ELEMENTAL"
+    ) {
+      throw new Error(
+        `${stream.streamId}/${analysis.element}: LIQUID_TOTAL exige DIRECT_ELEMENTAL em MG_PER_KG`,
+      );
+    }
+
+    return roundHalfUp(
+      multiplyFraction(
+        massKg,
+        decimalFraction(analysis.reportedContent),
+      ),
+    );
+  }
+
+  if (analysis.reportedContentUnit !== "PERCENT") {
+    throw new Error(
+      `${stream.streamId}/${analysis.element}: corrente solida exige teor em PERCENT`,
+    );
+  }
+  if (analysis.contentBasis !== "DRY_105C") {
+    throw new Error(
+      `${stream.streamId}/${analysis.element}: teor deve estar em DRY_105C`,
+    );
+  }
+
+  const factorValue =
+    OXIDE_TO_ELEMENT_FACTOR[analysis.element][analysis.reportedForm];
+
+  if (factorValue === undefined) {
+    throw new Error(
+      `${stream.streamId}/${analysis.element}: formula ${analysis.reportedForm} invalida para o elemento`,
+    );
+  }
+
+  const elementKg = multiplyFraction(
+    multiplyFraction(
+      massKg,
+      divideFraction(
+        decimalFraction(analysis.reportedContent),
+        fraction(100n),
+      ),
+    ),
+    decimalFraction(factorValue),
+  );
+
+  return roundHalfUp(
+    multiplyFraction(elementKg, fraction(1_000_000n)),
+  );
+}
+
+function emptyTotals() {
+  return {
+    inputMg: 0n,
+    productMg: 0n,
+    otherOutputMg: 0n,
+    openingInventoryMg: 0n,
+    closingInventoryMg: 0n,
+  };
+}
+
+function auditElementalBalance(
+  document: Record<string, unknown>,
+  actorId: Hex,
+): ElementalAudit {
+  const raw = document.elementalBalance;
+
+  if (raw === undefined) {
+    return {
+      status: "NOT_PRESENT",
+      resultHash: null,
+      periodStart: null,
+      periodEnd: null,
+      totals: {},
+      errors: [],
+    };
+  }
+
+  const parsed = elementalBalanceSchema.safeParse(raw);
+  if (!parsed.success) {
+    const errors = parsed.error.issues.map(
+      (issue) =>
+        `elementalBalance.${issue.path.join(".") || "root"}: ${issue.message}`,
+    );
+    const invalidPayloadHash = hashText(stableJson(raw));
+    const resultHash = hashText(
+      stableJson({
+        domain: "ExploreChem/PeriodicElementalBalanceAudit/v1",
+        actorId,
+        invalidPayloadHash,
+        errors,
+      }),
+    );
+
+    return {
+      status: "DIVERGENTE",
+      resultHash,
+      periodStart: null,
+      periodEnd: null,
+      totals: {},
+      errors,
+    };
+  }
+
+  const balance: ElementalBalance = parsed.data;
+  const errors: string[] = [];
+
+  if (!sameHex(balance.actorId, actorId)) {
+    errors.push("elementalBalance.actorId diverge do ator da evidencia");
+  }
+
+  const periodStartMs = Date.parse(balance.periodStart);
+  const periodEndMs = Date.parse(balance.periodEnd);
+  if (periodEndMs <= periodStartMs) {
+    errors.push("periodEnd deve ser posterior a periodStart");
+  }
+
+  const streamIds = new Set<string>();
+  const totals = new Map<ElementSymbol, ReturnType<typeof emptyTotals>>();
+  const streamResults: Array<{
+    streamId: string;
+    streamType: z.infer<typeof streamTypeSchema>;
+    element: ElementSymbol;
+    declaredElementalMassMg: string;
+    recalculatedElementalMassMg: string | null;
+  }> = [];
+
+  for (const stream of [...balance.streams].sort((a, b) =>
+    a.streamId.localeCompare(b.streamId),
+  )) {
+    if (streamIds.has(stream.streamId)) {
+      errors.push(`${stream.streamId}: streamId duplicado`);
+      continue;
+    }
+    streamIds.add(stream.streamId);
+
+    const weighingMs = Date.parse(stream.weighingTimestamp);
+    if (weighingMs < periodStartMs || weighingMs > periodEndMs) {
+      errors.push(
+        `${stream.streamId}: weighingTimestamp fora do periodo declarado`,
+      );
+    }
+
+    const streamElements = new Set<ElementSymbol>();
+    for (const analysis of [...stream.elements].sort((a, b) =>
+      a.element.localeCompare(b.element),
+    )) {
+      if (streamElements.has(analysis.element)) {
+        errors.push(
+          `${stream.streamId}/${analysis.element}: elemento duplicado na corrente`,
+        );
         continue;
       }
+      streamElements.add(analysis.element);
 
-      return {
-        initialBlockchainPendingId,
-        row,
-        onchain,
-        mode: "SIMULATION_PROGRESS_FALLBACK",
-      };
-    } catch {
-      // indice sem evidencia legivel on-chain: ignora e continua
+      let recalculated: bigint | null = null;
+      try {
+        recalculated = elementalMassMg(stream, analysis);
+        const declared = BigInt(analysis.declaredElementalMassMg);
+
+        if (recalculated !== declared) {
+          errors.push(
+            `${stream.streamId}/${analysis.element}: massaElementarMg declarada=${declared} recalculada=${recalculated}`,
+          );
+        }
+
+        const aggregate = totals.get(analysis.element) ?? emptyTotals();
+        if (stream.streamType === "INPUT") {
+          aggregate.inputMg += recalculated;
+        } else if (stream.streamType === "PRODUCT") {
+          aggregate.productMg += recalculated;
+        } else if (
+          stream.streamType === "WASTE" ||
+          stream.streamType === "PURGE" ||
+          stream.streamType === "EFFLUENT"
+        ) {
+          aggregate.otherOutputMg += recalculated;
+        } else if (stream.streamType === "OPENING_INVENTORY") {
+          aggregate.openingInventoryMg += recalculated;
+        } else {
+          aggregate.closingInventoryMg += recalculated;
+        }
+        totals.set(analysis.element, aggregate);
+      } catch (error) {
+        errors.push(
+          error instanceof Error
+            ? error.message
+            : `${stream.streamId}/${analysis.element}: erro de calculo`,
+        );
+      }
+
+      streamResults.push({
+        streamId: stream.streamId,
+        streamType: stream.streamType,
+        element: analysis.element,
+        declaredElementalMassMg: analysis.declaredElementalMassMg,
+        recalculatedElementalMassMg: recalculated?.toString() ?? null,
+      });
     }
   }
 
-  return null;
+  const finalTotals: Partial<Record<ElementSymbol, ElementTotals>> = {};
+
+  for (const element of [...totals.keys()].sort()) {
+    const aggregate = totals.get(element)!;
+    const muf =
+      aggregate.inputMg +
+      aggregate.openingInventoryMg -
+      aggregate.productMg -
+      aggregate.otherOutputMg -
+      aggregate.closingInventoryMg;
+
+    const declaredMuf = balance.declaredMufMg[element];
+    if (declaredMuf === undefined) {
+      errors.push(`${element}: declaredMufMg ausente`);
+    } else if (BigInt(declaredMuf) !== muf) {
+      errors.push(
+        `${element}: MUF declarado=${declaredMuf} recalculado=${muf}`,
+      );
+    }
+
+    const productRecoveryPpm =
+      aggregate.inputMg === 0n
+        ? null
+        : roundHalfUp(
+            multiplyFraction(
+              fraction(aggregate.productMg, aggregate.inputMg),
+              fraction(1_000_000n),
+            ),
+          );
+
+    finalTotals[element] = {
+      inputMg: aggregate.inputMg.toString(),
+      productMg: aggregate.productMg.toString(),
+      otherOutputMg: aggregate.otherOutputMg.toString(),
+      openingInventoryMg: aggregate.openingInventoryMg.toString(),
+      closingInventoryMg: aggregate.closingInventoryMg.toString(),
+      mufMg: muf.toString(),
+      productRecoveryPpm: productRecoveryPpm?.toString() ?? null,
+    };
+  }
+
+  for (const element of Object.keys(balance.declaredMufMg) as ElementSymbol[]) {
+    if (!totals.has(element)) {
+      errors.push(`${element}: MUF declarado sem corrente elementar`);
+    }
+  }
+
+  const resultHash = hashText(
+    stableJson({
+      domain: "ExploreChem/PeriodicElementalBalanceAudit/v1",
+      factorTableVersion: balance.factorTableVersion,
+      actorId: balance.actorId,
+      periodStart: balance.periodStart,
+      periodEnd: balance.periodEnd,
+      previousBalanceHash: balance.previousBalanceHash ?? zeroHash,
+      streamResults,
+      totals: finalTotals,
+    }),
+  );
+
+  return {
+    status: errors.length === 0 ? "CONFORME" : "DIVERGENTE",
+    resultHash,
+    periodStart: balance.periodStart,
+    periodEnd: balance.periodEnd,
+    totals: finalTotals,
+    errors,
+  };
 }
 
-/* ============================================================
- * Documento -> atores / lote / massa
- * ============================================================
- */
+function recomputeCurrentManifestCommitments(
+  manifest: CurrentPrivatePairwiseResult,
+) {
+  const result = {
+    schema: "ExploreChem/PairwiseMassResult/v1" as const,
+    calculationVersion: manifest.calculationVersion,
+    focusActorId: manifest.sourceActorId,
+    focusEvidenceId: manifest.sourceEvidenceId,
+    lotReference: manifest.lotReference,
+    evidenceIds: manifest.evidenceIds,
+    correlationEdges: manifest.correlationEdges,
+    massPairs: manifest.massPairs,
+    status: manifest.status,
+  };
+
+  const aggregateInputHash = hashText(
+    stableJson({
+      domain: "ExploreChem/PairwiseMassInput/v1",
+      calculationVersion: manifest.calculationVersion,
+      actorId: manifest.sourceActorId,
+      focusEvidenceId: manifest.sourceEvidenceId,
+      evidenceIds: manifest.evidenceIds,
+      correlationEdges: manifest.correlationEdges,
+    }),
+  );
+
+  const canonicalResultHash = hashText(
+    stableJson({
+      domain: "ExploreChem/PairwiseMass/v1",
+      calculationVersion: manifest.calculationVersion,
+      actorId: manifest.sourceActorId,
+      focusEvidenceId: manifest.sourceEvidenceId,
+      result,
+    }),
+  );
+
+  const resultId = hashText(
+    stableJson({
+      domain: "ExploreChem/PairwiseMassResultId/v1",
+      calculationVersion: manifest.calculationVersion,
+      actorId: manifest.sourceActorId,
+      focusEvidenceId: manifest.sourceEvidenceId,
+      resultHash: canonicalResultHash,
+    }),
+  );
+
+  return {
+    aggregateInputHash,
+    resultHash: canonicalResultHash,
+    resultId,
+  };
+}
+
+type RecomputedManifestCommitments = {
+  aggregateInputHash: Hex;
+  resultHash: Hex;
+  resultId: Hex;
+};
+
+function recomputeManifestCommitments(
+  manifest: PrivatePairwiseResult,
+): RecomputedManifestCommitments {
+  return recomputeCurrentManifestCommitments(manifest);
+}
 
 function actorIdFromValue(
   value: unknown,
   actors: ActorDirectory,
 ): Hex | null {
-  if (typeof value !== "string" || value.trim().length === 0) {
-    return null;
-  }
-
+  if (typeof value !== "string" || value.trim().length === 0) return null;
   const trimmed = value.trim();
 
   if (/^0x[0-9a-fA-F]{64}$/.test(trimmed)) {
@@ -865,25 +1425,19 @@ function actorIdFromValue(
   return actors.byName.get(canonicalName(trimmed)) ?? null;
 }
 
-function normalizeEvidence(
+function normalizeCommittedEvidence(
   document: Record<string, unknown>,
   row: EvidenceRow,
+  onchain: OnchainEvidence,
   actors: ActorDirectory,
 ): NormalizedEvidence {
   const actor = actors.byDbId.get(row.actor_db_id);
-
   if (!actor) {
     throw new Error(`${row.evidence_id}: actor_db_id nao encontrado`);
   }
-
-  /*
-   * O actorId do JSON nao e a autoridade sobre o dono da evidencia.
-   * A identidade autoritativa vem de:
-   *   row.actor_db_id -> explorerchem_actors.actor_id -> blockchain actorId.
-   *
-   * Para correlacao usamos apenas campos comprometidos no documento:
-   * lotId, originActor e destinationActor.
-   */
+  if (!sameHex(actor.actor_id, onchain.actorId)) {
+    throw new Error(`${row.evidence_id}: ator cadastrado diverge da blockchain`);
+  }
 
   if (typeof document.actorType === "string") {
     const declaredType = document.actorType.trim().toUpperCase();
@@ -891,9 +1445,7 @@ function normalizeEvidence(
       (actorTypeSchema.options as readonly string[]).includes(declaredType) &&
       declaredType !== actor.actor_type
     ) {
-      throw new Error(
-        `${row.evidence_id}: actorType do documento diverge do cadastro`,
-      );
+      throw new Error(`${row.evidence_id}: actorType do JSON diverge do cadastro`);
     }
   }
 
@@ -913,12 +1465,6 @@ function normalizeEvidence(
       document.destinationActorId ?? document.destinationActor,
       actors,
     ),
-    carrierActorId: actorIdFromValue(
-      document.carrierActorId ?? document.carrierActor,
-      actors,
-    ),
-    originSite: nullableString(document.originSite),
-    destinationSite: nullableString(document.destinationSite),
     lotReference: nullableString(document.lotId ?? document.lotReference),
     grossMassKg: decimalString(
       massBalance.grossMassKg ?? document.grossMassKg ?? document.massKg,
@@ -950,76 +1496,15 @@ function normalizeEvidence(
   };
 }
 
-function recomputeEvidenceHash(
-  row: EvidenceRow,
-  bytes: Uint8Array,
-): Hex {
-  if (row.hash_algorithm === "SHA-256" || row.hash_algorithm === "SHA256") {
-    return sha256(bytes);
-  }
-
-  return keccak256(bytes);
-}
-
-function loadVerifiedEvidence(
-  runtime: TeeRuntime<Config>,
-  key: string,
-  row: EvidenceRow,
-  actors: ActorDirectory,
-  onchain?: OnchainEvidence,
-): VerifiedEvidence {
-  const chainEvidence = onchain ?? readEvidence(runtime, row.evidence_id);
-
-  if (lower(chainEvidence.evidenceId) !== lower(row.evidence_id)) {
-    throw new Error(`${row.evidence_id}: evidenceId on-chain divergente`);
-  }
-
-  const bytes = downloadEvidenceDocument(runtime, key, row);
-  const recomputedHash = recomputeEvidenceHash(row, bytes);
-  const document = parseJsonDocument(row, bytes);
-  const normalized = normalizeEvidence(document, row, actors);
-
-  const integrity: IntegrityCheck = {
-    rowHashMatchesChain:
-      lower(row.evidence_hash) === lower(chainEvidence.evidenceHash),
-    documentHashMatchesChain:
-      lower(recomputedHash) === lower(chainEvidence.evidenceHash),
-    ownerActorMatchesChain:
-      lower(normalized.ownerActorId) === lower(chainEvidence.actorId),
-  };
-
-  if (!integrity.documentHashMatchesChain) {
-    throw new Error(`${row.evidence_id}: hash do JSON diverge da blockchain`);
-  }
-
-  if (!integrity.ownerActorMatchesChain) {
-    throw new Error(`${row.evidence_id}: ator dono diverge da blockchain`);
-  }
-
-  return {
-    row,
-    onchain: chainEvidence,
-    document,
-    normalized,
-    integrity,
-  };
-}
-
-/* ============================================================
- * Correlacao temporal + origem/destino
- * ============================================================
- */
-
 function outgoingMass(
-  from: VerifiedEvidence,
-  to: VerifiedEvidence,
+  from: IndependentlyVerifiedEvidence,
+  to: IndependentlyVerifiedEvidence,
 ): MassEndpoint {
   const n = from.normalized;
 
   if (n.actorType === "LABORATORY") {
     return { massMg: null, field: "NO_PHYSICAL_MASS" };
   }
-
   if (n.actorType === "MINER") {
     return {
       massMg: kgToMg(n.outputMassKg ?? n.grossMassKg),
@@ -1029,7 +1514,6 @@ function outgoingMass(
           : "massBalance.grossMassKg",
     };
   }
-
   if (n.actorType === "CARRIER") {
     return {
       massMg: kgToMg(n.deliveredMassKg ?? n.outputMassKg),
@@ -1039,25 +1523,19 @@ function outgoingMass(
           : "outputMassKg",
     };
   }
-
   if (n.actorType === "PROCESSOR" || n.actorType === "REFINER") {
     return {
       massMg: kgToMg(n.outputMassKg),
       field: "transformation.outputMassKg",
     };
   }
-
   if (n.actorType === "MANUFACTURER") {
-    if (
-      to.normalized.actorType === "RECYCLER" &&
-      n.scrapMassKg !== null
-    ) {
+    if (to.normalized.actorType === "RECYCLER" && n.scrapMassKg !== null) {
       return {
         massMg: kgToMg(n.scrapMassKg),
         field: "transformation.scrapMassKg",
       };
     }
-
     return {
       massMg: kgToMg(n.outputMassKg ?? n.scrapMassKg),
       field:
@@ -1066,7 +1544,6 @@ function outgoingMass(
           : "transformation.scrapMassKg",
     };
   }
-
   if (n.actorType === "RECYCLER") {
     return {
       massMg: kgToMg(n.recoveredMassKg ?? n.outputMassKg),
@@ -1077,33 +1554,27 @@ function outgoingMass(
     };
   }
 
-  const value =
-    n.deliveredMassKg ??
-    n.recoveredMassKg ??
-    n.scrapMassKg ??
-    n.outputMassKg ??
-    n.grossMassKg;
-
   return {
-    massMg: kgToMg(value),
+    massMg: kgToMg(
+      n.deliveredMassKg ??
+        n.recoveredMassKg ??
+        n.scrapMassKg ??
+        n.outputMassKg ??
+        n.grossMassKg,
+    ),
     field: "bestAvailableOutgoingMass",
   };
 }
 
-function incomingMass(to: VerifiedEvidence): MassEndpoint {
+function incomingMass(to: IndependentlyVerifiedEvidence): MassEndpoint {
   const n = to.normalized;
 
   if (n.actorType === "LABORATORY") {
     return { massMg: null, field: "NO_PHYSICAL_MASS" };
   }
-
   if (n.actorType === "CARRIER") {
     return {
-      massMg: kgToMg(
-        n.collectedMassKg ??
-          n.inputMassKg ??
-          n.grossMassKg,
-      ),
+      massMg: kgToMg(n.collectedMassKg ?? n.inputMassKg ?? n.grossMassKg),
       field:
         n.collectedMassKg !== null
           ? "custody.massCollectedKg"
@@ -1112,7 +1583,6 @@ function incomingMass(to: VerifiedEvidence): MassEndpoint {
             : "massBalance.grossMassKg",
     };
   }
-
   if (
     n.actorType === "PROCESSOR" ||
     n.actorType === "REFINER" ||
@@ -1120,11 +1590,7 @@ function incomingMass(to: VerifiedEvidence): MassEndpoint {
     n.actorType === "RECYCLER"
   ) {
     return {
-      massMg: kgToMg(
-        n.inputMassKg ??
-          n.grossMassKg ??
-          n.collectedMassKg,
-      ),
+      massMg: kgToMg(n.inputMassKg ?? n.grossMassKg ?? n.collectedMassKg),
       field:
         n.inputMassKg !== null
           ? "transformation.inputMassKg"
@@ -1135,524 +1601,351 @@ function incomingMass(to: VerifiedEvidence): MassEndpoint {
   }
 
   return {
-    massMg: kgToMg(
-      n.inputMassKg ??
-        n.collectedMassKg ??
-        n.grossMassKg,
-    ),
+    massMg: kgToMg(n.inputMassKg ?? n.collectedMassKg ?? n.grossMassKg),
     field: "bestAvailableIncomingMass",
   };
 }
 
-function edgeCandidate(
-  from: VerifiedEvidence,
-  to: VerifiedEvidence,
-  relationType: RelationType,
-): CorrelationEdge {
-  const lotReference = from.normalized.lotReference;
+function independentlyAuditCommittedDocuments(
+  runtime: TeeRuntime<Config>,
+  key: string,
+  manifest: PrivatePairwiseResult,
+  focusEvidence: OnchainEvidence,
+  actors: ActorDirectory,
+): IndependentAudit {
+  const errors: string[] = [];
+  const rowHashWarnings: string[] = [];
+  const documents = new Map<string, IndependentlyVerifiedEvidence>();
+  const seenEvidenceIds = new Set<string>();
 
-  if (lotReference === null || !sameLot(from.normalized, to.normalized)) {
-    throw new Error("edgeCandidate chamado sem lotId comum");
-  }
+  const incomingEdges = manifest.correlationEdges.filter(
+    (edge) =>
+      edge.relationType === "PHYSICAL_HANDOFF" &&
+      sameHex(edge.toEvidenceId, manifest.sourceEvidenceId),
+  );
+  const incomingPairs = manifest.massPairs.filter(
+    (pair) =>
+      pair.relationType === "PHYSICAL_HANDOFF" &&
+      sameHex(pair.toEvidenceId, manifest.sourceEvidenceId),
+  );
 
-  if (relationType === "LAB_ANALYSIS") {
+  if (
+    incomingEdges.length !== 1 ||
+    incomingPairs.length !== 1 ||
+    !sameHex(incomingEdges[0].fromEvidenceId, incomingPairs[0].fromEvidenceId) ||
+    !sameHex(incomingEdges[0].toEvidenceId, incomingPairs[0].toEvidenceId)
+  ) {
+    errors.push(
+      "resultado sem um unico par fisico anterior direcionado para a evidencia atual",
+    );
     return {
-      from,
-      to,
-      relationType,
-      lotReference,
-      left: {
-        massMg: null,
-        field: "NO_PHYSICAL_MASS",
-      },
-      right: {
-        massMg: null,
-        field: "NO_PHYSICAL_MASS",
-      },
+      evidenceCount: 0,
+      pairCount: 0,
+      rowHashWarnings,
+      errors,
+      documents,
     };
   }
 
-  return {
-    from,
-    to,
-    relationType,
-    lotReference,
-    left: outgoingMass(from, to),
-    right: incomingMass(to),
-  };
-}
+  const directEvidenceIds = [
+    incomingEdges[0].fromEvidenceId,
+    manifest.sourceEvidenceId,
+  ];
 
-/**
- * REGRA CENTRAL.
- *
- * PHYSICAL_HANDOFF exige, sem fallback:
- *
- *   from.lotId              == to.lotId
- *   from.destinationActorId == to.actorId
- *   to.originActorId        == from.actorId
- *
- * Timestamp NAO participa da correlacao nesta versao.
- * Massa tambem NAO participa da descoberta.
- *
- * LAB_ANALYSIS nao representa transferencia fisica. O laudo so pode ser
- * anexado quando pertence ao mesmo lotId e aponta para o ator alvo.
- */
-function directedRelation(
-  from: VerifiedEvidence,
-  to: VerifiedEvidence,
-): CorrelationEdge | null {
-  if (
-    lower(from.row.evidence_id) ===
-    lower(to.row.evidence_id)
-  ) {
-    return null;
-  }
-
-  const a = from.normalized;
-  const b = to.normalized;
-
-  if (!sameLot(a, b)) {
-    return null;
-  }
-
-  /*
-   * Laboratorio: evidencia analitica, nao fluxo fisico.
-   */
-  if (a.actorType === "LABORATORY") {
-    if (
-      !idEquals(
-        a.destinationActorId,
-        to.onchain.actorId,
-      )
-    ) {
-      return null;
-    }
-
-    return edgeCandidate(
-      from,
-      to,
-      "LAB_ANALYSIS",
-    );
-  }
-
-  /*
-   * Nenhum evento fisico termina "no laboratorio" neste modelo.
-   */
-  if (b.actorType === "LABORATORY") {
-    return null;
-  }
-
-  /*
-   * CORRELACAO FISICA ESTRITA.
-   *
-   * Nao aceitamos:
-   *   - lotId diferente ou ausente;
-   *   - destino aproximado;
-   *   - originActor ausente;
-   *   - originActor igual ao proprio receptor como fallback;
-   *   - massa como criterio de match;
-   *   - timestamp como criterio de match.
-   */
-  const destinationMatches =
-    idEquals(
-      a.destinationActorId,
-      to.onchain.actorId,
-    );
-
-  const originMatches =
-    idEquals(
-      b.originActorId,
-      from.onchain.actorId,
-    );
-
-  if (
-    !destinationMatches ||
-    !originMatches
-  ) {
-    return null;
-  }
-
-  return edgeCandidate(
-    from,
-    to,
-    "PHYSICAL_HANDOFF",
-  );
-}
-
-function edgeKey(
-  edge: CorrelationEdge,
-): string {
-  return [
-    lower(edge.from.row.evidence_id),
-    lower(edge.to.row.evidence_id),
-    edge.relationType,
-    edge.lotReference,
-  ].join("|");
-}
-
-/**
- * Constroi somente a vizinhanca direta da evidencia PENDING selecionada.
- *
- * Cada candidato do mesmo lote e testado nos dois sentidos:
- *   - focus -> candidate;
- *   - candidate -> focus.
- *
- * Um candidato encontrado nao passa a descobrir outros candidatos. Assim o
- * resultado pertence ao foco e nao replica a cadeia completa em cada execucao.
- */
-function buildDirectComponent(
-  focus: VerifiedEvidence,
-  candidates: VerifiedEvidence[],
-): CorrelationComponent {
-  const focusId = lower(focus.row.evidence_id);
-  const evidences = new Map<string, VerifiedEvidence>([
-    [focusId, focus],
-  ]);
-  const edges = new Map<string, CorrelationEdge>();
-
-  for (const candidate of candidates) {
-    const candidateId = lower(candidate.row.evidence_id);
-
-    if (
-      candidateId === focusId ||
-      !sameLot(focus.normalized, candidate.normalized)
-    ) {
+  for (const evidenceId of directEvidenceIds) {
+    const normalizedId = lower(evidenceId);
+    if (seenEvidenceIds.has(normalizedId)) {
+      errors.push(`${evidenceId}: evidenceId duplicado no resultado privado`);
       continue;
     }
+    seenEvidenceIds.add(normalizedId);
 
-    const forward = directedRelation(focus, candidate);
-    const backward = directedRelation(candidate, focus);
+    try {
+      const onchain = sameHex(evidenceId, focusEvidence.evidenceId)
+        ? focusEvidence
+        : readEvidence(runtime, evidenceId);
+      if (!sameHex(onchain.evidenceId, evidenceId)) {
+        throw new IntegrityViolation(
+          `${evidenceId}: getEvidence retornou outro evidenceId`,
+        );
+      }
 
-    if (forward) {
-      edges.set(edgeKey(forward), forward);
-    }
-
-    if (backward) {
-      edges.set(edgeKey(backward), backward);
-    }
-
-    if (forward || backward) {
-      evidences.set(candidateId, candidate);
-    }
-  }
-
-  return {
-    evidences: [...evidences.values()].sort((a, b) =>
-      a.row.evidence_id.localeCompare(
-        b.row.evidence_id,
-      ),
-    ),
-    edges: [...edges.values()].sort((a, b) =>
-      edgeKey(a).localeCompare(
-        edgeKey(b),
-      ),
-    ),
-  };
-}
-
-/* ============================================================
- * Massa: somente os elos diretos do foco.
- * Cada PHYSICAL_HANDOFF e calculado de dois em dois.
- * ============================================================
- */
-
-function calculatePairMass(
-  edge: CorrelationEdge,
-): PairMassResult | null {
-  if (
-    edge.relationType !==
-    "PHYSICAL_HANDOFF"
-  ) {
-    return null;
-  }
-
-  const left = edge.left.massMg;
-  const right = edge.right.massMg;
-
-  const delta =
-    left !== null &&
-    right !== null
-      ? left - right
-      : null;
-
-  const status: Status =
-    delta === null
-      ? "NAO_ATESTADO"
-      : delta === 0n
-        ? "CONFORME"
-        : "DIVERGENTE";
-
-  const pairId =
-    hashText(
-      stableJson({
-        domain:
-          "ExploreChem/LotPairwiseMassPair/v4",
-        lotReference:
-          edge.lotReference,
-        fromEvidenceId:
-          edge.from.row.evidence_id,
-        toEvidenceId:
-          edge.to.row.evidence_id,
-        relationType:
-          edge.relationType,
-      }),
-    );
-
-  return {
-    pairId,
-    relationType:
-      edge.relationType,
-    fromEvidenceId:
-      edge.from.row.evidence_id,
-    toEvidenceId:
-      edge.to.row.evidence_id,
-    fromActorId:
-      edge.from.onchain.actorId,
-    toActorId:
-      edge.to.onchain.actorId,
-    lotReference:
-      edge.lotReference,
-    leftMassMg:
-      left?.toString() ?? null,
-    rightMassMg:
-      right?.toString() ?? null,
-    leftMassField:
-      edge.left.field,
-    rightMassField:
-      edge.right.field,
-    deltaMg:
-      delta?.toString() ?? null,
-    status,
-  };
-}
-
-function calculateComponentMass(
-  focus: VerifiedEvidence,
-  component: CorrelationComponent,
-): ComponentMassResult {
-  const lotReference =
-    focus.normalized.lotReference;
-
-  if (lotReference === null) {
-    throw new Error(
-      `${focus.row.evidence_id}: lotId ausente no foco`,
-    );
-  }
-
-  const massPairs =
-    component.edges
-      .map(calculatePairMass)
-      .filter(
-        (
-          pair,
-        ): pair is PairMassResult =>
-          pair !== null,
+      const row = loadEvidenceRow(runtime, key, evidenceId);
+      const document = loadEvidenceDocument(runtime, key, row, onchain);
+      const normalized = normalizeCommittedEvidence(
+        document,
+        row,
+        onchain,
+        actors,
       );
 
-  let status: Status;
+      if (normalized.lotReference !== manifest.lotReference) {
+        throw new IntegrityViolation(
+          `${evidenceId}: lotId do JSON=${String(normalized.lotReference)} diverge do resultado=${manifest.lotReference}`,
+        );
+      }
 
-  if (
-    massPairs.some(
-      (pair) =>
-        pair.status ===
-        "DIVERGENTE",
-    )
-  ) {
-    status = "DIVERGENTE";
-  } else if (
-    massPairs.length > 0 &&
-    massPairs.every(
-      (pair) =>
-        pair.status ===
-        "CONFORME",
-    )
-  ) {
-    status = "CONFORME";
-  } else {
-    status = "NAO_ATESTADO";
+      const rowHashMatchesChain = sameHex(
+        row.evidence_hash,
+        onchain.evidenceHash,
+      );
+      if (!rowHashMatchesChain) {
+        rowHashWarnings.push(
+          `${evidenceId}: hash do indice Supabase diverge da blockchain; JSON confirmou a blockchain`,
+        );
+      }
+
+      documents.set(normalizedId, {
+        row,
+        onchain,
+        document,
+        normalized,
+        rowHashMatchesChain,
+      });
+    } catch (error) {
+      if (error instanceof IntegrityViolation) {
+        errors.push(error.message);
+        continue;
+      }
+      throw error;
+    }
   }
 
+  if (!seenEvidenceIds.has(lower(manifest.sourceEvidenceId))) {
+    errors.push("sourceEvidenceId nao esta em evidenceIds");
+  }
+
+  const physicalEdgeKeys = new Set<string>();
+  const allEdgeKeys = new Set<string>();
+  for (const edge of incomingEdges) {
+    const edgeKey = [
+      lower(edge.fromEvidenceId),
+      lower(edge.toEvidenceId),
+      edge.relationType,
+    ].join("|");
+    if (allEdgeKeys.has(edgeKey)) {
+      errors.push(`${edgeKey}: correlationEdge duplicada`);
+      continue;
+    }
+    allEdgeKeys.add(edgeKey);
+    if (edge.relationType === "PHYSICAL_HANDOFF") physicalEdgeKeys.add(edgeKey);
+
+    const from = documents.get(lower(edge.fromEvidenceId));
+    const to = documents.get(lower(edge.toEvidenceId));
+    if (!from || !to) {
+      errors.push(`${edgeKey}: documentos comprometidos indisponiveis`);
+      continue;
+    }
+    if (edge.lotReference !== manifest.lotReference) {
+      errors.push(`${edgeKey}: lotReference da aresta diverge do resultado`);
+    }
+
+    if (edge.relationType === "LAB_ANALYSIS") {
+      if (
+        from.normalized.actorType !== "LABORATORY" ||
+        !idEquals(from.normalized.destinationActorId, to.onchain.actorId)
+      ) {
+        errors.push(`${edgeKey}: relacao LAB_ANALYSIS nao e reproduzivel dos JSONs`);
+      }
+    } else if (
+      from.normalized.actorType === "LABORATORY" ||
+      to.normalized.actorType === "LABORATORY" ||
+      !idEquals(from.normalized.destinationActorId, to.onchain.actorId) ||
+      !idEquals(to.normalized.originActorId, from.onchain.actorId)
+    ) {
+      errors.push(`${edgeKey}: PHYSICAL_HANDOFF nao e reproduzivel dos JSONs`);
+    }
+  }
+
+  const pairKeys = new Set<string>();
+  const reconstructedStatuses: MassStatus[] = [];
+  for (const pair of incomingPairs) {
+    const pairKey = [
+      lower(pair.fromEvidenceId),
+      lower(pair.toEvidenceId),
+      pair.relationType,
+    ].join("|");
+    if (pairKeys.has(pairKey)) {
+      errors.push(`${pair.pairId}: par de massa duplicado`);
+      continue;
+    }
+    pairKeys.add(pairKey);
+
+    if (!allEdgeKeys.has(pairKey)) {
+      errors.push(`${pair.pairId}: par nao possui correlationEdge correspondente`);
+    }
+
+    const from = documents.get(lower(pair.fromEvidenceId));
+    const to = documents.get(lower(pair.toEvidenceId));
+    if (!from || !to) {
+      errors.push(`${pair.pairId}: documentos do par indisponiveis`);
+      continue;
+    }
+    if (!sameHex(pair.fromActorId, from.onchain.actorId)) {
+      errors.push(`${pair.pairId}: fromActorId diverge da blockchain`);
+    }
+    if (!sameHex(pair.toActorId, to.onchain.actorId)) {
+      errors.push(`${pair.pairId}: toActorId diverge da blockchain`);
+    }
+    if (pair.lotReference !== manifest.lotReference) {
+      errors.push(`${pair.pairId}: lotReference diverge do resultado`);
+    }
+
+    const left =
+      pair.relationType === "LAB_ANALYSIS"
+        ? { massMg: null, field: "NO_PHYSICAL_MASS" }
+        : outgoingMass(from, to);
+    const right =
+      pair.relationType === "LAB_ANALYSIS"
+        ? { massMg: null, field: "NO_PHYSICAL_MASS" }
+        : incomingMass(to);
+    const expectedLeft = left.massMg?.toString() ?? null;
+    const expectedRight = right.massMg?.toString() ?? null;
+    const expectedDelta =
+      left.massMg !== null && right.massMg !== null
+        ? (left.massMg - right.massMg).toString()
+        : null;
+    const expectedStatus: MassStatus =
+      expectedDelta === null
+        ? "NAO_ATESTADO"
+        : expectedDelta === "0"
+          ? "CONFORME"
+          : "DIVERGENTE";
+    reconstructedStatuses.push(expectedStatus);
+
+    if (pair.leftMassMg !== expectedLeft) {
+      errors.push(`${pair.pairId}: leftMassMg nao confere com o JSON comprometido`);
+    }
+    if (pair.rightMassMg !== expectedRight) {
+      errors.push(`${pair.pairId}: rightMassMg nao confere com o JSON comprometido`);
+    }
+    if (pair.leftMassField !== left.field) {
+      errors.push(`${pair.pairId}: leftMassField nao confere com a regra independente`);
+    }
+    if (pair.rightMassField !== right.field) {
+      errors.push(`${pair.pairId}: rightMassField nao confere com a regra independente`);
+    }
+    if (pair.deltaMg !== expectedDelta) {
+      errors.push(`${pair.pairId}: deltaMg nao confere com os JSONs comprometidos`);
+    }
+    if (pair.status !== expectedStatus) {
+      errors.push(`${pair.pairId}: status nao confere com os JSONs comprometidos`);
+    }
+  }
+
+  for (const edgeKey of physicalEdgeKeys) {
+    if (!pairKeys.has(edgeKey)) {
+      errors.push(`${edgeKey}: PHYSICAL_HANDOFF sem par de massa`);
+    }
+  }
+
+  const expectedOverallStatus: MassStatus = reconstructedStatuses.some(
+    (status) => status === "DIVERGENTE",
+  )
+    ? "DIVERGENTE"
+    : reconstructedStatuses.length > 0 &&
+        reconstructedStatuses.every((status) => status === "CONFORME")
+      ? "CONFORME"
+      : "NAO_ATESTADO";
+
   return {
-    schema:
-      "ExploreChem/PairwiseMassResult/v1",
-    calculationVersion: 1,
-    focusActorId:
-      focus.onchain.actorId,
-    focusEvidenceId:
-      focus.row.evidence_id,
-    lotReference,
-    evidenceIds:
-      component.evidences
-        .map(
-          (item) =>
-            item.row.evidence_id,
-        ),
-    correlationEdges:
-      component.edges.map(
-        (edge) => ({
-          fromEvidenceId:
-            edge.from.row
-              .evidence_id,
-          toEvidenceId:
-            edge.to.row
-              .evidence_id,
-          relationType:
-            edge.relationType,
-          lotReference:
-            edge.lotReference,
-        }),
-      ),
-    massPairs,
-    status,
+    evidenceCount: documents.size,
+    pairCount: pairKeys.size,
+    rowHashWarnings,
+    errors,
+    documents,
   };
 }
 
-/* ============================================================
- * Commitments deterministicos para blockchain (formato aceito pelo auditor v1)
- * ============================================================
- */
-
-function commitment(
-  focus: OnchainEvidence,
-  result: ComponentMassResult,
+function recomputeMassVerdict(
+  manifest: PrivatePairwiseResult,
+  toleranceBps: number,
 ) {
-  const relationFingerprint =
-    hashText(
-      stableJson({
-        domain:
-          "ExploreChem/PairwiseMassRelation/v1",
-        calculationVersion:
-          result.calculationVersion,
-        focusActorId:
-          result.focusActorId,
-        focusEvidenceId:
-          result.focusEvidenceId,
-        lotReference:
-          result.lotReference,
-        evidenceIds:
-          result.evidenceIds,
-        correlationEdges:
-          result.correlationEdges,
-        massPairs:
-          result.massPairs,
-      }),
-    );
+  const errors: string[] = [];
+  const statuses: MassStatus[] = [];
+  const toleranceChecks: Array<{
+    pairId: Hex;
+    absoluteDeltaMg: string | null;
+    toleranceReference: "OUTGOING_MASS";
+    toleranceReferenceMassMg: string | null;
+    toleranceBps: number;
+    toleranceLimitMg: string | null;
+    status: MassStatus;
+  }> = [];
 
-  const aggregateInputHash =
-    hashText(
-      stableJson({
-        domain:
-          "ExploreChem/PairwiseMassInput/v1",
-        calculationVersion:
-          result.calculationVersion,
-        actorId:
-          focus.actorId,
-        focusEvidenceId:
-          focus.evidenceId,
-        evidenceIds:
-          result.evidenceIds,
-        correlationEdges:
-          result.correlationEdges,
-      }),
-    );
-
-  const resultHash =
-    hashText(
-      stableJson({
-        domain:
-          "ExploreChem/PairwiseMass/v1",
-        calculationVersion:
-          result.calculationVersion,
-        actorId:
-          focus.actorId,
-        focusEvidenceId:
-          focus.evidenceId,
-        result,
-      }),
-    );
-
-  const resultId =
-    hashText(
-      stableJson({
-        domain:
-          "ExploreChem/PairwiseMassResultId/v1",
-        calculationVersion:
-          result.calculationVersion,
-        actorId:
-          focus.actorId,
-        focusEvidenceId:
-          focus.evidenceId,
-        resultHash,
-      }),
-    );
-
-  return {
-    relationFingerprint,
-    componentFingerprint:
-      relationFingerprint,
-    canonicalResultHash:
-      resultHash,
-    aggregateInputHash,
-    resultHash,
-    resultId,
-  };
-}
-
-function privateResultPath(focusId: Hex, resultId: Hex): string {
-  return `mass-results/${focusId.slice(2)}/${resultId.slice(2)}.json`;
-}
-
-/* ============================================================
- * Reports on-chain
- * ============================================================
- */
-
-function matchReport(evidenceId: Hex): Hex {
-  return encodeAbiParameters(
-    parseAbiParameters(
-      "uint8 reportType, bytes32 evidenceId, bytes32 resultId, bytes32 actorId, bytes32 resultHash, bytes32 previousResultId, bytes32 aggregateInputHash, uint8 balanceStatus, uint32 calculationVersion",
-    ),
-    [
-      1,
-      evidenceId,
-      zeroHash,
-      zeroHash,
-      zeroHash,
-      zeroHash,
-      zeroHash,
-      0,
-      0,
-    ],
+  const auditedPairs = manifest.massPairs.filter(
+    (pair) =>
+      pair.relationType === "PHYSICAL_HANDOFF" &&
+      sameHex(pair.toEvidenceId, manifest.sourceEvidenceId),
   );
+
+  if (auditedPairs.length !== 1) {
+    errors.push(
+      "resultado sem um unico par de massa anterior direcionado para a evidencia atual",
+    );
+  }
+
+  for (const pair of auditedPairs) {
+    let expectedStatus: MassStatus;
+    let expectedDelta: string | null;
+
+    if (pair.leftMassMg === null || pair.rightMassMg === null) {
+      expectedStatus = "NAO_ATESTADO";
+      expectedDelta = null;
+      toleranceChecks.push({
+        pairId: pair.pairId,
+        absoluteDeltaMg: null,
+        toleranceReference: "OUTGOING_MASS",
+        toleranceReferenceMassMg: pair.leftMassMg,
+        toleranceBps,
+        toleranceLimitMg: null,
+        status: expectedStatus,
+      });
+    } else {
+      const left = BigInt(pair.leftMassMg);
+      const right = BigInt(pair.rightMassMg);
+      const delta = left - right;
+      const absoluteDelta = delta < 0n ? -delta : delta;
+      const allowed = absoluteDelta * 10_000n <= left * BigInt(toleranceBps);
+      expectedDelta = delta.toString();
+      expectedStatus = allowed ? "CONFORME" : "DIVERGENTE";
+      toleranceChecks.push({
+        pairId: pair.pairId,
+        absoluteDeltaMg: absoluteDelta.toString(),
+        toleranceReference: "OUTGOING_MASS",
+        toleranceReferenceMassMg: left.toString(),
+        toleranceBps,
+        toleranceLimitMg: ((left * BigInt(toleranceBps)) / 10_000n).toString(),
+        status: expectedStatus,
+      });
+    }
+
+    statuses.push(expectedStatus);
+
+    if (pair.deltaMg !== expectedDelta) {
+      errors.push(
+        `${pair.pairId}: deltaMg declarado=${String(pair.deltaMg)} esperado=${String(expectedDelta)}`,
+      );
+    }
+  }
+
+  const expectedOverallStatus: MassStatus = statuses.some(
+    (status) => status === "DIVERGENTE",
+  )
+    ? "DIVERGENTE"
+    : statuses.length > 0 && statuses.every((status) => status === "CONFORME")
+      ? "CONFORME"
+      : "NAO_ATESTADO";
+
+  return { expectedOverallStatus, toleranceChecks, errors };
 }
 
-function balanceReport(
-  focus: OnchainEvidence,
-  committed: ReturnType<typeof commitment>,
-  status: Status,
+function auditReport(
+  evidenceId: Hex,
+  verdict: "VERIFIED" | "DIVERGENT",
 ): Hex {
-  const balanceStatus =
-    status === "CONFORME" ? 1 : status === "DIVERGENTE" ? 2 : 3;
+  const evidenceStatus = verdict === "VERIFIED" ? 3 : 4;
 
-  return encodeAbiParameters(
-    parseAbiParameters(
-      "uint8 reportType, bytes32 evidenceId, bytes32 resultId, bytes32 actorId, bytes32 resultHash, bytes32 previousResultId, bytes32 aggregateInputHash, uint8 balanceStatus, uint32 calculationVersion",
-    ),
-    [
-      2,
-      focus.evidenceId,
-      committed.resultId,
-      focus.actorId,
-      committed.resultHash,
-      zeroHash,
-      committed.aggregateInputHash,
-      balanceStatus,
-      1,
-    ],
-  );
-}
-
-function divergentEvidenceReport(evidenceId: Hex): Hex {
   return encodeAbiParameters(
     parseAbiParameters(
       "uint8 reportType, bytes32 evidenceId, bytes32 resultId, bytes32 actorId, bytes32 resultHash, bytes32 previousResultId, bytes32 aggregateInputHash, uint8 balanceStatus, uint32 calculationVersion",
@@ -1665,13 +1958,13 @@ function divergentEvidenceReport(evidenceId: Hex): Hex {
       zeroHash,
       zeroHash,
       zeroHash,
-      4,
+      evidenceStatus,
       0,
     ],
   );
 }
 
-function write(runtime: TeeRuntime<Config>, payload: Hex): Hex {
+function writeAudit(runtime: TeeRuntime<Config>, payload: Hex): Hex {
   const don = runtime.usingTheDons();
 
   const report = don
@@ -1694,7 +1987,7 @@ function write(runtime: TeeRuntime<Config>, payload: Hex): Hex {
     .result();
 
   if (result.txStatus !== TxStatus.SUCCESS) {
-    throw new Error(`writeReport falhou: ${result.txStatus}`);
+    throw new Error(`writeReport de auditoria falhou: ${result.txStatus}`);
   }
 
   if (
@@ -1702,7 +1995,7 @@ function write(runtime: TeeRuntime<Config>, payload: Hex): Hex {
     result.receiverContractExecutionStatus !== 0
   ) {
     throw new Error(
-      `receiver reverteu: ${result.receiverContractExecutionStatus}` +
+      `receiver de auditoria reverteu: ${result.receiverContractExecutionStatus}` +
         (result.errorMessage ? ` · ${result.errorMessage}` : ""),
     );
   }
@@ -1710,615 +2003,314 @@ function write(runtime: TeeRuntime<Config>, payload: Hex): Hex {
   return bytesToHex(result.txHash ?? new Uint8Array(32)) as Hex;
 }
 
-/* ============================================================
- * RUN
- * ============================================================
- */
+function run(runtime: TeeRuntime<Config>): string {
+  const evidenceId = getNextMatched(runtime);
 
-function run(
-  runtime: TeeRuntime<Config>,
-): string {
-  /*
-   * 1) BLOCKCHAIN PRIMEIRO.
-   */
-  const initialBlockchainPendingId =
-    getNextPending(runtime);
-
-  if (
-    lower(
-      initialBlockchainPendingId,
-    ) === lower(zeroHash)
-  ) {
+  if (sameHex(evidenceId, zeroHash)) {
     return JSON.stringify({
-      workflow:
-        "LOT_CHAIN_PAIRWISE_MASS",
-      discovery:
-        "BLOCKCHAIN_FIRST",
-      pendingAuthority:
-        "BLOCKCHAIN_STATUS_REQUIRED",
-      message:
-        "nenhum PENDING on-chain",
+      workflow: "PAIRWISE_MASS_AUDITOR",
+      discovery: "BLOCKCHAIN_GET_NEXT_MATCHED",
+      authority: "BLOCKCHAIN",
+      message: "nenhuma evidencia MATCHED aguardando auditoria",
     });
   }
 
-  /*
-   * 2) So depois da primeira leitura on-chain:
-   * secrets + consulta PONTUAL do evidenceId no indice Supabase.
-   *
-   * Nao carregamos mais explorerchem_evidences inteiro.
-   */
-  const { key } =
-    secrets(runtime);
+  const evidence = readEvidence(runtime, evidenceId);
 
-  const selection =
-    selectEffectivePending(
-      runtime,
-      key,
-      initialBlockchainPendingId,
-    );
-
-  if (selection === null) {
+  if (evidence.status !== 2) {
     return JSON.stringify({
-      workflow:
-        "LOT_CHAIN_PAIRWISE_MASS",
-      discovery:
-        "BLOCKCHAIN_FIRST",
-      pendingAuthority:
-        "BLOCKCHAIN_STATUS_REQUIRED",
-      initialBlockchainPendingId,
-      message:
-        "nenhum novo PENDING efetivo: o primeiro PENDING on-chain ja pode estar espelhado como MATCHED pela simulacao",
+      workflow: "PAIRWISE_MASS_AUDITOR",
+      discovery: "BLOCKCHAIN_GET_NEXT_MATCHED",
+      evidenceId,
+      observedStatus: evidence.status,
+      message: "evidencia deixou de estar MATCHED antes da auditoria",
     });
   }
 
-  const actors =
-    loadActorDirectory(
-      runtime,
-      key,
-    );
+  const resultId = latestResultId(runtime, evidenceId);
 
-  const focus =
-    loadVerifiedEvidence(
-      runtime,
-      key,
-      selection.row,
-      actors,
-      selection.onchain,
-    );
-
-  /*
-   * lotId e obrigatorio nesta versao porque e o token logico de correlacao.
-   */
-  if (
-    focus.normalized
-      .lotReference === null
-  ) {
+  if (sameHex(resultId, zeroHash)) {
     return JSON.stringify({
-      workflow:
-        "LOT_CHAIN_PAIRWISE_MASS",
-      discovery:
-        "BLOCKCHAIN_FIRST",
-      pendingAuthority:
-        "BLOCKCHAIN_STATUS_REQUIRED",
-      initialBlockchainPendingId,
-      pendingSelectionMode:
-        selection.mode,
-      focusEvidenceId:
-        focus.row.evidence_id,
-      message:
-        "lotId ausente no documento comprometido; continua PENDING",
+      workflow: "PAIRWISE_MASS_AUDITOR",
+      discovery: "BLOCKCHAIN_GET_NEXT_MATCHED",
+      evidenceId,
+      message: "evidencia MATCHED ainda sem resultado de massa; permanece MATCHED",
     });
   }
 
-  /*
-   * O indice do foco e apenas um espelho de descoberta. Ele pode estar nulo ou
-   * desatualizado sem invalidar o documento: o lotId usado abaixo veio do JSON
-   * cujo hash ja foi confirmado contra o evidenceHash da blockchain.
-   */
-  const focusLotIndexStatus =
-    focus.row.lot_reference === focus.normalized.lotReference
-      ? "MATCHED"
-      : focus.row.lot_reference === null
-        ? "MISSING_IGNORED"
-        : "MISMATCH_IGNORED";
+  const onchainResult = readResult(runtime, resultId);
 
-  /*
-   * Aqui esta a mudanca de escala: uma unica consulta indexada traz somente as
-   * evidencias do lote do foco. Nenhuma evidencia de outros lotes e baixada.
-   */
-  const lotRows = loadEvidenceRowsByLot(
+  const { key } = secrets(runtime);
+  const row = loadEvidenceRow(runtime, key, evidenceId);
+  const resultPath = privateResultPath(evidenceId, resultId);
+  const manifest = loadPrivateResult(
     runtime,
     key,
-    focus.normalized.lotReference,
+    row.storage_bucket,
+    resultPath,
+  );
+  const compatibilityMode = "CURRENT_V1_DIRECT_PREVIOUS_ONLY";
+
+  const actors = loadActorDirectory(runtime, key);
+  const independentAudit = independentlyAuditCommittedDocuments(
+    runtime,
+    key,
+    manifest,
+    evidence,
+    actors,
+  );
+
+  let elementalAudit: ElementalAudit;
+  try {
+    const evidenceDocument =
+      independentAudit.documents.get(lower(evidenceId))?.document ??
+      loadEvidenceDocument(runtime, key, row, evidence);
+    elementalAudit = auditElementalBalance(
+      evidenceDocument,
+      evidence.actorId,
+    );
+  } catch (error) {
+    const message =
+      error instanceof Error
+        ? error.message
+        : "falha ao abrir o documento elementar";
+    elementalAudit = {
+      status: "DIVERGENTE",
+      resultHash: hashText(
+        stableJson({
+          domain: "ExploreChem/PeriodicElementalBalanceAudit/v1",
+          actorId: evidence.actorId,
+          error: message,
+        }),
+      ),
+      periodStart: null,
+      periodEnd: null,
+      totals: {},
+      errors: [message],
+    };
+  }
+
+  const integrityErrors: string[] = [];
+
+  if (!sameHex(manifest.sourceEvidenceId, evidenceId)) {
+    integrityErrors.push("sourceEvidenceId privado diverge da evidencia auditada");
+  }
+  if (!sameHex(manifest.sourceActorId, evidence.actorId)) {
+    integrityErrors.push("sourceActorId privado diverge do ator on-chain");
+  }
+  if (!sameHex(manifest.sourceEvidenceHash, evidence.evidenceHash)) {
+    integrityErrors.push("sourceEvidenceHash privado diverge do hash on-chain");
+  }
+  if (!sameHex(onchainResult.evidenceId, evidenceId)) {
+    integrityErrors.push("resultado on-chain pertence a outra evidencia");
+  }
+  if (!sameHex(onchainResult.actorId, evidence.actorId)) {
+    integrityErrors.push("resultado on-chain pertence a outro ator");
+  }
+
+  const expectedCalculationVersion = manifest.calculationVersion;
+
+  if (onchainResult.calculationVersion !== expectedCalculationVersion) {
+    integrityErrors.push(
+      `calculationVersion on-chain=${onchainResult.calculationVersion} esperada=${expectedCalculationVersion}`,
+    );
+  }
+
+  const recomputed = recomputeManifestCommitments(manifest);
+
+  if (!sameHex(recomputed.resultHash, manifest.canonicalResultHash)) {
+    integrityErrors.push("canonicalResultHash privado nao e reproduzivel");
+  }
+  if (!sameHex(recomputed.aggregateInputHash, manifest.aggregateInputHash)) {
+    integrityErrors.push("aggregateInputHash privado nao e reproduzivel");
+  }
+  if (!sameHex(recomputed.aggregateInputHash, onchainResult.aggregateInputHash)) {
+    integrityErrors.push("aggregateInputHash privado diverge do resultado on-chain");
+  }
+  if (!sameHex(recomputed.resultHash, manifest.resultHash)) {
+    integrityErrors.push("resultHash privado nao e reproduzivel");
+  }
+  if (!sameHex(recomputed.resultHash, onchainResult.resultHash)) {
+    integrityErrors.push("resultHash recalculado diverge do resultado on-chain");
+  }
+  if (!sameHex(recomputed.resultId, manifest.resultId)) {
+    integrityErrors.push("resultId privado nao e reproduzivel");
+  }
+  if (!sameHex(recomputed.resultId, onchainResult.resultId)) {
+    integrityErrors.push("resultId recalculado diverge do resultado on-chain");
+  }
+  if (
+    !verifyResultHash(
+      runtime,
+      onchainResult.resultId,
+      recomputed.resultHash,
+    )
+  ) {
+    integrityErrors.push("verifyResultHash retornou false");
+  }
+
+  const toleranceBps = runtime.config.massToleranceBps ?? 200;
+  const massAudit = recomputeMassVerdict(manifest, toleranceBps);
+  const elementalErrors = elementalAudit.errors.map(
+    (error) => `elemental: ${error}`,
   );
 
   if (
-    focus.normalized
-      .originActorId === null &&
-    focus.normalized
-      .destinationActorId === null
+    runtime.config.requireElementalBalance === true &&
+    elementalAudit.status === "NOT_PRESENT"
   ) {
-    return JSON.stringify({
-      workflow:
-        "LOT_CHAIN_PAIRWISE_MASS",
-      discovery:
-        "BLOCKCHAIN_FIRST",
-      pendingAuthority:
-        "BLOCKCHAIN_STATUS_REQUIRED",
-      initialBlockchainPendingId,
-      pendingSelectionMode:
-        selection.mode,
-      focusEvidenceId:
-        focus.row.evidence_id,
-      focusLotReference:
-        focus.normalized.lotReference,
-      message:
-        "origem e destino ausentes no documento comprometido; continua PENDING",
-    });
+    elementalErrors.push(
+      "elemental: bloco elementalBalance obrigatorio e ausente",
+    );
   }
 
-  /*
-   * Divergencia estrutural objetiva.
-   *
-   * Uma evidencia fisica nao pode declarar origem e destino iguais. Alem
-   * disso, um ator intermediario nao pode declarar a si proprio como origem;
-   * MINER e LABORATORY ficam fora dessa segunda verificacao.
-   * Esses casos produzem um resultado DIVERGENTE sem par numerico e sao
-   * finalizados como DIVERGENT on-chain.
-   */
-  const originEqualsDestination =
-    focus.normalized.originActorId !== null &&
-    focus.normalized.destinationActorId !== null &&
-    lower(focus.normalized.originActorId) ===
-      lower(focus.normalized.destinationActorId);
+  const allErrors = [
+    ...integrityErrors,
+    ...independentAudit.errors.map(
+      (error) => `independent: ${error}`,
+    ),
+    ...massAudit.errors,
+    ...elementalErrors,
+  ];
 
-  const originEqualsOwner =
-    focus.normalized.actorType !== "MINER" &&
-    focus.normalized.actorType !== "LABORATORY" &&
-    focus.normalized.originActorId !== null &&
-    lower(focus.normalized.originActorId) ===
-      lower(focus.onchain.actorId);
-
-  const structuralDivergenceCode =
-    originEqualsDestination
-      ? "ORIGIN_EQUALS_DESTINATION"
-      : originEqualsOwner
-        ? "ORIGIN_EQUALS_OWNER"
-        : null;
-
-  /*
-   * 3) Candidatos DO MESMO LOTE, vindos da consulta indexada.
-   *
-   * PENDING, MATCHED, VERIFIED e DIVERGENT podem ser consultados.
-   * Um MATCH anterior continua participando da reconstituicao da cadeia.
-   *
-   * O Supabase so aponta os candidatos. Para cada linha retornada, o TEE ainda:
-   *   - le o estado/evidenceHash on-chain;
-   *   - baixa o JSON;
-   *   - recomputa o hash;
-   *   - confirma ownerActor;
-   *   - confirma que o lotId real do JSON e o mesmo do foco.
-   */
-  const candidates:
-    VerifiedEvidence[] = [];
-
-  const candidateErrors:
-    Array<{
-      evidenceId: Hex;
-      error: string;
-    }> = [];
-
-  for (
-    const row of lotRows
-  ) {
-    if (
-      lower(row.evidence_id) ===
-      lower(
-        focus.row.evidence_id,
-      )
-    ) {
-      continue;
-    }
-
-    try {
-      const candidateOnchain =
-        readEvidence(
-          runtime,
-          row.evidence_id,
-        );
-
-      if (
-        ![1, 2, 3, 4].includes(
-          candidateOnchain.status,
-        )
-      ) {
-        continue;
-      }
-
-      const verified =
-        loadVerifiedEvidence(
-          runtime,
-          key,
-          row,
-          actors,
-          candidateOnchain,
-        );
-
-      if (
-        !sameLot(
-          focus.normalized,
-          verified.normalized,
-        )
-      ) {
-        candidateErrors.push({
-          evidenceId: row.evidence_id,
-          error:
-            "candidato retornado pelo indice nao pertence ao mesmo lotId no JSON comprometido",
-        });
-        continue;
-      }
-
-      candidates.push(
-        verified,
-      );
-    } catch (error) {
-      candidateErrors.push({
-        evidenceId:
-          row.evidence_id,
-        error:
-          error instanceof Error
-            ? error.message
-            : String(error),
-      });
-    }
+  if (massAudit.expectedOverallStatus !== "CONFORME") {
+    allErrors.push(
+      `massa auditada=${massAudit.expectedOverallStatus}; somente CONFORME pode ser VERIFIED`,
+    );
   }
 
-  /*
-   * 4) RELACOES DIRETAS DO FOCO + ORIGEM/DESTINO ESTRITOS.
-   *
-   * PHYSICAL_HANDOFF:
-   *   lotId(A)        == lotId(B)
-   *   destination(A) == owner(B)
-   *   origin(B)      == owner(A)
-   *
-   * Nao existe janela temporal.
-   * A busca testa os dois sentidos, mas nao expande por candidatos indiretos.
-   */
-  const component =
-    buildDirectComponent(
-      focus,
-      candidates,
-    );
+  const verdict: "VERIFIED" | "DIVERGENT" =
+    allErrors.length === 0 ? "VERIFIED" : "DIVERGENT";
 
-  if (
-    component.edges.length === 0 &&
-    structuralDivergenceCode === null
-  ) {
-    return JSON.stringify({
-      workflow:
-        "LOT_CHAIN_PAIRWISE_MASS",
-      discovery:
-        "BLOCKCHAIN_FIRST",
-      pendingAuthority:
-        "BLOCKCHAIN_STATUS_REQUIRED",
-      initialBlockchainPendingId,
-      pendingSelectionMode:
-        selection.mode,
-      correlation:
-        "SAME_LOT_PLUS_STRICT_ORIGIN_DESTINATION_DIRECT",
-      focusEvidenceId:
-        focus.row.evidence_id,
-      focusActorId:
-        focus.onchain.actorId,
-      focusLotReference:
-        focus.normalized.lotReference,
-      focusIndexedLotReference:
-        focus.row.lot_reference,
-      focusLotIndexStatus,
-      focusOriginActorId:
-        focus.normalized
-          .originActorId,
-      focusDestinationActorId:
-        focus.normalized
-          .destinationActorId,
-      evidenceCount:
-        component.evidences.length,
-      evidenceIds:
-        component.evidences.map(
-          (item) =>
-            item.row.evidence_id,
-        ),
-      candidateDiscovery:
-        "SUPABASE_INDEX_BY_LOT_ONLY",
-      indexedLotRowCount:
-        lotRows.length,
-      verifiedSameLotCandidateCount:
-        candidates.length,
-      candidateErrors,
-      message:
-        "nenhuma relacao fisica origem/destino encontrada dentro do mesmo lotId; continua PENDING",
-    });
+  const auditTxHash = writeAudit(
+    runtime,
+    auditReport(evidenceId, verdict),
+  );
+
+  const finalEvidence = readEvidence(runtime, evidenceId);
+  const expectedFinalStatus = verdict === "VERIFIED" ? 3 : 4;
+
+  if (finalEvidence.status !== expectedFinalStatus) {
+    throw new Error(
+      `${evidenceId}: auditoria enviada, mas estado on-chain recebido=${finalEvidence.status} esperado=${expectedFinalStatus}`,
+    );
   }
 
-  /*
-   * 5) Massa por elo, nunca usada para descobrir a correlacao.
-   */
-  const mass: ComponentMassResult =
-    structuralDivergenceCode !== null
-      ? {
-          schema:
-            "ExploreChem/PairwiseMassResult/v1",
-          calculationVersion: 1,
-          focusActorId:
-            focus.onchain.actorId,
-          focusEvidenceId:
-            focus.row.evidence_id,
-          lotReference:
-            focus.normalized.lotReference!,
-          evidenceIds: [
-            focus.row.evidence_id,
-          ],
-          correlationEdges: [],
-          massPairs: [],
-          status: "DIVERGENTE",
-        }
-      : calculateComponentMass(
-          focus,
-          component,
-        );
-
-  const committed =
-    commitment(
-      focus.onchain,
-      mass,
-    );
-
-  const resultPath =
-    privateResultPath(
-      focus.onchain.evidenceId,
-      committed.resultId,
-    );
-
-  const privateBase = {
-    schema:
-      "ExploreChem/PrivatePairwiseMass/v1",
-    sourceEvidenceId:
-      focus.onchain.evidenceId,
-    sourceActorId:
-      focus.onchain.actorId,
-    sourceEvidenceHash:
-      focus.onchain.evidenceHash,
-    lotReference:
-      mass.lotReference,
-    evidenceIds:
-      mass.evidenceIds,
-    correlationEdges:
-      mass.correlationEdges,
-    massPairs:
-      mass.massPairs,
-    calculationVersion:
-      mass.calculationVersion,
-    relationFingerprint:
-      committed.relationFingerprint,
-    canonicalResultHash:
-      committed.canonicalResultHash,
-    aggregateInputHash:
-      committed.aggregateInputHash,
-    resultHash:
-      committed.resultHash,
-    resultId:
-      committed.resultId,
-    status:
-      mass.status,
-  };
-
-  /*
-   * 6) Salva manifest privado antes das transacoes.
-   */
-  savePrivateResult(
+  saveAuditReceipt(
     runtime,
     key,
-    focus.row.storage_bucket,
-    resultPath,
+    row.storage_bucket,
+    auditReceiptPath(evidenceId, resultId),
     {
-      ...privateBase,
-      onchain: {
-        matchTxHash: null,
-        resultTxHash: null,
+      schema: "ExploreChem/PairwiseMassAudit/v2",
+      auditedManifestSchema: manifest.schema,
+      compatibilityMode,
+      evidenceId,
+      actorId: evidence.actorId,
+      evidenceHash: evidence.evidenceHash,
+      resultId,
+      resultHash: onchainResult.resultHash,
+      aggregateInputHash: onchainResult.aggregateInputHash,
+      calculationVersion: onchainResult.calculationVersion,
+      previousResultId: onchainResult.previousResultId,
+      independentVerification: {
+        status:
+          independentAudit.errors.length === 0
+            ? "VERIFIED_FROM_COMMITTED_JSONS"
+            : "DIVERGENT",
+        evidenceCount: independentAudit.evidenceCount,
+        pairCount: independentAudit.pairCount,
+        rowHashWarnings: independentAudit.rowHashWarnings,
+        errors: independentAudit.errors,
       },
+      recalculatedMassStatus: massAudit.expectedOverallStatus,
+      tolerancePolicy: {
+        reference: "OUTGOING_MASS",
+        toleranceBps,
+        arbitrated: true,
+      },
+      toleranceChecks: massAudit.toleranceChecks,
+      elementalBalanceRequired:
+        runtime.config.requireElementalBalance === true,
+      elementalAudit,
+      verdict,
+      errors: allErrors,
+      auditTxHash,
     },
   );
 
-  /*
-   * 7) Gate final: o NOVO foco selecionado precisa continuar PENDING on-chain.
-   */
-  const gate =
-    readEvidence(
-      runtime,
-      focus.onchain.evidenceId,
-    );
-
-  if (gate.status !== 1) {
-    return JSON.stringify({
-      workflow:
-        "LOT_CHAIN_PAIRWISE_MASS",
-      discovery:
-        "BLOCKCHAIN_FIRST",
-      pendingAuthority:
-        "BLOCKCHAIN_STATUS_REQUIRED",
-      initialBlockchainPendingId,
-      pendingSelectionMode:
-        selection.mode,
-      focusEvidenceId:
-        focus.onchain.evidenceId,
-      focusLotReference:
-        mass.lotReference,
-      message:
-        "focus deixou de estar PENDING antes do MATCH; nenhuma transacao enviada",
-    });
-  }
-
-  /*
-   * 8) MATCH somente do NOVO PENDING foco.
-   */
-  const matchTxHash =
-    write(
-      runtime,
-      matchReport(
-        focus.onchain.evidenceId,
-      ),
-    );
-
-  /*
-   * 9) Resultado somente do mesmo foco.
-   */
-  const resultTxHash =
-    write(
-      runtime,
-      balanceReport(
-        focus.onchain,
-        committed,
-        mass.status,
-      ),
-    );
-
-  /*
-   * O reportType 3 finaliza apenas a autorrelacao invalida como DIVERGENT.
-   * Resultados normais continuam MATCHED e seguem para o auditor separado.
-   */
-  const divergenceTxHash =
-    structuralDivergenceCode !== null
-      ? write(
-          runtime,
-          divergentEvidenceReport(
-            focus.onchain.evidenceId,
-          ),
-        )
-      : null;
-
-  /*
-   * 10) Espelha MATCH somente no foco.
-   *
-   * Isso tambem funciona como cursor de progresso durante SIMULATION:
-   * na proxima execucao, se getNextPending() on-chain ainda devolver o mesmo
-   * id por falta de persistencia do simulador, selectEffectivePending() ignora
-   * a linha ja MATCHED no Supabase e escolhe outro row PENDING cujo status
-   * on-chain tambem seja 1.
-   */
-  savePrivateResult(
-    runtime,
-    key,
-    focus.row.storage_bucket,
-    resultPath,
-    {
-      ...privateBase,
-      onchain: {
-        matchTxHash,
-        resultTxHash,
-        divergenceTxHash,
-      },
-    },
-  );
-
-  mirrorMatch(
-    runtime,
-    key,
-    focus.onchain.evidenceId,
-    matchTxHash,
-  );
-
-  if (structuralDivergenceCode !== null) {
-    mirrorDivergent(
-      runtime,
-      key,
-      focus.onchain.evidenceId,
-    );
+  let supabaseMirrorError: string | null = null;
+  try {
+    mirrorFinalState(runtime, key, evidenceId, verdict);
+  } catch (error) {
+    supabaseMirrorError =
+      error instanceof Error
+        ? error.message
+        : "falha desconhecida ao espelhar o estado final no Supabase";
   }
 
   return JSON.stringify({
-    workflow:
-      "LOT_CHAIN_PAIRWISE_MASS",
-    discovery:
-      "BLOCKCHAIN_FIRST",
-    pendingAuthority:
-      "BLOCKCHAIN_STATUS_REQUIRED",
-    simulationProgress:
-      "SUPABASE_MATCHED_MIRROR_ONLY_WHEN_CHAIN_SIMULATION_DOES_NOT_ADVANCE",
-    candidateDiscovery:
-      "SUPABASE_INDEX_BY_LOT_ONLY",
-    indexedLotRowCount:
-      lotRows.length,
-    initialBlockchainPendingId,
-    pendingSelectionMode:
-      selection.mode,
-    correlation:
-      "SAME_LOT_PLUS_STRICT_ORIGIN_DESTINATION_DIRECT",
-    massPolicy:
-      "FOCUS_DIRECT_PAIRWISE_EDGES_NO_GLOBAL_SUM",
-    focusEvidenceId:
-      focus.onchain.evidenceId,
-    focusLotReference:
-      mass.lotReference,
-    focusIndexedLotReference:
-      focus.row.lot_reference,
-    focusLotIndexStatus,
-    evidenceCount:
-      mass.evidenceIds.length,
-    evidenceIds:
-      mass.evidenceIds,
-    correlationEdgeCount:
-      mass.correlationEdges.length,
-    correlationEdges:
-      mass.correlationEdges,
-    massPairCount:
-      mass.massPairs.length,
-    massPairs:
-      mass.massPairs,
-    massStatus:
-      mass.status,
-    structuralDivergence:
-      structuralDivergenceCode,
-    candidateErrors,
-
-    commitment: {
-      relationFingerprint:
-        committed.relationFingerprint,
-      canonicalResultHash:
-        committed.canonicalResultHash,
-      resultId:
-        committed.resultId,
-      resultHash:
-        committed.resultHash,
-      aggregateInputHash:
-        committed.aggregateInputHash,
+    workflow: "PAIRWISE_MASS_AUDITOR",
+    discovery: "BLOCKCHAIN_GET_NEXT_MATCHED",
+    authority: "BLOCKCHAIN",
+    evidenceId,
+    actorId: evidence.actorId,
+    resultId,
+    auditedManifestSchema: manifest.schema,
+    compatibilityMode,
+    resultHash: onchainResult.resultHash,
+    aggregateInputHash: onchainResult.aggregateInputHash,
+    independentVerification: {
+      status:
+        independentAudit.errors.length === 0
+          ? "VERIFIED_FROM_COMMITTED_JSONS"
+          : "DIVERGENT",
+      evidenceCount: independentAudit.evidenceCount,
+      pairCount: independentAudit.pairCount,
+      rowHashWarnings: independentAudit.rowHashWarnings,
+      errors: independentAudit.errors,
     },
-
-    privateResult: {
-      bucket:
-        focus.row.storage_bucket,
-      path:
-        resultPath,
+    declaredMassStatus: manifest.status,
+    recalculatedMassStatus: massAudit.expectedOverallStatus,
+    tolerancePolicy: {
+      reference: "OUTGOING_MASS",
+      toleranceBps,
+      arbitrated: true,
     },
-    onchain: {
-      matchedEvidenceId:
-        focus.onchain.evidenceId,
-      matchTxHash,
-      resultTxHash,
-      divergenceTxHash,
+    toleranceChecks: massAudit.toleranceChecks,
+    elementalBalanceRequired:
+      runtime.config.requireElementalBalance === true,
+    elementalAudit,
+    auditErrorCount: allErrors.length,
+    auditErrors: allErrors,
+    finalEvidenceStatus: verdict,
+    auditTxHash,
+    supabaseMirror: {
+      updated: supabaseMirrorError === null,
+      error: supabaseMirrorError,
+    },
+    privateAudit: {
+      bucket: row.storage_bucket,
+      path: auditReceiptPath(evidenceId, resultId),
     },
   });
 }
-
-/* ============================================================
- * Trigger / main
- * ============================================================
- */
 
 function onCron(
   runtime: TeeRuntime<Config>,
   _payload: CronPayload,
 ): string {
-  return run(runtime);
+  try {
+    return run(runtime);
+  } catch (error) {
+    return JSON.stringify({
+      workflow: "PAIRWISE_MASS_AUDITOR",
+      status: "RETRY_REQUIRED",
+      message: error instanceof Error ? error.message : "falha tecnica desconhecida",
+      instruction:
+        "Nenhum veredito foi derivado da falha; a evidencia permanece MATCHED para nova tentativa.",
+    });
+  }
 }
 
 const initWorkflow = (config: Config) => {
@@ -2327,7 +2319,7 @@ const initWorkflow = (config: Config) => {
   return [
     handlerInTee(
       cron.trigger({
-        schedule: config.correlationSchedule ?? DEFAULT_SCHEDULE,
+        schedule: config.auditSchedule ?? DEFAULT_AUDIT_SCHEDULE,
       }),
       onCron,
       [
