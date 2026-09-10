@@ -82,6 +82,7 @@ const configSchema = z.object({
   auditSchedule: z.string().min(1).optional(),
   requireElementalBalance: z.boolean().optional(),
   massToleranceBps: z.number().int().min(0).max(10_000).optional(),
+  elementalToleranceBps: z.number().int().min(0).max(10_000).optional(),
 });
 
 type Config = z.infer<typeof configSchema>;
@@ -201,6 +202,7 @@ const currentPrivatePairwiseResultSchema = z.object({
   evidenceIds: z.array(bytes32Schema).min(1),
   correlationEdges: z.array(correlationEdgeSchema),
   massPairs: z.array(pairMassResultSchema),
+  elementalCalculations: z.array(z.record(z.unknown())).optional(),
   calculationVersion: z.number().int().positive(),
   relationFingerprint: bytes32Schema,
   aggregateInputHash: bytes32Schema,
@@ -1358,6 +1360,9 @@ function recomputeCurrentManifestCommitments(
     evidenceIds: manifest.evidenceIds,
     correlationEdges: manifest.correlationEdges,
     massPairs: manifest.massPairs,
+    ...(manifest.elementalCalculations === undefined
+      ? {}
+      : { elementalCalculations: manifest.elementalCalculations }),
     status: manifest.status,
   };
 
@@ -1857,6 +1862,245 @@ function independentlyAuditCommittedDocuments(
   };
 }
 
+function verifyDeclaredElementalCalculations(
+  manifest: CurrentPrivatePairwiseResult,
+  documents: Map<string, IndependentlyVerifiedEvidence>,
+): string[] {
+  if (manifest.elementalCalculations === undefined) return [];
+
+  const errors: string[] = [];
+  const expected: Array<Record<string, unknown>> = [];
+
+  for (const verified of documents.values()) {
+    const document = verified.document;
+    const material = recordOf(document.material);
+    const massBalance = recordOf(document.massBalance);
+    const transformation = recordOf(document.transformation);
+    const recovery = recordOf(document.recovery);
+    const candidates: Array<[
+      string,
+      Record<string, unknown>,
+      string,
+      string,
+      string,
+      unknown,
+    ]> = [
+      [
+        "massBalance",
+        massBalance,
+        "dryMassKg",
+        "gradeNd2O3Pct",
+        "elementalNdMassMg",
+        material.compound,
+      ],
+      [
+        "transformation",
+        transformation,
+        "outputProductMassKg",
+        "outputProductGradePct",
+        "elementalNdOutputMassMg",
+        transformation.outputProductCompound,
+      ],
+      [
+        "recovery",
+        recovery,
+        "recoveredProductMassKg",
+        "recoveredProductGradePct",
+        "elementalNdRecoveredMassMg",
+        recovery.recoveredCompound,
+      ],
+    ];
+
+    for (const [sectionName, section, massKey, gradeKey, declaredKey, compound] of candidates) {
+      const massMg = kgToMg(decimalString(section[massKey]));
+      const grade = decimalString(section[gradeKey]);
+      const declared = decimalString(section[declaredKey]);
+
+      if (
+        massMg === null ||
+        grade === null ||
+        declared === null ||
+        !/^\d+$/.test(declared) ||
+        String(compound).toUpperCase() !== "ND2O3"
+      ) {
+        continue;
+      }
+
+      const gradePpm = roundHalfUp(
+        multiplyFraction(decimalFraction(grade), fraction(10_000n)),
+      );
+      if (gradePpm > 1_000_000n) {
+        errors.push("teor elementar fora de [0,100]%");
+        continue;
+      }
+
+      const calculated = roundHalfUp(
+        fraction(
+          massMg * gradePpm * 288_484n,
+          1_000_000n * 336_481n,
+        ),
+      );
+
+      expected.push({
+        evidenceId: verified.onchain.evidenceId,
+        actorId: verified.onchain.actorId,
+        element: "Nd",
+        compound: "Nd2O3",
+        calculationType: "COMPOUND_TO_ELEMENT",
+        sourceMassField: `${sectionName}.${massKey}`,
+        sourceMassMg: massMg.toString(),
+        gradeField: `${sectionName}.${gradeKey}`,
+        gradePpm: gradePpm.toString(),
+        declaredElementalMassField: `${sectionName}.${declaredKey}`,
+        declaredElementalMassMg: declared,
+        calculatedElementalMassMg: calculated.toString(),
+        signedDifferenceMg: (BigInt(declared) - calculated).toString(),
+        formula: "massMg * gradePpm / 1000000 * (2*Nd)/(2*Nd+3*O)",
+      });
+    }
+
+    const partition = [
+      transformation.inputElementalNdMassMg,
+      transformation.elementalNdFinishedProductMassMg,
+      transformation.elementalNdScrapMassMg,
+    ].map(decimalString);
+
+    if (partition.every((value) => value !== null && /^\d+$/.test(value))) {
+      const [input, product, scrap] = partition.map((value) => BigInt(value!));
+      const calculated = product + scrap;
+      expected.push({
+        evidenceId: verified.onchain.evidenceId,
+        actorId: verified.onchain.actorId,
+        element: "Nd",
+        compound:
+          String(transformation.inputCompound).toUpperCase() === "ND2O3"
+            ? "Nd2O3"
+            : null,
+        calculationType: "ELEMENTAL_PARTITION",
+        sourceMassField: null,
+        sourceMassMg: null,
+        gradeField: null,
+        gradePpm: null,
+        declaredElementalMassField: "transformation.inputElementalNdMassMg",
+        declaredElementalMassMg: input.toString(),
+        calculatedElementalMassMg: calculated.toString(),
+        signedDifferenceMg: (input - calculated).toString(),
+        formula: "elementalNdFinishedProductMassMg + elementalNdScrapMassMg",
+      });
+    }
+  }
+
+  const canonicalSet = (items: Array<Record<string, unknown>>) =>
+    items.map(stableJson).sort();
+
+  const directIds = new Set(
+    Array.from(documents.values()).map((document) =>
+      lower(document.onchain.evidenceId),
+    ),
+  );
+  const declaredDirect = manifest.elementalCalculations.filter(
+    (calculation) =>
+      typeof calculation.evidenceId === "string" &&
+      directIds.has(calculation.evidenceId.toLowerCase()),
+  );
+
+  if (
+    stableJson(canonicalSet(expected)) !==
+    stableJson(canonicalSet(declaredDirect))
+  ) {
+    errors.push(
+      "elementalCalculations original nao reproduz os dois documentos comprometidos",
+    );
+  }
+
+  return errors;
+}
+
+function auditElementalCalculationTolerance(
+  manifest: CurrentPrivatePairwiseResult,
+  documents: Map<string, IndependentlyVerifiedEvidence>,
+  toleranceBps: number,
+) {
+  const directIds = new Set(
+    Array.from(documents.values()).map((document) =>
+      lower(document.onchain.evidenceId),
+    ),
+  );
+  const checks: Array<{
+    evidenceId: string;
+    calculationType: string;
+    calculatedElementalMassMg: string;
+    declaredElementalMassMg: string;
+    absoluteDeltaMg: string;
+    toleranceReferenceMassMg: string;
+    toleranceBps: number;
+    toleranceLimitMg: string;
+    status: "CONFORME" | "DIVERGENTE";
+  }> = [];
+  const errors: string[] = [];
+
+  for (const calculation of manifest.elementalCalculations ?? []) {
+    const evidenceId = calculation.evidenceId;
+    if (
+      typeof evidenceId !== "string" ||
+      !directIds.has(evidenceId.toLowerCase())
+    ) {
+      continue;
+    }
+
+    const calculatedValue = calculation.calculatedElementalMassMg;
+    const declaredValue = calculation.declaredElementalMassMg;
+    if (
+      typeof calculatedValue !== "string" ||
+      !/^\d+$/.test(calculatedValue) ||
+      typeof declaredValue !== "string" ||
+      !/^\d+$/.test(declaredValue)
+    ) {
+      errors.push(`${evidenceId}: massas elementares invalidas`);
+      continue;
+    }
+
+    const calculated = BigInt(calculatedValue);
+    const declared = BigInt(declaredValue);
+    const delta = calculated - declared;
+    const absoluteDelta = delta < 0n ? -delta : delta;
+    const accepted =
+      absoluteDelta * 10_000n <=
+      calculated * BigInt(toleranceBps);
+    const status = accepted ? "CONFORME" : "DIVERGENTE";
+
+    checks.push({
+      evidenceId,
+      calculationType: String(calculation.calculationType ?? "UNKNOWN"),
+      calculatedElementalMassMg: calculated.toString(),
+      declaredElementalMassMg: declared.toString(),
+      absoluteDeltaMg: absoluteDelta.toString(),
+      toleranceReferenceMassMg: calculated.toString(),
+      toleranceBps,
+      toleranceLimitMg:
+        ((calculated * BigInt(toleranceBps)) / 10_000n).toString(),
+      status,
+    });
+
+    if (!accepted) {
+      errors.push(
+        `${evidenceId}: diferenca elementar ultrapassa a tolerancia de ${toleranceBps} bps`,
+      );
+    }
+  }
+
+  return {
+    status:
+      errors.length > 0
+        ? "DIVERGENTE"
+        : checks.length > 0
+          ? "CONFORME"
+          : "NAO_ATESTADO",
+    checks,
+    errors,
+  };
+}
+
 function recomputeMassVerdict(
   manifest: PrivatePairwiseResult,
   toleranceBps: number,
@@ -2151,6 +2395,15 @@ function run(runtime: TeeRuntime<Config>): string {
 
   const toleranceBps = runtime.config.massToleranceBps ?? 200;
   const massAudit = recomputeMassVerdict(manifest, toleranceBps);
+  const committedElementalErrors = verifyDeclaredElementalCalculations(
+    manifest,
+    independentAudit.documents,
+  );
+  const elementalCalculationAudit = auditElementalCalculationTolerance(
+    manifest,
+    independentAudit.documents,
+    runtime.config.elementalToleranceBps ?? 200,
+  );
   const elementalErrors = elementalAudit.errors.map(
     (error) => `elemental: ${error}`,
   );
@@ -2170,6 +2423,12 @@ function run(runtime: TeeRuntime<Config>): string {
       (error) => `independent: ${error}`,
     ),
     ...massAudit.errors,
+    ...committedElementalErrors.map(
+      (error) => `elementalCalculations: ${error}`,
+    ),
+    ...elementalCalculationAudit.errors.map(
+      (error) => `elementalTolerance: ${error}`,
+    ),
     ...elementalErrors,
   ];
 
@@ -2230,6 +2489,12 @@ function run(runtime: TeeRuntime<Config>): string {
         arbitrated: true,
       },
       toleranceChecks: massAudit.toleranceChecks,
+      committedElementalCalculations: {
+        present: manifest.elementalCalculations !== undefined,
+        verified: committedElementalErrors.length === 0,
+        errors: committedElementalErrors,
+      },
+      elementalCalculationAudit,
       elementalBalanceRequired:
         runtime.config.requireElementalBalance === true,
       elementalAudit,
@@ -2278,6 +2543,12 @@ function run(runtime: TeeRuntime<Config>): string {
       arbitrated: true,
     },
     toleranceChecks: massAudit.toleranceChecks,
+    committedElementalCalculations: {
+      present: manifest.elementalCalculations !== undefined,
+      verified: committedElementalErrors.length === 0,
+      errors: committedElementalErrors,
+    },
+    elementalCalculationAudit,
     elementalBalanceRequired:
       runtime.config.requireElementalBalance === true,
     elementalAudit,
