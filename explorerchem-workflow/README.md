@@ -2,7 +2,7 @@
 
 Confidential Chainlink CRE workflow for discovering physical handoffs between private supply-chain evidence, checking document integrity, calculating pairwise mass differences, and anchoring deterministic results on Ethereum Sepolia.
 
-This directory contains the implemented workflow responsible for moving one new evidence from `PENDING` to `MATCHED` and anchoring its mass result. Final evidence audit is intentionally assigned to a separate Auditor workflow, currently being prepared for its own repository.
+This directory contains the implemented workflow responsible for moving one new evidence from `PENDING` to `MATCHED` and anchoring its mass result. Final evidence audit is assigned to the separate implemented `PAIRWISE_MASS_AUDITOR` workflow.
 
 ## What this workflow does
 
@@ -14,23 +14,23 @@ For each execution, the workflow:
 4. Recalculates the document hash and compares it with the hash anchored on-chain.
 5. Confirms that the evidence belongs to the same `actorId` recorded on-chain.
 6. Extracts the committed `lotId`, origin, destination, actor type, and applicable mass fields.
-7. Uses the Supabase `lot_reference` column only as a candidate-discovery index.
-8. Reopens and verifies every candidate document before accepting it.
-9. Reconstructs the connected lot component with strict bidirectional origin/destination rules.
-10. Selects only the physical handoff that leaves the current focus evidence.
-11. Compares the outgoing mass declared by the origin with the incoming mass declared by the recipient.
+7. Uses the Supabase index to locate the directly preceding evidence for the same physical handoff.
+8. Downloads that predecessor JSON and verifies its hash against its own on-chain commitment.
+9. Confirms the strict origin/destination relationship between the predecessor and the focus evidence.
+10. Compares the predecessor's outgoing mass with the focus evidence's incoming mass.
+11. Emits supported elemental calculations when the required source fields exist.
 12. Produces deterministic `pairId`, `aggregateInputHash`, `resultHash`, and `resultId` values.
-13. Stores the detailed private result in Supabase Storage.
+13. Stores the complete detailed result as private JSON in Supabase Storage.
 14. Sends one correlation report and one balance report through the CRE forwarder.
-15. Mirrors `MATCHED` in Supabase only after both blockchain writes succeed.
+15. Mirrors the resulting state and identifiers in Supabase after the authoritative blockchain operations.
 
 ## Architecture
 
 ```mermaid
 flowchart TD
     A["ExploreChemRegistry: getNextPending"] --> B["TEE: open and verify focus JSON"]
-    B --> C["Supabase index: candidates from same lot"]
-    C --> D["TEE: verify candidate JSON files"]
+    B --> C["Supabase index: direct predecessor"]
+    C --> D["TEE: verify predecessor JSON"]
     D --> E["Strict origin/destination correlation"]
     E --> F["Pairwise mass verification"]
     F --> G["Private canonical result"]
@@ -53,19 +53,20 @@ getNextPending()
 
 Supabase does not choose the authoritative evidence. A candidate can become the focus only when `getEvidence(evidenceId)` confirms `EvidenceStatus.PENDING` on-chain.
 
-### The result belongs to the origin document
+### The result belongs to the focus evidence
 
-The correlated component may contain several actors, but one execution creates a result only for the physical handoff leaving the focus evidence.
+Each execution creates one result for the selected focus evidence and its direct predecessor.
 
-For a miner-to-carrier handoff:
+For a carrier-to-refiner handoff:
 
 ```text
-focus = miner evidence
-comparison = miner outgoing mass versus carrier received mass
-result owner = miner actorId and miner evidenceId
+predecessor = carrier evidence
+focus = refiner evidence
+comparison = carrier delivered mass versus refiner input mass
+result scope = refiner actorId and refiner evidenceId
 ```
 
-When the carrier later becomes the origin of another handoff, its evidence becomes the focus of a different execution and produces a different result hash. Hashes are not expected to be equal because the owner, focus evidence, counterpart, and calculation content change.
+Each later focus evidence receives its own result. Previous evidence and results remain in history.
 
 ### Strict physical correlation
 
@@ -85,7 +86,7 @@ Mass does not discover a relationship. Mass is evaluated only after the relation
 
 The `lot_reference` database column narrows candidate discovery to one lot. It does not prove that a candidate belongs to that lot.
 
-For every returned row, the workflow still:
+For the focus and selected predecessor, the workflow:
 
 - reads the corresponding evidence on-chain;
 - downloads the original JSON;
@@ -95,11 +96,11 @@ For every returned row, the workflow still:
 - extracts the real `lotId` from the committed document;
 - rejects any divergence between the index and the document.
 
-### Bidirectional BFS reconstruction
+### Direct predecessor scope
 
-The workflow expands the same-lot component in both directions. Every newly verified document can reveal the next valid relationship.
+The workflow selects only the evidence immediately preceding the focus in the validated physical handoff. It does not reconstruct every document in the lot and does not calculate a global mass sum.
 
-This graph reconstruction is used to understand the private lot chain. It does not cause a global mass sum. The committed result remains limited to the outgoing physical edge of the current focus.
+The predecessor and focus JSON files are both checked against their respective on-chain evidence commitments before their values participate in the result.
 
 ### Laboratory evidence is not a physical handoff
 
@@ -159,7 +160,7 @@ All accepted decimal kilogram values are converted to integer milligrams. Conver
 
 ## Pairwise calculation
 
-For each outgoing physical edge of the focus:
+For the direct physical handoff from the predecessor to the focus:
 
 ```text
 deltaMg = leftMassMg - rightMassMg
@@ -173,7 +174,7 @@ The result is classified as:
 | `deltaMg != 0` | `DIVERGENTE` |
 | Either mass is absent | `NAO_ATESTADO` |
 
-The current version uses exact equality. It does not apply a tolerance band, uncertainty propagation, moisture normalization, oxide conversion, or periodic elemental MUF calculation.
+The mass workflow records the direct arithmetic result. Acceptance tolerance is evaluated later by the separate auditor. Where supported fields exist, this workflow can emit deterministic elemental calculations, but it does not claim a global elemental-conservation balance, moisture normalization, uncertainty propagation, or periodic MUF calculation.
 
 ## Deterministic commitments
 
@@ -275,7 +276,7 @@ MATCHED
   → pairwise result already anchored, awaiting independent audit
 ```
 
-The workflow deliberately ends at `MATCHED`. A separate Auditor workflow is being prepared to consume `getNextMatched()` and finalize the evidence as `VERIFIED` or `DIVERGENT`.
+The workflow deliberately ends at `MATCHED`. The separate `PAIRWISE_MASS_AUDITOR` workflow consumes `getNextMatched()` and finalizes the evidence as `VERIFIED` or `DIVERGENT`.
 
 Each new shipment or order creates a new `evidenceId`. A historical evidence is never reused as the identity of a new transaction.
 
@@ -420,21 +421,21 @@ This implementation does not claim to:
 
 - prove that a physical delivery happened in the real world without independently submitted recipient evidence;
 - perform periodic plant-wide mass reconciliation;
-- calculate elemental mass for Nd, Pr, Dy, or Tb;
+- provide complete elemental-conservation coverage for every actor, compound, or material;
 - normalize wet, dry, calcined, or liquid mass bases;
 - calculate inventory-adjusted MUF;
-- apply uncertainty bands or statistical thresholds;
+- define the final industrial measurement-uncertainty policy; the separate auditor currently uses a provisional 2% rule;
 - preserve molecular identity after material transformation;
 - replace sampling, laboratory accreditation, or commercial arbitration;
 - finalize evidence as `VERIFIED` or `DIVERGENT` without the separate Auditor workflow.
 
-## Current scope and next workflow
+## Current scope and auditor workflow
 
 The implemented scope closes one responsibility:
 
 > Given private evidence anchored by hash, discover the next strict physical handoff, compare the origin's outgoing mass with the recipient's incoming mass, and anchor a deterministic result owned by the origin evidence.
 
-The next repository will contain the independent Auditor workflow. It will consume evidence already left as `MATCHED` by this workflow and will issue the final `VERIFIED` or `DIVERGENT` evidence verdict after checking the anchored private result.
+The independent `PAIRWISE_MASS_AUDITOR` workflow consumes evidence left as `MATCHED`, reproduces the committed private result, verifies the applicable source documents and calculations, applies its audit policy, and issues the final `VERIFIED` or `DIVERGENT` evidence verdict.
 
 ## Author
 
