@@ -94,15 +94,15 @@ The current implementation includes:
 
 The following items are not claimed as completed by this workflow:
 
-- periodic or monthly actor-wide reconciliation;
+- periodic or monthly actor-wide reconciliation as a production workflow. The auditor contains a conditional periodic path that activates only when a committed document carries an elementalBalance block with a declared period, streams and declared MUF; it is not driven by a scheduler and is not part of the demonstrated flow;
 
-- inventory opening and closing balance;
+- nventory opening and closing balance as a routine control. The auditor aggregates OPENING_INVENTORY and CLOSING_INVENTORY streams when the optional elementalBalance block is present;
 
 - complete elemental conservation coverage for every actor and material;
 
 - measurement-uncertainty-based acceptance limits validated with field data;
 
-- moisture-basis normalization;
+- moisture-basis normalization as a validated field procedure. The auditor implements AS_RECEIVED to dry-basis conversion, requiring drying temperature between 100 °C and 110 °C, and a loss-on-ignition correction, both only inside the optional elementalBalance path;
 
 - automatic compliance certification;
 
@@ -196,7 +196,7 @@ The contract defines:
 | 3 | `VERIFIED` | A separate audit workflow accepted the evidence |
 | 4 | `DIVERGENT` | A separate audit workflow found a divergence |
 
-The current pairwise workflow ends at `MATCHED`. It does not assign `VERIFIED` or `DIVERGENT`. Those final audit transitions are applied by the separate `PAIRWISE_MASS_AUDITOR` workflow.
+The current pairwise workflow ends at `MATCHED`. It does not assign `VERIFIED` or `DIVERGENT`.Those final audit transitions are normally applied by the separate PAIRWISE_MASS_AUDITOR workflow. One exception exists: when the focus document declares an invalid self-relation — origin equal to destination, or origin equal to the document owner — the primary workflow itself closes that evidence as DIVERGENT through report type 3. No other condition in the primary workflow emits an audit verdict.
 
 ### Pairwise mass status
 
@@ -316,7 +316,7 @@ The workflow canonicalizes structured JSON with stable key ordering and hashes t
 
 Domain separation and explicit versioning prevent the same bytes from being interpreted as another kind of result. Current domains include:
 
-- `ExploreChem/PairwiseMassPair/v1`
+- `ExploreChem/LotPairwiseMassPair/v4`
 
 - `ExploreChem/PairwiseMassRelation/v1`
 
@@ -418,7 +418,7 @@ The current workflow creates the first result revision with `previousResultId = 
 
 ### Report type 3 — audit outcome
 
-The contract supports a separate audit report that can move `MATCHED` evidence to `VERIFIED` or `DIVERGENT`. That report belongs to the separate `PAIRWISE_MASS_AUDITOR` workflow and is not emitted by `LOT_CHAIN_PAIRWISE_MASS`.
+The contract supports a separate audit report that can move MATCHED evidence to VERIFIED or DIVERGENT. It is the normal output of the separate PAIRWISE_MASS_AUDITOR workflow. LOT_CHAIN_PAIRWISE_MASS emits it in exactly one case: to close an evidence whose committed document declares an invalid self-relation. That path never produces VERIFIED and never depends on a mass comparison.
 
 ## Processing sequence
 
@@ -549,6 +549,7 @@ The MVP is designed around the following controls:
 - old result revisions remain immutable.
 
 For production use, deployment operations should also include independent smart-contract review, access-policy review, secret rotation, storage-policy testing, monitoring, incident response, and formal version governance for every calculation domain.
+Known prototype limitations of the trust model, stated explicitly: the registry owner is a single externally owned account that can replace the authorized forwarder and the expected workflow identifiers, and can therefore change which workflow is trusted; audit reports fall back to expectedWorkflowId whenever expectedAuditWorkflowId is zero, so the separation between the correlation workflow and the auditor is enforced by configuration rather than by the contract; the registry has no revocation function, so an anchored evidence cannot be withdrawn; and DIVERGENT is a terminal state with no remediation path.These are accepted prototype trade-offs, not properties of the intended production design.
 
 ## Repository structure
 
@@ -574,6 +575,17 @@ explorerchem-workflow/
 
   tsconfig.json
 
+  README.md
+auditor-workflow/
+  main.ts
+  main.test.ts
+  config.staging.json
+  config.production.json
+  workflow.yaml
+  package.json
+  tsconfig.json
+  README.md
+
 index.html
 
 project.yaml
@@ -582,7 +594,7 @@ README.md
 
 ```
 
-The exact file list may evolve as the Auditor is moved into its own repository.
+The Auditor workflow is implemented and lives in this repository. A future move to a dedicated repository would not change the contract interface or the report format.
 
 ## Running the CRE workflow
 
@@ -592,7 +604,8 @@ Typical simulator command:
 
 ```bash
 
-cre workflow simulate massa-worflow --broadcast
+cre workflow simulate explorerchem-workflow --broadcast
+cre workflow simulate auditor-workflow --broadcast
 
 ```
 
@@ -606,7 +619,10 @@ The simulator is not a real TEE and must not be treated as a safe environment fo
 |---|---|
 | Network | Ethereum Sepolia |
 | Chain ID | `11155111` |
-| Registry contract | `0xcd5eDA10c0b3424999626e6A2DaB2909B982866c` |
+| Registry used by the pairwise workflow and by evidence submission in the frontend | 0xAfbE9a85bc94A7C895AE33e22B268049A7ea59F2 |
+| Registry used by the auditor workflow and by the client balance view | 0xcd5eDA10c0b3424999626e6A2DaB2909B982866c |
+| Note | Two registry deployments are active in the demonstration. Evidence submission and the pairwise result are anchored on the first; the auditor and the client balance view read the second.|
+
 | Contract explorer | [View on Sepolia Etherscan](https://sepolia.etherscan.io/address/0xcd5eDA10c0b3424999626e6A2DaB2909B982866c) |
 | Frontend | [ExploreChem live demo](https://armanfm.github.io/ExplorerChem/) |
 
@@ -638,7 +654,7 @@ The commitment must be reproducible from the same canonical calculation. Actor I
 
 Planned work includes:
 
-- publish the separate Auditor CRE/TEE repository;
+- extract the Auditor workflow, already implemented in this repository, into its own repository;
 
 - validate producer/auditor version compatibility with reproducible end-to-end cases;
 
