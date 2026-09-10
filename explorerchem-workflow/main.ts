@@ -34,7 +34,7 @@ import { z } from "zod";
 
 
 /**
- * ExploreChem — full chain by lotId + strict origin/destination
+ * ExploreChem — direct pairwise mass by lotId + strict origin/destination
  *
  * RULES FOR THIS VERSION
  * ------------------------------------------------------------
@@ -56,8 +56,8 @@ import { z } from "zod";
  *      to.originActor         == owner actor of from
  * 8. There is no temporal window in this version. Timestamps do not determine
  *    correlation.
- * 9. The chain is expanded in both directions using BFS until no new links are found.
- *    For every newly discovered JSON, its fields are used to guide the next search.
+ * 9. Only relations directly connected to the selected PENDING focus are included.
+ *    The workflow does not expand the complete lot component through BFS.
  * 10. Laboratory evidence may be attached as LAB_ANALYSIS when it belongs to the
  *     same lotId and points to the destination actor. It does not create mass flow.
  * 11. Mass does NOT determine correlation. Each physical link is calculated
@@ -547,7 +547,7 @@ function loadEvidenceRowsByLot(
   /*
    * Descoberta indexada: esta consulta nao prova correlacao. Ela so reduz o
    * universo de candidatos. Cada linha retornada ainda tera blockchain + JSON
-   * verificados pelo TEE antes de participar da BFS.
+   * verificados pelo TEE antes de participar da correlacao direta.
    */
   const path =
     `/rest/v1/explorerchem_evidences?select=${EVIDENCE_SELECT}` +
@@ -1291,163 +1291,67 @@ function edgeKey(
 }
 
 /**
- * Expande a cadeia COMPLETA por BFS.
+ * Constroi somente a vizinhanca direta da evidencia PENDING selecionada.
  *
- * O lotId define o universo logico da cadeia.
- * Para cada evidencia encontrada:
- *   - abre/usa o JSON daquele novo no;
- *   - testa current -> other;
- *   - testa other -> current;
- *   - exige o mesmo lotId em cada conexao;
- *   - exige origem/destino estritos;
- *   - cada novo no entra na fila e passa a orientar a proxima busca.
+ * Cada candidato do mesmo lote e testado nos dois sentidos:
+ *   - focus -> candidate;
+ *   - candidate -> focus.
+ *
+ * Um candidato encontrado nao passa a descobrir outros candidatos. Assim o
+ * resultado pertence ao foco e nao replica a cadeia completa em cada execucao.
  */
-function buildCorrelatedComponent(
+function buildDirectComponent(
   focus: VerifiedEvidence,
   candidates: VerifiedEvidence[],
 ): CorrelationComponent {
-  const all = [focus, ...candidates].filter(
-    (item) => sameLot(focus.normalized, item.normalized),
-  );
-
-  const byId = new Map(
-    all.map(
-      (item) =>
-        [
-          lower(item.row.evidence_id),
-          item,
-        ] as const,
-    ),
-  );
-
-  byId.set(
-    lower(focus.row.evidence_id),
-    focus,
-  );
-
-  const seen = new Set<string>([
-    lower(focus.row.evidence_id),
+  const focusId = lower(focus.row.evidence_id);
+  const evidences = new Map<string, VerifiedEvidence>([
+    [focusId, focus],
   ]);
+  const edges = new Map<string, CorrelationEdge>();
 
-  const queue: string[] = [
-    lower(focus.row.evidence_id),
-  ];
+  for (const candidate of candidates) {
+    const candidateId = lower(candidate.row.evidence_id);
 
-  const edges =
-    new Map<string, CorrelationEdge>();
-
-  while (queue.length > 0) {
-    const currentId =
-      queue.shift()!;
-
-    const current =
-      byId.get(currentId);
-
-    if (!current) {
+    if (
+      candidateId === focusId ||
+      !sameLot(focus.normalized, candidate.normalized)
+    ) {
       continue;
     }
 
-    for (
-      const other of
-      byId.values()
-    ) {
-      const otherId =
-        lower(
-          other.row.evidence_id,
-        );
+    const forward = directedRelation(focus, candidate);
+    const backward = directedRelation(candidate, focus);
 
-      if (
-        otherId === currentId
-      ) {
-        continue;
-      }
+    if (forward) {
+      edges.set(edgeKey(forward), forward);
+    }
 
-      const forward =
-        directedRelation(
-          current,
-          other,
-        );
+    if (backward) {
+      edges.set(edgeKey(backward), backward);
+    }
 
-      if (forward) {
-        edges.set(
-          edgeKey(forward),
-          forward,
-        );
-
-        if (!seen.has(otherId)) {
-          seen.add(otherId);
-          queue.push(otherId);
-        }
-      }
-
-      const backward =
-        directedRelation(
-          other,
-          current,
-        );
-
-      if (backward) {
-        edges.set(
-          edgeKey(backward),
-          backward,
-        );
-
-        if (!seen.has(otherId)) {
-          seen.add(otherId);
-          queue.push(otherId);
-        }
-      }
+    if (forward || backward) {
+      evidences.set(candidateId, candidate);
     }
   }
 
-  const evidences =
-    [...seen]
-      .map((id) =>
-        byId.get(id),
-      )
-      .filter(
-        (
-          item,
-        ): item is VerifiedEvidence =>
-          item !== undefined,
-      )
-      .sort((a, b) =>
-        a.row.evidence_id.localeCompare(
-          b.row.evidence_id,
-        ),
-      );
-
-  const componentEdges =
-    [...edges.values()]
-      .filter(
-        (edge) =>
-          seen.has(
-            lower(
-              edge.from.row
-                .evidence_id,
-            ),
-          ) &&
-          seen.has(
-            lower(
-              edge.to.row
-                .evidence_id,
-            ),
-          ),
-      )
-      .sort((a, b) =>
-        edgeKey(a).localeCompare(
-          edgeKey(b),
-        ),
-      );
-
   return {
-    evidences,
-    edges: componentEdges,
+    evidences: [...evidences.values()].sort((a, b) =>
+      a.row.evidence_id.localeCompare(
+        b.row.evidence_id,
+      ),
+    ),
+    edges: [...edges.values()].sort((a, b) =>
+      edgeKey(a).localeCompare(
+        edgeKey(b),
+      ),
+    ),
   };
 }
 
 /* ============================================================
- * Massa: toda a cadeia, mas SEM soma global
+ * Massa: somente os elos diretos do foco.
  * Cada PHYSICAL_HANDOFF e calculado de dois em dois.
  * ============================================================
  */
@@ -1604,7 +1508,7 @@ function calculateComponentMass(
 }
 
 /* ============================================================
- * Fingerprints e commitments deterministicos para blockchain
+ * Commitments deterministicos para blockchain (formato aceito pelo auditor v1)
  * ============================================================
  */
 
@@ -1612,11 +1516,6 @@ function commitment(
   focus: OnchainEvidence,
   result: ComponentMassResult,
 ) {
-  const canonicalResultHash =
-    hashText(
-      stableJson(result),
-    );
-
   const relationFingerprint =
     hashText(
       stableJson({
@@ -1691,7 +1590,8 @@ function commitment(
     relationFingerprint,
     componentFingerprint:
       relationFingerprint,
-    canonicalResultHash,
+    canonicalResultHash:
+      resultHash,
     aggregateInputHash,
     resultHash,
     resultId,
@@ -2074,7 +1974,7 @@ function run(
   }
 
   /*
-   * 4) BFS POR LOTE + ORIGEM/DESTINO ESTRITOS.
+   * 4) RELACOES DIRETAS DO FOCO + ORIGEM/DESTINO ESTRITOS.
    *
    * PHYSICAL_HANDOFF:
    *   lotId(A)        == lotId(B)
@@ -2082,12 +1982,10 @@ function run(
    *   origin(B)      == owner(A)
    *
    * Nao existe janela temporal.
-   * A busca testa os dois sentidos.
-   * A cada novo no encontrado, o JSON daquele no passa a orientar a proxima
-   * conexao da BFS.
+   * A busca testa os dois sentidos, mas nao expande por candidatos indiretos.
    */
   const component =
-    buildCorrelatedComponent(
+    buildDirectComponent(
       focus,
       candidates,
     );
@@ -2107,7 +2005,7 @@ function run(
       pendingSelectionMode:
         selection.mode,
       correlation:
-        "SAME_LOT_PLUS_STRICT_ORIGIN_DESTINATION_BIDIRECTIONAL_BFS",
+        "SAME_LOT_PLUS_STRICT_ORIGIN_DESTINATION_DIRECT",
       focusEvidenceId:
         focus.row.evidence_id,
       focusActorId:
@@ -2200,8 +2098,6 @@ function run(
       mass.massPairs,
     calculationVersion:
       mass.calculationVersion,
-
-    /* Fingerprints e commitments deterministicos. */
     relationFingerprint:
       committed.relationFingerprint,
     canonicalResultHash:
@@ -2356,9 +2252,9 @@ function run(
     pendingSelectionMode:
       selection.mode,
     correlation:
-      "SAME_LOT_PLUS_STRICT_ORIGIN_DESTINATION_BIDIRECTIONAL_BFS",
+      "SAME_LOT_PLUS_STRICT_ORIGIN_DESTINATION_DIRECT",
     massPolicy:
-      "FULL_CORRELATED_COMPONENT_PAIRWISE_EDGES_NO_GLOBAL_SUM",
+      "FOCUS_DIRECT_PAIRWISE_EDGES_NO_GLOBAL_SUM",
     focusEvidenceId:
       focus.onchain.evidenceId,
     focusLotReference:
