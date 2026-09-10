@@ -201,6 +201,7 @@ const currentPrivatePairwiseResultSchema = z.object({
   evidenceIds: z.array(bytes32Schema).min(1),
   correlationEdges: z.array(correlationEdgeSchema),
   massPairs: z.array(pairMassResultSchema),
+  elementalCalculations: z.array(z.record(z.unknown())).optional(),
   calculationVersion: z.number().int().positive(),
   relationFingerprint: bytes32Schema,
   aggregateInputHash: bytes32Schema,
@@ -1358,6 +1359,9 @@ function recomputeCurrentManifestCommitments(
     evidenceIds: manifest.evidenceIds,
     correlationEdges: manifest.correlationEdges,
     massPairs: manifest.massPairs,
+    ...(manifest.elementalCalculations === undefined ? {} : {
+      elementalCalculations: manifest.elementalCalculations,
+    }),
     status: manifest.status,
   };
 
@@ -1617,16 +1621,17 @@ function independentlyAuditCommittedDocuments(
   const rowHashWarnings: string[] = [];
   const documents = new Map<string, IndependentlyVerifiedEvidence>();
   const seenEvidenceIds = new Set<string>();
+  const outgoing = [...actors.byDbId.values()].some(actor => sameHex(actor.actor_id, focusEvidence.actorId) && actor.actor_type === "MINER");
 
   const incomingEdges = manifest.correlationEdges.filter(
     (edge) =>
       edge.relationType === "PHYSICAL_HANDOFF" &&
-      sameHex(edge.toEvidenceId, manifest.sourceEvidenceId),
+      sameHex(outgoing ? edge.fromEvidenceId : edge.toEvidenceId, manifest.sourceEvidenceId),
   );
   const incomingPairs = manifest.massPairs.filter(
     (pair) =>
       pair.relationType === "PHYSICAL_HANDOFF" &&
-      sameHex(pair.toEvidenceId, manifest.sourceEvidenceId),
+      sameHex(outgoing ? pair.fromEvidenceId : pair.toEvidenceId, manifest.sourceEvidenceId),
   );
 
   if (
@@ -1649,7 +1654,7 @@ function independentlyAuditCommittedDocuments(
 
   const directEvidenceIds = [
     incomingEdges[0].fromEvidenceId,
-    manifest.sourceEvidenceId,
+    incomingEdges[0].toEvidenceId,
   ];
 
   for (const evidenceId of directEvidenceIds) {
@@ -1713,6 +1718,12 @@ function independentlyAuditCommittedDocuments(
 
   if (!seenEvidenceIds.has(lower(manifest.sourceEvidenceId))) {
     errors.push("sourceEvidenceId nao esta em evidenceIds");
+  }
+  if (outgoing) {
+    const focusDocument = documents.get(lower(manifest.sourceEvidenceId));
+    if (!focusDocument || !sameHex(focusDocument.normalized.originActorId ?? zeroHash, focusEvidence.actorId)) {
+      errors.push("minerador inicial deve declarar a si proprio como origem no JSON comprometido");
+    }
   }
 
   const physicalEdgeKeys = new Set<string>();
@@ -1860,6 +1871,7 @@ function independentlyAuditCommittedDocuments(
 function recomputeMassVerdict(
   manifest: PrivatePairwiseResult,
   toleranceBps: number,
+  outgoing = false,
 ) {
   const errors: string[] = [];
   const statuses: MassStatus[] = [];
@@ -1876,7 +1888,7 @@ function recomputeMassVerdict(
   const auditedPairs = manifest.massPairs.filter(
     (pair) =>
       pair.relationType === "PHYSICAL_HANDOFF" &&
-      sameHex(pair.toEvidenceId, manifest.sourceEvidenceId),
+      sameHex(outgoing ? pair.fromEvidenceId : pair.toEvidenceId, manifest.sourceEvidenceId),
   );
 
   if (auditedPairs.length !== 1) {
@@ -2049,7 +2061,7 @@ function run(runtime: TeeRuntime<Config>): string {
     row.storage_bucket,
     resultPath,
   );
-  const compatibilityMode = "CURRENT_V1_DIRECT_PREVIOUS_ONLY";
+  const compatibilityMode = "CURRENT_V1_DIRECT_PREVIOUS_OR_MINER_NEXT";
 
   const actors = loadActorDirectory(runtime, key);
   const independentAudit = independentlyAuditCommittedDocuments(
@@ -2150,7 +2162,8 @@ function run(runtime: TeeRuntime<Config>): string {
   }
 
   const toleranceBps = runtime.config.massToleranceBps ?? 200;
-  const massAudit = recomputeMassVerdict(manifest, toleranceBps);
+  const massAudit = recomputeMassVerdict(manifest, toleranceBps,
+    independentAudit.documents.get(lower(evidenceId))?.normalized.actorType === "MINER");
   const elementalErrors = elementalAudit.errors.map(
     (error) => `elemental: ${error}`,
   );
