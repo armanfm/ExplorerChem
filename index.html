@@ -3224,6 +3224,9 @@ function clientBalanceValidatePairs(manifest,auditState){
     throw new Error("Mass-pair collection is missing or invalid.");
   }
 
+  const documentMass=
+    String(manifest?.schema||"").trim().endsWith("/PrivateDocumentMass/v2");
+
   /*
    * A structural divergence is intentionally produced without a mass pair.
    * It is accepted only when the private manifest declares DIVERGENTE and the
@@ -3237,9 +3240,12 @@ function clientBalanceValidatePairs(manifest,auditState){
     const attested=
       pair.leftMassMg!==null&&pair.leftMassMg!==undefined&&
       pair.rightMassMg!==null&&pair.rightMassMg!==undefined;
-    const expected=attested
-      ? (BigInt(pair.leftMassMg)===BigInt(pair.rightMassMg)?"CONFORME":"DIVERGENTE")
-      : "NAO_ATESTADO";
+    const expected=
+      documentMass&&pair.relationType==="DOCUMENT_MASS_BALANCE"
+        ? "NAO_ATESTADO"
+        : attested
+          ? (BigInt(pair.leftMassMg)===BigInt(pair.rightMassMg)?"CONFORME":"DIVERGENTE")
+          : "NAO_ATESTADO";
     const delta=attested
       ? (BigInt(pair.leftMassMg)-BigInt(pair.rightMassMg)).toString()
       : null;
@@ -3248,9 +3254,11 @@ function clientBalanceValidatePairs(manifest,auditState){
     }
     statuses.push(expected);
   }
-  const overall=statuses.includes("DIVERGENTE")
-    ? "DIVERGENTE"
-    : (statuses.length&&statuses.every(x=>x==="CONFORME")?"CONFORME":"NAO_ATESTADO");
+  const overall=documentMass
+    ? "NAO_ATESTADO"
+    : statuses.includes("DIVERGENTE")
+      ? "DIVERGENTE"
+      : (statuses.length&&statuses.every(x=>x==="CONFORME")?"CONFORME":"NAO_ATESTADO");
   if(manifest.status!==overall){
     throw new Error("Overall mass verdict is not reproducible.");
   }
