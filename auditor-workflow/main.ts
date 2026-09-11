@@ -35,10 +35,12 @@ import { z } from "zod";
 /**
  * ExploreChem — Independent Auditor.
  *
- * This workflow does NOT search for PENDING evidence, does NOT correlate
- * documents, and does NOT create the original bilateral result. It consumes
- * a MATCHED evidence that already has a BalanceResult anchored by the
- * primary workflow.
+ * This workflow does NOT search for PENDING evidence and does NOT create the
+ * original result. It consumes a MATCHED evidence that already has a
+ * BalanceResult anchored by the primary workflow. For
+ * PrivateDocumentMass/v2 it independently repeats the single-document checks;
+ * VERIFIED is the evidence-integrity verdict, while the mass result may remain
+ * NAO_ATESTADO on-chain.
  *
  * When the committed document contains elementalBalance, the Auditor also:
  *   - normalizes each stream to the correct basis;
@@ -178,7 +180,11 @@ const correlationEdgeSchema = z.object({
 
 const pairMassResultSchema = z.object({
   pairId: bytes32Schema,
-  relationType: z.enum(["PHYSICAL_HANDOFF", "LAB_ANALYSIS"]),
+  relationType: z.enum([
+    "PHYSICAL_HANDOFF",
+    "LAB_ANALYSIS",
+    "DOCUMENT_MASS_BALANCE",
+  ]),
   fromEvidenceId: bytes32Schema,
   toEvidenceId: bytes32Schema,
   fromActorId: bytes32Schema,
@@ -193,7 +199,10 @@ const pairMassResultSchema = z.object({
 });
 
 const currentPrivatePairwiseResultSchema = z.object({
-  schema: z.literal("ExploreChem/PrivatePairwiseMass/v1"),
+  schema: z.union([
+    z.literal("ExploreChem/PrivatePairwiseMass/v1"),
+    z.literal("ExploreChem/PrivateDocumentMass/v2"),
+  ]),
   sourceEvidenceId: bytes32Schema,
   sourceActorId: bytes32Schema,
   sourceEvidenceHash: bytes32Schema,
@@ -1350,8 +1359,12 @@ function auditElementalBalance(
 function recomputeCurrentManifestCommitments(
   manifest: CurrentPrivatePairwiseResult,
 ) {
+  const documentMass =
+    manifest.schema === "ExploreChem/PrivateDocumentMass/v2";
   const result = {
-    schema: "ExploreChem/PairwiseMassResult/v1" as const,
+    schema: documentMass
+      ? "ExploreChem/DocumentMassResult/v2" as const
+      : "ExploreChem/PairwiseMassResult/v1" as const,
     calculationVersion: manifest.calculationVersion,
     focusActorId: manifest.sourceActorId,
     focusEvidenceId: manifest.sourceEvidenceId,
@@ -1366,14 +1379,26 @@ function recomputeCurrentManifestCommitments(
   };
 
   const aggregateInputHash = hashText(
-    stableJson({
-      domain: "ExploreChem/PairwiseMassInput/v1",
-      calculationVersion: manifest.calculationVersion,
-      actorId: manifest.sourceActorId,
-      focusEvidenceId: manifest.sourceEvidenceId,
-      evidenceIds: manifest.evidenceIds,
-      correlationEdges: manifest.correlationEdges,
-    }),
+    stableJson(
+      documentMass
+        ? {
+            domain: "ExploreChem/DocumentMassInput/v2",
+            sourceEvidenceHash: manifest.sourceEvidenceHash,
+            calculationVersion: manifest.calculationVersion,
+            actorId: manifest.sourceActorId,
+            focusEvidenceId: manifest.sourceEvidenceId,
+            evidenceIds: manifest.evidenceIds,
+            correlationEdges: manifest.correlationEdges,
+          }
+        : {
+            domain: "ExploreChem/PairwiseMassInput/v1",
+            calculationVersion: manifest.calculationVersion,
+            actorId: manifest.sourceActorId,
+            focusEvidenceId: manifest.sourceEvidenceId,
+            evidenceIds: manifest.evidenceIds,
+            correlationEdges: manifest.correlationEdges,
+          },
+    ),
   );
 
   const canonicalResultHash = hashText(
@@ -1610,6 +1635,167 @@ function incomingMass(to: IndependentlyVerifiedEvidence): MassEndpoint {
   };
 }
 
+function documentMassEndpoint(
+  document: Record<string, unknown>,
+  paths: string[],
+): MassEndpoint {
+  for (const path of paths) {
+    const value = path.split(".").reduce<unknown>(
+      (parent, key) => recordOf(parent)[key],
+      document,
+    );
+    if (value !== undefined && value !== null) {
+      return { massMg: kgToMg(decimalString(value)), field: path };
+    }
+  }
+  return { massMg: null, field: paths.join(" | ") };
+}
+
+function independentlyAuditSingleDocument(
+  runtime: TeeRuntime<Config>,
+  key: string,
+  manifest: PrivatePairwiseResult,
+  focusEvidence: OnchainEvidence,
+  actors: ActorDirectory,
+): IndependentAudit {
+  const errors: string[] = [];
+  const rowHashWarnings: string[] = [];
+  const documents = new Map<string, IndependentlyVerifiedEvidence>();
+
+  const row = loadEvidenceRow(runtime, key, focusEvidence.evidenceId);
+  const document = loadEvidenceDocument(runtime, key, row, focusEvidence);
+  const normalized = normalizeCommittedEvidence(
+    document,
+    row,
+    focusEvidence,
+    actors,
+  );
+  const rowHashMatchesChain = sameHex(
+    row.evidence_hash,
+    focusEvidence.evidenceHash,
+  );
+  if (!rowHashMatchesChain) {
+    rowHashWarnings.push(
+      `${focusEvidence.evidenceId}: hash do indice Supabase diverge da blockchain; JSON confirmou a blockchain`,
+    );
+  }
+  documents.set(lower(focusEvidence.evidenceId), {
+    row,
+    onchain: focusEvidence,
+    document,
+    normalized,
+    rowHashMatchesChain,
+  });
+
+  if (
+    manifest.evidenceIds.length !== 1 ||
+    !sameHex(manifest.evidenceIds[0], focusEvidence.evidenceId)
+  ) {
+    errors.push("resultado documental deve conter somente a evidencia auditada");
+  }
+  if (manifest.correlationEdges.length !== 0) {
+    errors.push("resultado documental nao deve depender de correlationEdges");
+  }
+
+  const carrier = normalized.actorType === "CARRIER";
+  const laboratory = normalized.actorType === "LABORATORY";
+  const input = documentMassEndpoint(
+    document,
+    carrier
+      ? ["custody.massCollectedKg", "collectedMassKg", "inputMassKg"]
+      : [
+          "transformation.inputMassKg",
+          "transformation.inputProductMassKg",
+          "recovery.inputMassKg",
+          "inputMassKg",
+          "massBalance.inputMassKg",
+        ],
+  );
+  const product = documentMassEndpoint(
+    document,
+    carrier
+      ? ["custody.massDeliveredKg", "deliveredMassKg", "outputMassKg"]
+      : [
+          "transformation.outputMassKg",
+          "transformation.outputProductMassKg",
+          "transformation.finishedProductMassKg",
+          "recovery.recoveredProductMassKg",
+          "outputMassKg",
+          "recoveredMassKg",
+          "massBalance.outputMassKg",
+        ],
+  );
+  const scrapPaths = ["transformation.scrapMassKg", "scrapMassKg"];
+  const scrap = documentMassEndpoint(document, scrapPaths);
+  const hasScrap = !carrier && scrapPaths.some((path) => {
+    const value = path.split(".").reduce<unknown>(
+      (parent, key) => recordOf(parent)[key],
+      document,
+    );
+    return value !== undefined && value !== null;
+  });
+  const output: MassEndpoint = {
+    massMg:
+      product.massMg === null || (hasScrap && scrap.massMg === null)
+        ? null
+        : product.massMg + (hasScrap ? scrap.massMg! : 0n),
+    field: hasScrap ? `${product.field} + ${scrap.field}` : product.field,
+  };
+
+  const pairs = manifest.massPairs.filter(
+    (pair) => pair.relationType === "DOCUMENT_MASS_BALANCE",
+  );
+  const expectedPairCount = laboratory ? 0 : 1;
+  if (pairs.length !== expectedPairCount || manifest.massPairs.length !== expectedPairCount) {
+    errors.push("quantidade de pares DOCUMENT_MASS_BALANCE nao confere");
+  }
+
+  for (const pair of pairs) {
+    const expectedDelta =
+      input.massMg !== null && output.massMg !== null
+        ? (input.massMg - output.massMg).toString()
+        : null;
+    if (
+      !sameHex(pair.fromEvidenceId, focusEvidence.evidenceId) ||
+      !sameHex(pair.toEvidenceId, focusEvidence.evidenceId)
+    ) {
+      errors.push(`${pair.pairId}: par documental pertence a outra evidencia`);
+    }
+    if (
+      !sameHex(pair.fromActorId, focusEvidence.actorId) ||
+      !sameHex(pair.toActorId, focusEvidence.actorId)
+    ) {
+      errors.push(`${pair.pairId}: par documental pertence a outro ator`);
+    }
+    if (pair.leftMassMg !== (input.massMg?.toString() ?? null)) {
+      errors.push(`${pair.pairId}: leftMassMg nao confere com o JSON`);
+    }
+    if (pair.rightMassMg !== (output.massMg?.toString() ?? null)) {
+      errors.push(`${pair.pairId}: rightMassMg nao confere com o JSON`);
+    }
+    if (pair.leftMassField !== input.field || pair.rightMassField !== output.field) {
+      errors.push(`${pair.pairId}: campos de massa nao conferem com o JSON`);
+    }
+    if (pair.deltaMg !== expectedDelta) {
+      errors.push(`${pair.pairId}: deltaMg nao confere com o JSON`);
+    }
+    if (pair.status !== "NAO_ATESTADO") {
+      errors.push(`${pair.pairId}: resultado documental deve permanecer NAO_ATESTADO`);
+    }
+  }
+  if (manifest.status !== "NAO_ATESTADO") {
+    errors.push("status do resultado documental deve permanecer NAO_ATESTADO");
+  }
+
+  return {
+    evidenceCount: documents.size,
+    pairCount: pairs.length,
+    rowHashWarnings,
+    errors,
+    documents,
+  };
+}
+
 function independentlyAuditCommittedDocuments(
   runtime: TeeRuntime<Config>,
   key: string,
@@ -1617,6 +1803,16 @@ function independentlyAuditCommittedDocuments(
   focusEvidence: OnchainEvidence,
   actors: ActorDirectory,
 ): IndependentAudit {
+  if (manifest.schema === "ExploreChem/PrivateDocumentMass/v2") {
+    return independentlyAuditSingleDocument(
+      runtime,
+      key,
+      manifest,
+      focusEvidence,
+      actors,
+    );
+  }
+
   const errors: string[] = [];
   const rowHashWarnings: string[] = [];
   const documents = new Map<string, IndependentlyVerifiedEvidence>();
@@ -1873,6 +2069,25 @@ function recomputeMassVerdict(
   toleranceBps: number,
   outgoing = false,
 ) {
+  if (manifest.schema === "ExploreChem/PrivateDocumentMass/v2") {
+    const pairs = manifest.massPairs.filter(
+      (pair) => pair.relationType === "DOCUMENT_MASS_BALANCE",
+    );
+    return {
+      expectedOverallStatus: "NAO_ATESTADO" as MassStatus,
+      toleranceChecks: pairs.map((pair) => ({
+        pairId: pair.pairId,
+        absoluteDeltaMg: null,
+        toleranceReference: "OUTGOING_MASS" as const,
+        toleranceReferenceMassMg: pair.leftMassMg,
+        toleranceBps,
+        toleranceLimitMg: null,
+        status: "NAO_ATESTADO" as MassStatus,
+      })),
+      errors: [] as string[],
+    };
+  }
+
   const errors: string[] = [];
   const statuses: MassStatus[] = [];
   const toleranceChecks: Array<{
@@ -2061,7 +2276,10 @@ function run(runtime: TeeRuntime<Config>): string {
     row.storage_bucket,
     resultPath,
   );
-  const compatibilityMode = "CURRENT_V1_DIRECT_PREVIOUS_OR_MINER_NEXT";
+  const compatibilityMode =
+    manifest.schema === "ExploreChem/PrivateDocumentMass/v2"
+      ? "DOCUMENT_MASS_V2_SINGLE_EVIDENCE"
+      : "CURRENT_V1_DIRECT_PREVIOUS_OR_MINER_NEXT";
 
   const actors = loadActorDirectory(runtime, key);
   const independentAudit = independentlyAuditCommittedDocuments(
@@ -2128,6 +2346,18 @@ function run(runtime: TeeRuntime<Config>): string {
     );
   }
 
+  const expectedOnchainMassStatus =
+    manifest.status === "CONFORME"
+      ? 1
+      : manifest.status === "DIVERGENTE"
+        ? 2
+        : 3;
+  if (onchainResult.status !== expectedOnchainMassStatus) {
+    integrityErrors.push(
+      `status de massa on-chain=${onchainResult.status} esperado=${expectedOnchainMassStatus}`,
+    );
+  }
+
   const recomputed = recomputeManifestCommitments(manifest);
 
   if (!sameHex(recomputed.resultHash, manifest.canonicalResultHash)) {
@@ -2186,7 +2416,10 @@ function run(runtime: TeeRuntime<Config>): string {
     ...elementalErrors,
   ];
 
-  if (massAudit.expectedOverallStatus !== "CONFORME") {
+  if (
+    manifest.schema !== "ExploreChem/PrivateDocumentMass/v2" &&
+    massAudit.expectedOverallStatus !== "CONFORME"
+  ) {
     allErrors.push(
       `massa auditada=${massAudit.expectedOverallStatus}; somente CONFORME pode ser VERIFIED`,
     );
@@ -2352,5 +2585,3 @@ export async function main() {
 
   await runner.run(initWorkflow);
 }
-
-
