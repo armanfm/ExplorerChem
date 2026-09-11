@@ -1,450 +1,535 @@
-# ExploreChem CRE/TEE — Pairwise Mass Correlation Workflow
+# ExploreChem
 
-Confidential Chainlink CRE workflow for discovering physical handoffs between private supply-chain evidence, checking document integrity, calculating pairwise mass differences, and anchoring deterministic results on Ethereum Sepolia.
+Confidential traceability infrastructure for critical-mineral and rare-earth supply chains. ExploreChem combines private operational documents, verifiable actor identities, deterministic mass calculations executed by Chainlink CRE with a confidential TEE handler, independent auditing, and minimal anchoring on Ethereum Sepolia.
 
-This directory contains the implemented workflow responsible for moving one new evidence from `PENDING` to `MATCHED` and anchoring its mass result. Final evidence audit is assigned to the separate implemented `PAIRWISE_MASS_AUDITOR` workflow.
+> ExploreChem is being developed for ETHOnline 2026. Company names, lot identifiers, document references, quantities, and results shown in the demonstration are fictional.
 
-## What this workflow does
+- Live demo: [armanfm.github.io/ExplorerChem](https://armanfm.github.io/ExplorerChem/)
+- Network: Ethereum Sepolia (chain ID `11155111`)
+- Contract: [`0xae2FdfcC9584442616fDa974b0a3C101806ff7D5`](https://sepolia.etherscan.io/address/0xae2FdfcC9584442616fDa974b0a3C101806ff7D5)
+- License: Apache-2.0
 
-For each execution, the workflow:
+## Overview
 
-1. Reads the next `PENDING` evidence directly from `ExploreChemRegistry`.
-2. Locates only the corresponding Supabase row.
-3. Downloads the original private JSON inside the TEE execution.
-4. Recalculates the document hash and compares it with the hash anchored on-chain.
-5. Confirms that the evidence belongs to the same `actorId` recorded on-chain.
-6. Extracts the committed `lotId`, origin, destination, actor type, and applicable mass fields.
-7. Uses the Supabase index to locate the directly preceding evidence for the same physical handoff.
-8. Downloads that predecessor JSON and verifies its hash against its own on-chain commitment.
-9. Confirms the strict origin/destination relationship between the predecessor and the focus evidence.
-10. Compares the predecessor's outgoing mass with the focus evidence's incoming mass.
-11. Emits supported elemental calculations when the required source fields exist.
-12. Produces deterministic `pairId`, `aggregateInputHash`, `resultHash`, and `resultId` values.
-13. Stores the complete detailed result as private JSON in Supabase Storage.
-14. Sends one correlation report and one balance report through the CRE forwarder.
-15. Mirrors the resulting state and identifiers in Supabase after the authoritative blockchain operations.
+ExploreChem separates public proof from private business data.
 
-## Architecture
+The blockchain stores actor identities, evidence commitments, workflow authorization, status transitions, and compact result commitments. Original documents, participant names, operational metadata, masses, grades, and detailed calculation output remain private.
+
+The current primary workflow, `DOCUMENT_MASS_BALANCE`, processes one committed document at a time. It verifies the original JSON against its on-chain hash, reads supported mass fields, calculates a document-scoped balance, stores the detailed result privately, and anchors deterministic commitments on Sepolia. It does not search for or compare a predecessor document.
+
+A separate workflow, `PAIRWISE_MASS_AUDITOR`, independently retrieves the anchored result, reconstructs its commitments, repeats supported calculations, applies the configured tolerance where comparable mass values exist, and writes the final audit state on-chain.
 
 ```mermaid
 flowchart TD
-    A["ExploreChemRegistry: getNextPending"] --> B["TEE: open and verify focus JSON"]
-    B --> C["Supabase index: direct predecessor"]
-    C --> D["TEE: verify predecessor JSON"]
-    D --> E["Strict origin/destination correlation"]
-    E --> F["Pairwise mass verification"]
-    F --> G["Private canonical result"]
-    G --> H["CRE reports: MATCH + BALANCE"]
-    H --> I["Ethereum Sepolia"]
-    H --> J["Supabase MATCHED mirror"]
+    A["Participant submits a private document"] --> B["Evidence hash anchored as PENDING"]
+    B --> C["DOCUMENT_MASS_BALANCE in confidential execution"]
+    C --> D["Document result anchored as MATCHED"]
+    D --> E["Independent auditor reproduces the result"]
+    E --> F["VERIFIED or DIVERGENT on-chain"]
 ```
 
-The blockchain is the authority for identity, document hashes, evidence status, and anchored balance results. Supabase is used for private-file storage, actor lookup, candidate indexing, and UI mirroring.
+The CRE simulator used in the demonstration is not a real TEE. The workflow is configured with `handlerInTee`, but simulator logs are visible for debugging and must not contain production secrets.
 
-## Core design decisions
+## Why ExploreChem
 
-### Blockchain-first discovery
+Critical-mineral supply chains involve independent organizations, confidential documents, changing custody, and claims that must remain auditable over time. A conventional shared database forces participants to trust one operator and can expose sensitive data. Publishing complete operational documents on a public blockchain is also inappropriate.
 
-The workflow always starts with:
+ExploreChem uses a hybrid model:
 
-```solidity
-getNextPending()
-```
+- private source documents remain in controlled storage;
+- the exact file hash is committed on-chain at submission;
+- actor and workflow permissions are enforced by the registry;
+- the primary CRE workflow verifies and calculates from the committed document;
+- a separate auditor independently reproduces the anchored result;
+- only deterministic hashes, identifiers, statuses, timestamps, and transaction evidence become public.
 
-Supabase does not choose the authoritative evidence. A candidate can become the focus only when `getEvidence(evidenceId)` confirms `EvidenceStatus.PENDING` on-chain.
+## Current MVP scope
 
-### The result belongs to the focus evidence
+The current implementation includes:
 
-Each execution creates one result for the selected focus evidence and its direct predecessor.
+- actor registration and actor-owned evidence;
+- multiple authorized wallets per actor;
+- private evidence storage with an on-chain file commitment;
+- blockchain-first discovery of evidence in `PENDING` state;
+- verification of the original JSON against its committed hash;
+- one document-scoped mass calculation per evidence;
+- MUF-style arithmetic using supported input, output, scrap, inventory, and other-output fields;
+- carrier custody comparison using collected and delivered mass;
+- deterministic integer arithmetic in milligrams;
+- limited elemental calculations for supported neodymium fields;
+- deterministic result and input commitments;
+- a private, append-only detailed result artifact;
+- separate primary and auditor workflows;
+- independent reconstruction of commitments by the auditor;
+- a provisional 2% mass tolerance in the auditor;
+- immutable result history and contract support for revisions;
+- a client dashboard that combines permitted private data with direct Sepolia reads.
 
-For a carrier-to-refiner handoff:
+The current implementation does **not** claim:
 
-```text
-predecessor = carrier evidence
-focus = refiner evidence
-comparison = carrier delivered mass versus refiner input mass
-result scope = refiner actorId and refiner evidenceId
-```
+- direct-predecessor discovery or strict cross-actor document correlation;
+- proof of a physical handoff between two independently submitted documents;
+- a complete actor-wide or monthly inventory reconciliation;
+- native aggregation of multiple input streams into multiple output streams;
+- complete elemental conservation for Nd, Pr, Dy, Tb, and every material stream;
+- conversion of mass and grade into elemental mass for every stream;
+- validation of declared process yield;
+- element-specific tolerance policies based on validated measurement uncertainty;
+- separate `hash(inputs)` and `hash(outputs)` commitments;
+- a Merkle-root implementation for `aggregateInputHash`;
+- automatic regulatory certification;
+- production validation of confidential execution and every integration path.
 
-Each later focus evidence receives its own result. Previous evidence and results remain in history.
+Those controls are planned as separate, versioned workflows. They must publish independent commitments and states without changing the meaning or history of the current document calculation.
 
-### Strict physical correlation
+## Participants and access model
 
-A `PHYSICAL_HANDOFF` is accepted only when all three conditions are true:
+The demonstration models these roles:
 
-```text
-from.lotId == to.lotId
-from.destinationActorId == to.ownerActorId
-to.originActorId == from.ownerActorId
-```
+- Miner
+- Carrier
+- Laboratory
+- Refiner or processor
+- Manufacturer
+- Recycler
+- Platform operator
+- Read-only client
 
-There is no fallback to approximate actor names, equal masses, nearby timestamps, or self-referential origin/destination values.
+Each participant has a stable `actorId`. The on-chain actor record is intentionally minimal and includes the information required for identity, authorization, and lifecycle control. An actor may authorize more than one wallet. Evidence submission is accepted only from the actor controller or an authorized wallet. Administrative actor registration and workflow configuration are restricted to the contract owner.
 
-Mass does not discover a relationship. Mass is evaluated only after the relationship has been established.
+The read-only client view is open in the MVP so the public demonstration can be inspected without a wallet. This is a prototype product decision, not a recommendation for every production deployment.
 
-### Supabase is an index, not proof
+## Evidence submission
 
-The `lot_reference` database column narrows candidate discovery to one lot. It does not prove that a candidate belongs to that lot.
+A participant submits one operational JSON document for one actor. The application:
 
-For the focus and selected predecessor, the workflow:
+1. validates the selected actor and wallet authorization;
+2. hashes the original file bytes locally;
+3. stores the original document in private storage;
+4. records the private lookup metadata required by the workflow;
+5. submits the evidence commitment to Ethereum Sepolia;
+6. receives the resulting `evidenceId`;
+7. leaves the evidence in `PENDING` until the primary workflow processes it.
 
-- reads the corresponding evidence on-chain;
+The registry does not receive the original file, filename, private storage path, participant display name, lot reference, origin, destination, masses, grades, assay data, or commercial fields.
+
+The document remains independently checkable because its hash can be recalculated later and compared with the immutable `evidenceHash` stored on-chain. Changing the file produces a different hash; corrections therefore require a new evidence submission rather than mutation of the anchored document.
+
+## Public and private data
+
+| Layer | Data |
+|---|---|
+| Ethereum Sepolia | Actor IDs, controllers, authorized wallets, evidence IDs, evidence hashes, submitter, workflow IDs, states, timestamps, result commitments, revision links, and events |
+| Supabase database | Participant display data, evidence-to-file lookup, private storage location, UI metadata, and mirror fields |
+| Private storage | Original evidence JSON and detailed workflow result JSON |
+| Primary CRE workflow | Hash-verified document, selected mass fields, document balance, elemental calculations, and deterministic commitments |
+| Auditor CRE workflow | Anchored result, private result manifest, source-document verification, reconstructed commitments, tolerance checks, and audit verdict |
+| Public frontend | Permitted private metadata combined with direct Sepolia state and commitments |
+
+Supabase is not authoritative for evidence state. The registry is the authority for `PENDING`, `MATCHED`, `VERIFIED`, and `DIVERGENT`. Database mirror fields are updated only after the workflow confirms the corresponding on-chain postcondition.
+
+## On-chain state model
+
+### Evidence state
+
+| Value | State | Meaning |
+|---:|---|---|
+| 0 | `NONE` | Evidence does not exist |
+| 1 | `PENDING` | Submitted and awaiting the primary workflow |
+| 2 | `MATCHED` | The committed document was verified and its primary result was anchored; independent audit is pending |
+| 3 | `VERIFIED` | The auditor reproduced the applicable commitments and checks without finding a divergence |
+| 4 | `DIVERGENT` | The auditor found an integrity, reconstruction, calculation, or applicable-tolerance divergence |
+
+`MATCHED` does not mean that two actors or two documents were physically correlated. In the current workflow it means that one on-chain evidence commitment was successfully connected to its hash-verified private document and primary result.
+
+### Mass status
+
+The primary workflow deliberately records the document mass status as `NAO_ATESTADO`. It calculates and commits the available values, but it does not issue the final audit verdict.
+
+This is why a carrier document containing 900 kg collected and 897 kg delivered can produce:
+
+- `deltaMg = 3000000`;
+- primary mass status `NAO_ATESTADO`;
+- evidence state `MATCHED` after the primary workflow;
+- evidence state `VERIFIED` after an auditor reproduces the commitments and confirms that the 3 kg difference is within the configured 2% tolerance.
+
+`VERIFIED` therefore describes the auditor's integrity and policy decision. It does not rewrite the primary result's `NAO_ATESTADO` field into `CONFORME`.
+
+## Primary workflow: DOCUMENT_MASS_BALANCE
+
+### 1. Blockchain-first discovery
+
+The workflow asks the registry for the next `PENDING` evidence. The chain determines whether an item can be processed. A recovery path may resume an evidence already in `MATCHED` only when the registry confirms that no balance result has yet been anchored.
+
+### 2. Evidence verification
+
+For the selected `evidenceId`, the workflow:
+
+- reads the on-chain evidence record;
+- confirms the expected on-chain state;
+- performs a point lookup for the private file;
 - downloads the original JSON;
-- recalculates the declared hash algorithm;
-- checks the document hash against the blockchain;
-- confirms the owner `actorId`;
-- extracts the real `lotId` from the committed document;
-- rejects any divergence between the index and the document.
+- recalculates the configured SHA-256 or Keccak-256 file hash;
+- compares it with the on-chain `evidenceHash`;
+- confirms that the document actor matches the on-chain `actorId`.
 
-### Direct predecessor scope
+A hash mismatch stops processing before `MATCHED` or any balance commitment is written.
 
-The workflow selects only the evidence immediately preceding the focus in the validated physical handoff. It does not reconstruct every document in the lot and does not calculate a global mass sum.
+### 3. Document-scoped calculation
 
-The predecessor and focus JSON files are both checked against their respective on-chain evidence commitments before their values participate in the result.
+The workflow processes only the selected, hash-verified document:
 
-### Laboratory evidence is not a physical handoff
+- `evidenceIds` contains only the selected `evidenceId`;
+- `fromEvidenceId` and `toEvidenceId` both identify that evidence;
+- `fromActorId` and `toActorId` both identify its actor;
+- `relationType` is `DOCUMENT_MASS_BALANCE`;
+- `correlationEdges` is empty;
+- no predecessor is queried;
+- lot, origin, and destination are descriptive metadata, not calculation gates.
 
-Laboratory evidence may be connected as `LAB_ANALYSIS` when it belongs to the same lot and points to the relevant destination actor.
+### 4. MUF-style mass arithmetic
 
-It does not create a physical mass edge and does not generate a `PairMassResult`. Sample mass is analytical evidence, not custody-flow mass.
-
-## Document integrity checks
-
-The workflow accepts private JSON evidence using either:
-
-- `SHA-256` / `SHA256`;
-- `KECCAK-256` / `KECCAK256`.
-
-An evidence is rejected before correlation when any of these checks fails:
-
-| Check | Authoritative comparison |
-| --- | --- |
-| Evidence identifier | Supabase `evidence_id` against on-chain `evidenceId` |
-| Indexed hash | Supabase `evidence_hash` against on-chain `evidenceHash` |
-| Original document | Recalculated file hash against on-chain `evidenceHash` |
-| Evidence owner | Supabase actor lookup against on-chain `actorId` |
-| Actor type | JSON `actorType`, when present, against the registered actor type |
-| Lot index | Supabase `lot_reference` against the committed JSON `lotId` |
-
-The JSON actor identifier is not authoritative for ownership. Ownership is resolved through:
+For non-carrier documents, the intended equation is:
 
 ```text
-explorerchem_evidences.actor_db_id
-→ explorerchem_actors.actor_id
-→ ExploreChemRegistry Evidence.actorId
+MUF = input + opening inventory
+    - product output
+    - scrap output
+    - other outputs
+    - closing inventory
 ```
 
-## Mass-field selection
+Opening inventory, closing inventory, scrap, and other outputs are optional. When an optional field is absent, the calculation falls back to the supported fields that are present. When a field is supplied but cannot be parsed as a valid mass, the corresponding operand remains unknown.
 
-All accepted decimal kilogram values are converted to integer milligrams. Conversion uses deterministic half-up rounding when more than six decimal places are supplied.
-
-### Outgoing side
-
-| Origin actor type | Preferred field |
-| --- | --- |
-| `MINER` | `outputMassKg`, otherwise `massBalance.grossMassKg` |
-| `CARRIER` | `custody.massDeliveredKg`, otherwise `outputMassKg` |
-| `PROCESSOR` / `REFINER` | `transformation.outputMassKg` |
-| `MANUFACTURER` to `RECYCLER` | `transformation.scrapMassKg` |
-| Other `MANUFACTURER` handoff | `outputMassKg`, otherwise `transformation.scrapMassKg` |
-| `RECYCLER` | `recovery.recoveredProductMassKg`, otherwise `outputMassKg` |
-
-### Incoming side
-
-| Recipient actor type | Preferred field |
-| --- | --- |
-| `CARRIER` | `custody.massCollectedKg`, then `inputMassKg`, then `massBalance.grossMassKg` |
-| `PROCESSOR` / `REFINER` / `MANUFACTURER` / `RECYCLER` | `transformation.inputMassKg`, then `massBalance.grossMassKg`, then `custody.massCollectedKg` |
-| Other physical recipient | `inputMassKg`, then `custody.massCollectedKg`, then `massBalance.grossMassKg` |
-| `LABORATORY` | no physical mass |
-
-## Pairwise calculation
-
-For the direct physical handoff from the predecessor to the focus:
+Carrier evidence follows a custody calculation:
 
 ```text
-deltaMg = leftMassMg - rightMassMg
+difference = collected mass - delivered mass
 ```
 
-The result is classified as:
+Laboratory documents do not produce a physical mass pair in this workflow. They may still produce supported elemental calculations.
 
-| Condition | Status |
-| --- | --- |
-| `deltaMg == 0` | `CONFORME` |
-| `deltaMg != 0` | `DIVERGENTE` |
-| Either mass is absent | `NAO_ATESTADO` |
+Decimal kilograms are converted deterministically to integer milligrams. Committed arithmetic does not use binary floating-point values.
 
-The mass workflow records the direct arithmetic result. Acceptance tolerance is evaluated later by the separate auditor. Where supported fields exist, this workflow can emit deterministic elemental calculations, but it does not claim a global elemental-conservation balance, moisture normalization, uncertainty propagation, or periodic MUF calculation.
+### 5. Supported fields
+
+The workflow searches documented field paths rather than inferring values from company names or descriptive text.
+
+| Component | Supported examples |
+|---|---|
+| Input | `transformation.inputMassKg`, `transformation.inputProductMassKg`, `recovery.inputMassKg`, `inputMassKg`, `massBalance.inputMassKg` |
+| Product output | `transformation.outputMassKg`, `transformation.outputProductMassKg`, `transformation.finishedProductMassKg`, `recovery.recoveredProductMassKg`, `outputMassKg`, `recoveredMassKg`, `massBalance.outputMassKg` |
+| Scrap | `transformation.scrapMassKg`, `massBalance.scrapMassKg`, `scrapMassKg` |
+| Opening inventory | `massBalance.openingInventoryMassKg`, `transformation.openingInventoryMassKg`, `openingInventoryMassKg` |
+| Closing inventory | `massBalance.closingInventoryMassKg`, `transformation.closingInventoryMassKg`, `closingInventoryMassKg` |
+| Other outputs | `massBalance.otherOutputMassKg`, `massBalance.otherOutputsMassKg`, `transformation.otherOutputMassKg`, `transformation.otherOutputsMassKg`, `otherOutputMassKg`, `otherOutputsMassKg` |
+| Carrier collected mass | `custody.massCollectedKg`, `collectedMassKg`, `inputMassKg` |
+| Carrier delivered mass | `custody.massDeliveredKg`, `deliveredMassKg`, `outputMassKg` |
+
+### 6. Elemental calculations
+
+The producer retains limited neodymium calculations where supported fields exist. Current output can include conversion of Nd2O3 mass and grade into elemental Nd, or a declared elemental partition. This is partial calculation coverage and is not a complete proof of elemental conservation across every input and output stream.
 
 ## Deterministic commitments
 
-No random salt or timestamp participates in the current commitment. Identical canonical inputs reproduce identical hashes.
+The primary workflow canonicalizes structured JSON with stable key ordering and hashes the exact canonical representation. Runtime timestamps and random salts are excluded from the commitment.
 
-The workflow uses explicit domain separation:
+The result includes:
 
-| Commitment | Domain |
-| --- | --- |
-| Pair identity | `ExploreChem/PairwiseMassPair/v1` |
-| Relationship fingerprint | `ExploreChem/PairwiseMassRelation/v1` |
-| Input commitment | `ExploreChem/PairwiseMassInput/v1` |
-| Canonical result | `ExploreChem/PairwiseMass/v1` |
-| Result identifier | `ExploreChem/PairwiseMassResultId/v1` |
+- `relationFingerprint`;
+- `canonicalResultHash`;
+- `resultHash`;
+- `resultId`;
+- `aggregateInputHash`.
 
-The canonical result includes:
+`canonicalResultHash` and `resultHash` refer to the same deterministic result commitment in the current implementation. `aggregateInputHash` commits to the source evidence hash and calculation scope. It is a deterministic hash, not a Merkle root, and it is not equivalent to separate input and output commitments.
+
+The v2 result and private manifest schemas are:
+
+- `ExploreChem/DocumentMassResult/v2`;
+- `ExploreChem/PrivateDocumentMass/v2`;
+- `ExploreChem/DocumentMassInput/v2` for the input commitment domain.
+
+For deployed ABI compatibility, some internal commitment domain strings still retain historical `PairwiseMass` names. Those strings are domain separators only. They do not mean that the current v2 workflow queries a predecessor or performs cross-document correlation.
+
+The absence of a salt makes the result reproducible from the same canonical calculation. It also means the hash alone is not intended to conceal a small, guessable input space. Confidentiality depends on access controls around the original documents and detailed private results.
+
+## Private result artifact
+
+The detailed result is stored outside the chain at:
 
 ```text
-calculationVersion
+mass-results/{focusEvidenceId}/{resultId}.json
+```
+
+The private artifact uses `ExploreChem/PrivateDocumentMass/v2` and can contain the source evidence commitment, selected mass fields, document mass pair, elemental calculations, deterministic commitments, private path, and transaction references. The blockchain receives only the compact fixed-width report fields required by the registry.
+
+The result table is append-only. Existing records are not updated through an upsert; a later revision must be a new immutable result linked to the previous result.
+
+## Reports sent to the registry
+
+The workflows send fixed-width reports through the authorized Chainlink forwarder.
+
+### Report type 1 — primary processing
+
+This report moves the evidence from `PENDING` to `MATCHED` and records the deterministic fingerprint associated with the processed evidence.
+
+```text
+reportType
+evidenceId
+relationFingerprint
+```
+
+The report name and ABI originate from the earlier registry design. In the current v2 workflow, this transition represents successful verification and primary processing of one document, not acceptance of a cross-document handoff.
+
+### Report type 2 — balance result
+
+This report anchors the result for the exact evidence and actor.
+
+```text
+reportType
+evidenceId
+resultId
 actorId
-focusEvidenceId
-lotReference
-evidenceIds
-correlationEdges
-massPairs
-status
+resultHash
+previousResultId
+aggregateInputHash
+balanceStatus
+calculationVersion
 ```
 
-`canonicalResultHash` is also used as the contract-facing `resultHash`.
+The current primary workflow creates the first revision with a zero `previousResultId` and `calculationVersion = 1`.
 
-## Private and public data boundaries
+### Report type 3 — audit outcome
 
-### Kept private
+The independent auditor uses this report to move evidence from `MATCHED` to `VERIFIED` or `DIVERGENT`. The primary document workflow does not issue the final audit verdict.
 
-- original JSON documents;
-- lot identifier;
-- origin and destination references;
-- company names and sites;
-- individual mass values;
-- selected mass-field names;
-- correlation edges;
-- complete pairwise calculation;
-- private canonical result manifest.
+## Processing sequence
 
-### Anchored on-chain
+```mermaid
+sequenceDiagram
+    participant Chain as Registry
+    participant Mass as DOCUMENT_MASS_BALANCE
+    participant Store as Private storage
+    participant Audit as Independent auditor
+    Mass->>Chain: getNextPending()
+    Mass->>Store: load one committed JSON
+    Mass->>Mass: verify hash and calculate document balance
+    Mass->>Chain: report type 1 - MATCHED
+    Mass->>Store: save detailed result
+    Mass->>Chain: report type 2 - anchor commitments
+    Audit->>Store: reload result and source JSON
+    Audit->>Audit: reproduce commitments and tolerance checks
+    Audit->>Chain: report type 3 - VERIFIED or DIVERGENT
+```
 
-- focus `evidenceId`;
-- result owner `actorId`;
-- deterministic `resultId`;
-- deterministic `resultHash`;
-- `aggregateInputHash`;
-- balance status;
-- calculation version;
-- transaction and block history emitted by the contract.
+The primary workflow sends the state transition before the balance report because the deployed registry accepts a balance for evidence in `MATCHED` or `VERIFIED` state. After each write, the workflow reads the registry again and requires the expected on-chain postcondition before updating private mirror fields.
 
-Detailed private results are written to:
+## Independent auditor
+
+`PAIRWISE_MASS_AUDITOR` is the current implementation name of the separate audit workflow. Despite that retained name, it supports `ExploreChem/PrivateDocumentMass/v2` results and independently repeats the single-document checks.
+
+The auditor:
+
+- discovers evidence already in `MATCHED` state;
+- retrieves its anchored balance result;
+- downloads the private result manifest and committed source JSON;
+- verifies source document hashes again;
+- reconstructs `resultHash`, `resultId`, and `aggregateInputHash`;
+- compares reconstructed commitments with the private manifest and on-chain result;
+- recalculates available document mass values;
+- applies the configured tolerance to comparable mass values;
+- sends report type 3;
+- preserves the primary result and all prior history;
+- changes the evidence state on-chain without using a Supabase state patch as authority.
+
+The demonstration uses a provisional tolerance of 200 basis points, equal to 2% of the left or outgoing reference mass:
 
 ```text
-mass-results/{focusEvidenceId-without-0x}/{resultId-without-0x}.json
+absolute(delta) * 10000 <= reference mass * 200
 ```
 
-## CRE report format
+This tolerance is **arbitrated for the MVP**. It is not a validated industrial uncertainty budget and must not be presented as regulatory certification.
 
-The workflow sends a static nine-word ABI report compatible with `ExploreChemRegistry.CREReport`:
+The auditor can issue `DIVERGENT` for a commitment mismatch, an invalid reconstruction, an applicable mass difference outside tolerance, or another supported integrity failure. Missing operands remain `NAO_ATESTADO`; absence of a comparable value is not itself proof of physical loss.
 
-| Position | Field | Type |
-| ---: | --- | --- |
-| 1 | `reportType` | `uint8` |
-| 2 | `evidenceId` | `bytes32` |
-| 3 | `resultId` | `bytes32` |
-| 4 | `actorId` | `bytes32` |
-| 5 | `resultHash` | `bytes32` |
-| 6 | `previousResultId` | `bytes32` |
-| 7 | `aggregateInputHash` | `bytes32` |
-| 8 | `balanceStatus` | `uint8` |
-| 9 | `calculationVersion` | `uint32` |
+`VERIFIED` means that the implemented checks passed for the committed inputs. It does not prove that the original physical measurements or declarations were truthful.
 
-Encoded length:
+## History and immutability
 
-```text
-9 × 32 bytes = 288 bytes
-```
+ExploreChem does not overwrite on-chain evidence or earlier result commitments.
 
-This workflow emits:
+A future result revision must create:
 
-- `reportType = 1` for evidence correlation;
-- `reportType = 2` for the pairwise mass result.
+- a new `resultId`;
+- the same evidence and actor scope;
+- a `previousResultId` pointing to the prior result;
+- a higher `calculationVersion`;
+- new input and result commitments;
+- its own timestamp.
 
-It does not emit `reportType = 3`. Final audit belongs to the separate Auditor workflow.
+The registry may update a latest-result pointer while keeping every previous result addressable. The current primary workflow writes only the initial revision.
 
-## Evidence lifecycle
+## Frontend
 
-Within this workflow:
+The frontend supports the demonstrated lifecycle:
 
-```text
-PENDING
-  → strict correlation and integrity verification
-MATCHED
-  → pairwise result already anchored, awaiting independent audit
-```
+- wallet connection;
+- actor selection and identity display;
+- evidence upload;
+- local file hashing;
+- private document storage;
+- on-chain evidence registration;
+- transaction and evidence inspection;
+- actor-scoped client balance views;
+- download of authorized source documents and detailed result artifacts;
+- local reconstruction checks against public commitments;
+- direct display of Sepolia state and events.
 
-The workflow deliberately ends at `MATCHED`. The separate `PAIRWISE_MASS_AUDITOR` workflow consumes `getNextMatched()` and finalizes the evidence as `VERIFIED` or `DIVERGENT`.
+Participant names, filenames, storage paths, lots, and calculation details come from permitted private application data. Actor IDs, evidence IDs, evidence hashes, authorized wallets, states, timestamps, workflow IDs, transaction hashes, and result commitments can be checked against Ethereum Sepolia.
 
-Each new shipment or order creates a new `evidenceId`. A historical evidence is never reused as the identity of a new transaction.
+## Security and trust boundaries
 
-## Supabase dependencies
+The MVP implements these controls:
 
-### `explorerchem_actors`
+- original documents are not written to the public chain;
+- evidence hashes bind later inspection to the submitted bytes;
+- private database fields are lookup metadata, not proof;
+- document identity, ownership, and hash are rechecked during processing;
+- the registry is authoritative for evidence state;
+- only configured workflow IDs through the authorized forwarder can apply reports;
+- committed mass arithmetic uses integers;
+- result commitments are deterministic, canonicalized, and domain-separated;
+- the auditor reconstructs commitments instead of trusting stored output;
+- prior evidence and result history remains immutable.
 
-The workflow reads:
+Accepted prototype limitations:
 
-```text
-id
-actor_id
-display_name
-actor_type
-active
-created_at
-```
+- the registry owner is a single externally owned account;
+- the owner can replace the forwarder and expected workflow identifiers;
+- primary and auditor separation depends on correct contract configuration;
+- anchored evidence cannot currently be revoked;
+- `DIVERGENT` is terminal in the current state machine;
+- private storage and database access policies require production hardening;
+- the CRE simulator is not a production TEE;
+- the project has not undergone an independent production security audit.
 
-### `explorerchem_evidences`
+Production use also requires multisignature or governed administration, independent contract review, access-policy review, secret rotation, monitoring, incident response, schema governance, measurement-policy validation, and end-to-end testing in real confidential execution.
 
-The workflow reads:
+## Coverage and planned specialized workflows
 
-```text
-evidence_id
-actor_db_id
-state
-evidence_hash
-hash_algorithm
-storage_bucket
-storage_path
-mime_type
-lot_reference
-chain_created_at
-```
+| Capability | Current status |
+|---|---|
+| Verify the original JSON hash | Implemented |
+| Calculate input + opening inventory - outputs - closing inventory | Implemented for supported fields in one document |
+| Keep operational masses off-chain | Implemented |
+| Anchor result commitments on-chain | Implemented |
+| Independently reproduce result commitments | Implemented |
+| Apply a general 2% tolerance | Implemented in the auditor as an MVP policy |
+| Multiple inputs and multiple outputs | Planned specialized workflow |
+| Complete conservation by Nd, Pr, Dy, Tb, and other elements | Partial for Nd; broader workflow planned |
+| Mass x grade conversion for every stream | Planned specialized workflow |
+| Declared-yield validation | Planned specialized workflow |
+| Element-specific uncertainty tolerances | Planned specialized workflow |
+| Separate input and output hashes | Planned |
+| Merkle root over calculation inputs | Planned |
+| Prove N-input to M-output transformation | Planned specialized workflow |
 
-After successful blockchain writes, it updates:
+The target architecture allows the same immutable evidence to be evaluated by multiple authorized workflows. Each specialized workflow should have its own versioned schema, calculation domain, commitment, and independent status. A future evidence lifecycle may therefore expose separate states such as document integrity verified, MUF checked, tolerance checked, elemental conservation checked, yield checked, and multi-stream transformation checked instead of collapsing every decision into one generic `VERIFIED` label.
 
-```text
-state = MATCHED
-matched_at
-match_tx_hash
-```
+These future states and workflows are architectural evolution, not claims about the current deployed MVP.
 
-### Private Storage
+## Running the workflows
 
-The original document must be available at the authenticated object path represented by `storage_bucket` and `storage_path`.
-
-The service-role key is never stored in the repository. It is requested inside the TEE from the configured secret namespace under:
-
-```text
-SUPABASE_SERVICE_ROLE_KEY
-```
-
-## Configuration
-
-The workflow validates these configuration fields at startup:
-
-| Field | Required | Purpose |
-| --- | ---: | --- |
-| `supabaseUrl` | yes | Supabase project URL |
-| `secretNamespace` | yes | Namespace containing the service-role secret |
-| `chainSelectorName` | yes | CRE EVM network selector name |
-| `contractAddress` | yes | Deployed `ExploreChemRegistry` address |
-| `gasLimit` | yes | Gas limit used by `writeReport` |
-| `correlationSchedule` | no | Cron schedule override |
-
-Default schedule:
-
-```text
-0 0 0 * * 0
-```
-
-The production trigger requests AWS Nitro in `us-west-2` through `handlerInTee`. The local simulator is not a real TEE and must not be used with production confidential data.
-
-## Installation and simulation
-
-Install dependencies inside the workflow directory:
+From the directory that contains each initialized workflow folder:
 
 ```bash
-cd explorerchem-workflow
-bun install
+cre workflow simulate ./massa-worflow --broadcast
+cre workflow simulate ./auditor-workflow --broadcast
 ```
 
-Compile and simulate with blockchain writes enabled:
+On Windows Command Prompt, the equivalent commands are:
 
-```bash
-cre workflow simulate . --broadcast
+```bat
+cre workflow simulate .\massa-worflow --broadcast
+cre workflow simulate .\auditor-workflow --broadcast
 ```
 
-Alternatively, from the repository root, target the workflow directory directly:
+`--broadcast` instructs the simulator to transmit generated reports to the configured network. A primary result can include `matchTxHash` and `resultTxHash`; an auditor result includes the audit transaction when it changes the evidence state.
 
-```bash
-cre workflow simulate explorerchem-workflow --broadcast
-```
+If a command reports that `workflow.yaml` is missing, the supplied path is not the initialized workflow directory. Do not run the command from the parent directory with `.` unless that directory itself contains `workflow.yaml`.
 
-`--broadcast` is required to persist the correlation and balance reports on Sepolia. Without it, the simulator can execute the logic but does not create the authoritative on-chain state transition.
+Environment-specific workflow IDs, forwarder address, storage bucket, Supabase configuration, and secret identifiers belong in the active workflow configuration and must not be copied from this README.
 
-Before broadcasting, the contract must trust the workflow ID delivered in the forwarder metadata. `expectedWorkflowId` protects correlation reports. Balance reports use `expectedBalanceWorkflowId` when it is nonzero; otherwise they fall back to `expectedWorkflowId`.
+## Deployment
 
-## Simulation progression fallback
+| Item | Value |
+|---|---|
+| Network | Ethereum Sepolia |
+| Chain ID | `11155111` |
+| Registry used by the current frontend and workflows | `0xae2FdfcC9584442616fDa974b0a3C101806ff7D5` |
+| Contract explorer | [View on Sepolia Etherscan](https://sepolia.etherscan.io/address/0xae2FdfcC9584442616fDa974b0a3C101806ff7D5) |
+| Frontend | [ExploreChem live demo](https://armanfm.github.io/ExplorerChem/) |
 
-Some simulation executions can return the same on-chain pending evidence when simulated writes do not advance state between runs.
+## Design decisions
 
-The workflow contains a controlled fallback:
+### Why the current calculation uses one document
 
-1. `getNextPending()` is still called first.
-2. If that evidence is already `MATCHED` in the Supabase simulation mirror, the workflow loads a limited set of other Supabase rows still marked `PENDING`.
-3. Every fallback candidate must independently return on-chain status `PENDING` before selection.
+The current workflow can process the first evidence submitted by an actor without depending on a counterparty having already submitted a predecessor. This provides immediate document-integrity verification and a reproducible primary mass calculation.
 
-This mechanism exists only to advance simulation. It does not make Supabase authoritative.
+The trade-off is explicit: it verifies the internal calculation derived from one committed declaration; it does not prove consistency between independent actors. A document can be hash-valid and internally coherent while containing an untruthful original declaration. External data, independent source documents, measurement controls, and specialized auditors are required to address that risk.
 
-The output identifies the selection path as either:
+### Why primary calculation and audit are separate
 
-```text
-CHAIN_GET_NEXT_PENDING
-SIMULATION_PROGRESS_FALLBACK
-```
+The primary workflow produces a reproducible result without assigning its own final audit verdict. The auditor then reconstructs the commitments and applies its policy independently. This lets future auditors evaluate different properties of the same evidence without changing the original result.
 
-## Failure behavior
+### Why the current result remains NAO_ATESTADO
 
-The workflow does not anchor a result when:
+`NAO_ATESTADO` distinguishes a producer calculation from an independent audit conclusion. The available operands and difference are still stored and committed. The auditor uses those values to decide whether the evidence becomes `VERIFIED` or `DIVERGENT` under its configured policy.
 
-- no on-chain `PENDING` evidence exists;
-- the focus evidence cannot be resolved in Supabase;
-- the original file is missing or is not JSON;
-- the indexed hash diverges from the blockchain;
-- the recalculated document hash diverges from the blockchain;
-- the document owner diverges from the on-chain actor;
-- `lotId` is absent;
-- the `lot_reference` index diverges from the committed document;
-- origin and destination are both absent;
-- no strict outgoing physical handoff exists for the focus;
-- the focus leaves `PENDING` before the final write gate;
-- the CRE report transaction fails;
-- the receiver contract reverts.
+### Why there is no random salt
 
-Candidate-specific failures are isolated in `candidateErrors`, allowing other valid same-lot candidates to continue through correlation.
+The commitment must be reproducible from the same canonical input. Actor ID, evidence ID, calculation version, domain, and canonical content provide deterministic separation. A salt would introduce extra secret state without being required for result identity.
 
-## What this workflow does not claim
+## Roadmap
 
-This implementation does not claim to:
+Planned work includes:
 
-- prove that a physical delivery happened in the real world without independently submitted recipient evidence;
-- perform periodic plant-wide mass reconciliation;
-- provide complete elemental-conservation coverage for every actor, compound, or material;
-- normalize wet, dry, calcined, or liquid mass bases;
-- calculate inventory-adjusted MUF;
-- define the final industrial measurement-uncertainty policy; the separate auditor currently uses a provisional 2% rule;
-- preserve molecular identity after material transformation;
-- replace sampling, laboratory accreditation, or commercial arbitration;
-- finalize evidence as `VERIFIED` or `DIVERGENT` without the separate Auditor workflow.
+- rename remaining historical `PairwiseMass` implementation identifiers in a versioned migration;
+- add deterministic test vectors for canonicalization and report encoding;
+- add workflow-specific automated tests for the primary and auditor implementations;
+- validate producer and auditor compatibility end-to-end;
+- formalize versioned input schemas for every participant document type;
+- implement multi-input and multi-output stream aggregation;
+- add complete element-specific conversion and conservation checks;
+- validate declared process yield;
+- add separate input and output commitments and evaluate a Merkle commitment model;
+- replace the provisional 2% policy with documented tolerances based on measurement requirements;
+- introduce independent, workflow-specific audit statuses;
+- complete security review, production TEE validation, and operational monitoring.
 
-## Current scope and auditor workflow
+## Use of AI tools
 
-The implemented scope closes one responsibility:
+Claude, ChatGPT, and Manus were used during development for code generation and modification, implementation review, debugging, research, interface work, synthetic demonstration data, and documentation.
 
-> Given private evidence anchored by hash, discover the next strict physical handoff, compare the origin's outgoing mass with the recipient's incoming mass, and anchor a deterministic result owned by the origin evidence.
+AI assistance covered:
 
-The independent `PAIRWISE_MASS_AUDITOR` workflow consumes evidence left as `MATCHED`, reproduces the committed private result, verifies the applicable source documents and calculations, applies its audit policy, and issues the final `VERIFIED` or `DIVERGENT` evidence verdict.
+- **Primary CRE workflow (`DOCUMENT_MASS_BALANCE`):** evidence selection, private JSON retrieval, hash verification, mass and limited elemental calculations, canonicalization, result persistence, report generation, and debugging;
+- **Auditor CRE workflow (`PAIRWISE_MASS_AUDITOR`):** reconstruction of commitments, source-document verification, tolerance checks, audit outcome reporting, and debugging;
+- **Frontend (`index.html`):** interface design and implementation changes for evidence submission, actor navigation, and result presentation; Manus contributed design assistance;
+- **Smart contract and tests:** review, test preparation, debugging, and English NatSpec documentation;
+- **Documentation and fictional demonstration inputs:** drafting, revision, limitation disclosure, and synthetic JSON generation.
 
-## Author
+The human team defined the problem, product scope, architecture, requirements, and integration approach. Armando Freire directed the technical work, evaluated and revised proposed implementations, configured and deployed contracts and workflows, ran tests and simulations, and investigated failures. Jéssica directed product framing, requirements, user experience, business validation, and presentation. Final decisions and responsibility remain with the team.
 
-**Armando Freire** — technical design, smart contracts, Chainlink CRE/TEE workflow, Supabase integration, and blockchain anchoring.
+AI-generated output is not treated as proof of correctness or as an independent security audit. Successful demonstrations establish only the behavior actually exercised. Historical demonstration records can contain deliberate negative tests or outcomes produced during development and must not be represented as real industrial discrepancies.
 
-ExploreChem is being developed for ETHOnline 2026. Demonstration company names, lot identifiers, document references, quantities, and results are fictional.
+## Team
 
-** Jéssica ** — Product Lead
+- **Armando Freire — Technical Lead:** architecture, smart contracts, Chainlink CRE/TEE workflows, backend and blockchain integration, security planning, testing, and technical documentation.
+- **Jéssica — Product Lead:** problem framing, requirements, user experience, business validation, communication, and presentation.
 
-Responsible for product leadership, problem framing, requirements, user experience, business validation, product communication, and presentation strategy.
+## License
 
-The original concept and product vision belong to Armando Freire and Jéssica. All final product decisions, source code, documentation, demonstrations, and submissions are reviewed and approved by the ExploreChem team. The team retains full authorship and responsibility for the project.
+Apache License 2.0. See [LICENSE](./LICENSE).
+
