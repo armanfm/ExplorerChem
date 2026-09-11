@@ -1,130 +1,282 @@
 # ExploreChem Auditor Workflow
 
-Independent Chainlink CRE workflow configured with `handlerInTee` to audit matched ExploreChem evidence and independently reproduce its committed pairwise mass result.
+This directory contains ExploreChem's independent audit workflow. It starts from evidence already in `MATCHED` state, retrieves the anchored mass result and its private source material, independently reconstructs the applicable commitments and calculations, applies the configured audit rules, and writes the final evidence state to Ethereum through a Chainlink CRE report.
 
-This workflow is separate from `LOT_CHAIN_PAIRWISE_MASS`. It does not discover `PENDING` evidence, rebuild the custody graph, or replace the result created by the primary workflow.
+The implementation keeps the historical workflow identifier `PAIRWISE_MASS_AUDITOR`, while the current producer integration uses `ExploreChem/PrivateDocumentMass/v2` results created by `DOCUMENT_MASS_BALANCE`.
 
-- Current workflow name: `PAIRWISE_MASS_AUDITOR`
-- Network and registry contract: defined by the active environment configuration
+## Technology
 
-## Responsibility
+| Layer | Technology and use |
+|---|---|
+| Workflow runtime | Chainlink CRE SDK for triggers, confidential execution, EVM reads, and signed reports |
+| Confidential handler | `handlerInTee` requesting AWS Nitro in `us-west-2` |
+| Language | TypeScript |
+| Runtime validation | Zod schemas for configuration, database responses, private manifests, and elemental-balance inputs |
+| EVM encoding and hashing | viem for ABI encoding and decoding, Keccak-256, SHA-256, and byte conversion |
+| Blockchain | Ethereum Sepolia registry as the authority for eligibility and final evidence state |
+| Private data | Supabase PostgREST and Storage for evidence lookup, original JSON, primary result, and audit receipt |
+| Arithmetic | `bigint` and rational integer operations for deterministic mass and elemental calculations |
 
-The Auditor starts from evidence already in `MATCHED` state.
+The CRE simulator is not a real TEE. Simulator logs are visible for debugging and must not receive production-sensitive values.
 
-It verifies the result created by the primary workflow through these steps:
+## Workflow identity
 
-1. selects the next `MATCHED` evidence from the blockchain;
-2. retrieves the corresponding private result JSON;
-3. compares the private result commitments with the result anchored on-chain;
-4. reopens only the current evidence and its direct predecessor;
-5. recalculates both original document hashes and compares them with their on-chain evidence hashes;
-6. independently reproduces the direct pairwise mass calculation;
-7. applies the configured tolerance to the reproduced difference;
-8. records a new private audit receipt and sends the final evidence classification on-chain.
+| Item | Current value |
+|---|---|
+| Workflow output name | `PAIRWISE_MASS_AUDITOR` |
+| Discovery method | `BLOCKCHAIN_GET_NEXT_MATCHED` |
+| State authority | `BLOCKCHAIN` |
+| Current producer manifest | `ExploreChem/PrivateDocumentMass/v2` |
+| Legacy compatible manifest | `ExploreChem/PrivatePairwiseMass/v1` |
+| Audit receipt schema | `ExploreChem/PairwiseMassAudit/v2` |
+| Trigger | Cron |
+| Default schedule | `0 */5 * * * *` |
+| On-chain report | Report type `3` |
+
+## Execution flow
+
+For each trigger, the Auditor:
+
+1. calls `getNextMatched()` on the registry;
+2. rereads the selected evidence and confirms state `MATCHED`;
+3. obtains `latestResultIdByEvidence(evidenceId)`;
+4. reads the anchored balance result with `getResult(resultId)`;
+5. locates the private evidence row in Supabase;
+6. opens `mass-results/{evidenceId}/{resultId}.json`;
+7. validates the private manifest with Zod;
+8. reloads and hashes the applicable original JSON document or documents;
+9. reconstructs the primary result commitments;
+10. reproduces the supported mass calculation;
+11. applies the configured mass tolerance;
+12. audits an optional `elementalBalance` block;
+13. derives `VERIFIED` or `DIVERGENT`;
+14. sends report type `3` through the configured Chainlink forwarder;
+15. rereads the evidence and confirms its final on-chain state;
+16. writes the private audit receipt.
 
 ```mermaid
 flowchart TD
-    A["MATCHED evidence"] --> B["Load on-chain result"]
-    B --> C["Reopen committed private files"]
-    C --> D["Reproduce pairwise result"]
-    D --> E["Apply tolerance"]
-    E --> F["Audit verdict"]
-    F --> G["Report type 3"]
+    A["Registry: next MATCHED evidence"] --> B["Load anchored result and private manifest"]
+    B --> C["Reopen and hash committed JSON"]
+    C --> D["Reconstruct commitments and calculations"]
+    D --> E["Apply mass and optional elemental checks"]
+    E --> F["Write VERIFIED or DIVERGENT on-chain"]
 ```
-
-The final evidence transition is:
-
-- `VERIFIED` when the committed result, both source documents, direct pair and tolerance check are reproducible and accepted;
-- `DIVERGENT` when integrity, scope, ownership, calculation, required mass, or tolerance validation fails;
-- unchanged `MATCHED` when the evidence does not yet have an on-chain balance result.
-
-## Relationship with the primary workflow
-
-| Concern | Primary pairwise workflow | Auditor workflow |
-|---|---|---|
-| Discovery | Next `PENDING` evidence | Next `MATCHED` evidence |
-| Custody correlation | Creates the direct relation | Confirms only the committed direct relation |
-| Physical handoff calculation | Creates it | Reproduces it |
-| Original document hash | Verifies it | Verifies it again |
-| Private result hash | Creates it | Recomputes it |
-| Final evidence state | `MATCHED` | `VERIFIED` or `DIVERGENT` |
-| Contract report | Types 1 and 2 | Type 3 |
 
 ## Blockchain-first discovery
 
-The Auditor calls `getNextMatched()` on the registry. Supabase is not used to decide which evidence is eligible.
+The registry decides which evidence can be audited. The workflow reads:
 
-After discovery, it reads:
-
+- `getNextMatched()`;
 - `getEvidence(evidenceId)`;
 - `latestResultIdByEvidence(evidenceId)`;
 - `getResult(resultId)`;
 - `verifyResultHash(resultId, candidateHash)`.
 
-The evidence must still be `MATCHED` when processing begins.
+Supabase is used only after the registry selects an eligible evidence ID.
 
-## Pairwise result audit
+When no `MATCHED` evidence exists, the workflow returns a no-work response. When a `MATCHED` evidence has no anchored mass result yet, it remains `MATCHED` for a later trigger.
 
-The Auditor retrieves the private result from:
+## Supported manifest modes
 
-```text
-mass-results/{evidenceId}/{resultId}.json
-```
+### DOCUMENT_MASS_V2_SINGLE_EVIDENCE
 
-It verifies that:
+This is the mode used for results from the current `DOCUMENT_MASS_BALANCE` workflow.
 
-- the private result belongs to the selected evidence;
-- the source actor matches the on-chain actor;
-- the source evidence hash matches the on-chain commitment;
-- the result stored on-chain belongs to the same evidence and actor;
-- `aggregateInputHash` is reproducible;
-- `canonicalResultHash` is reproducible;
-- private `resultHash` equals the canonical hash;
-- on-chain `resultHash` equals the recomputed hash;
-- `resultId` is reproducible;
-- `verifyResultHash` returns `true`;
-- the manifest belongs to the current evidence and contains only its applicable direct pair;
-- the current evidence and its direct predecessor reproduce their individual on-chain document hashes;
-- every `deltaMg` is correct;
-- every pairwise status is correct;
-- the result-level mass status is correct;
-- the absolute difference is within the configured tolerance;
-- the on-chain mass status agrees with the recomputed result.
+The Auditor requires:
 
-The audit uses `massToleranceBps`, with a current default of 200 basis points: 2% of the outgoing mass. This percentage is provisional and must be replaced if the project team approves another measurement policy.
+- schema `ExploreChem/PrivateDocumentMass/v2`;
+- one `sourceEvidenceId` equal to the selected evidence;
+- one `sourceActorId` equal to the on-chain actor;
+- one `sourceEvidenceHash` equal to the on-chain evidence hash;
+- exactly one evidence in `evidenceIds`;
+- an empty `correlationEdges` array;
+- zero mass pairs for laboratory evidence;
+- one `DOCUMENT_MASS_BALANCE` pair for other supported actor types;
+- the pair's evidence and actor identifiers to match the selected evidence;
+- pair and result status `NAO_ATESTADO` as created by the producer.
 
-A missing required mass, a non-reproducible result, an invalid direct-pair scope, or a difference outside the tolerance produces `DIVERGENT`. The custody relation remains historically recorded; the Auditor is judging the result, not deleting the relation.
+For this mode, the workflow reloads only the selected evidence document.
 
-## Original evidence verification
+### Legacy pairwise compatibility
 
-The Auditor downloads the original evidence JSON using the private `storage_bucket` and `storage_path`.
+The Auditor also accepts `ExploreChem/PrivatePairwiseMass/v1`. That compatibility branch reconstructs the committed physical-handoff pair and its associated evidence documents according to the legacy manifest.
 
-It recalculates the configured hash:
+The compatibility mode returned in the simulation output identifies which branch ran.
+
+## Original JSON verification
+
+The Auditor downloads the original evidence object from its private `storage_bucket` and `storage_path`. It hashes the original bytes using the algorithm declared by the evidence row:
 
 - SHA-256 for `SHA-256` or `SHA256`;
 - Keccak-256 for `KECCAK256` or `KECCAK-256`.
 
-The recalculated file hash, the Supabase index hash, and the on-chain `evidenceHash` must all agree before the document is used.
+The recalculated file hash must equal the registry's on-chain `evidenceHash` before the JSON is parsed or used.
 
-## Tolerance policy
+If the Supabase row's stored `evidence_hash` differs from the registry but the downloaded JSON bytes reproduce the on-chain hash, the Auditor records a `rowHashWarning`. The blockchain commitment and the verified file bytes remain the integrity reference.
 
-The Auditor recalculates the absolute pairwise difference and compares it with a percentage of the outgoing mass:
+## Commitment reconstruction
+
+The Auditor reconstructs and checks:
+
+| Field | Verification |
+|---|---|
+| `canonicalResultHash` | Recomputed from the canonical private manifest result |
+| `resultHash` | Compared with both the private manifest and the on-chain result |
+| `aggregateInputHash` | Recomputed with the schema-specific input domain and compared with private and on-chain values |
+| `resultId` | Recomputed from actor, evidence, calculation version, and result hash |
+| `calculationVersion` | Compared with the anchored result |
+| Result ownership | Evidence ID and actor ID compared across evidence, manifest, and on-chain result |
+| On-chain verification | `verifyResultHash(resultId, recomputedResultHash)` must return `true` |
+
+For `PrivateDocumentMass/v2`, `aggregateInputHash` is reconstructed with the `ExploreChem/DocumentMassInput/v2` domain. The result hash and result ID retain the deployed commitment domains used by the primary implementation.
+
+## Document mass reproduction
+
+For `PrivateDocumentMass/v2`, the current Auditor reproduces the mass fields implemented in `independentlyAuditSingleDocument()`.
+
+### Carrier
 
 ```text
-absoluteDeltaMg × 10,000 <= outgoingMassMg × toleranceBps
+left  = custody.massCollectedKg | collectedMassKg | inputMassKg
+right = custody.massDeliveredKg | deliveredMassKg | outputMassKg
+delta = left - right
 ```
 
-The current default is:
+### Other supported physical actors
 
 ```text
-massToleranceBps = 200 = 2%
+left = first supported input mass
+right = first supported product mass + optional scrap mass
+delta = left - right
 ```
 
-This value is marked as arbitrated because it is a provisional project rule rather than a formal measurement-uncertainty budget. A nonzero difference can therefore be accepted when it remains inside the configured limit.
+Supported input paths:
 
-## Current on-chain boundary
+- `transformation.inputMassKg`;
+- `transformation.inputProductMassKg`;
+- `recovery.inputMassKg`;
+- `inputMassKg`;
+- `massBalance.inputMassKg`.
 
-The current registry receives the Auditor decision through report type 3:
+Supported product paths:
+
+- `transformation.outputMassKg`;
+- `transformation.outputProductMassKg`;
+- `transformation.finishedProductMassKg`;
+- `recovery.recoveredProductMassKg`;
+- `outputMassKg`;
+- `recoveredMassKg`;
+- `massBalance.outputMassKg`.
+
+Supported scrap paths in this Auditor implementation:
+
+- `transformation.scrapMassKg`;
+- `scrapMassKg`.
+
+All reproduced values are converted to integer milligrams. The Auditor verifies `leftMassMg`, `rightMassMg`, selected field names, `deltaMg`, pair ownership, pair count, and the producer's `NAO_ATESTADO` status.
+
+## Mass tolerance
+
+The default mass tolerance is 200 basis points, equal to 2% of the pair's left-side reference mass:
+
+```text
+absoluteDeltaMg * 10000 <= leftMassMg * massToleranceBps
+```
+
+The recalculated status is:
+
+- `CONFORME` when both operands exist and the absolute difference is within tolerance;
+- `DIVERGENTE` when both operands exist and the absolute difference exceeds tolerance;
+- `NAO_ATESTADO` when one or both operands are unavailable.
+
+For `PrivateDocumentMass/v2`:
+
+- `DIVERGENTE` produces a final `DIVERGENT` evidence verdict;
+- `CONFORME` can produce `VERIFIED` when every other check passes;
+- `NAO_ATESTADO` can also produce `VERIFIED` when every integrity and applicable calculation check passes.
+
+The tolerance policy is recorded in the receipt as `OUTGOING_MASS`, with `arbitrated: true`.
+
+## Optional elemental-balance audit
+
+When the committed JSON contains `elementalBalance`, the Auditor validates `ExploreChem/PeriodicElementalBalance/v1` and independently calculates its elemental totals.
+
+Supported elements:
+
+- Nd;
+- Pr;
+- Dy;
+- Tb.
+
+Supported stream types:
+
+- `INPUT`;
+- `PRODUCT`;
+- `WASTE`;
+- `PURGE`;
+- `EFFLUENT`;
+- `OPENING_INVENTORY`;
+- `CLOSING_INVENTORY`.
+
+Supported declared bases:
+
+- `AS_RECEIVED`;
+- `DRY_105C`;
+- `CALCINED`;
+- `LIQUID_TOTAL`.
+
+The elemental audit:
+
+- validates actor and declared period;
+- requires unique stream IDs and unique elements inside each stream;
+- verifies that weighing timestamps are inside the declared period;
+- normalizes mass to the declared basis;
+- checks the required moisture fields for `AS_RECEIVED` streams;
+- requires drying temperature between 100 °C and 110 °C for that conversion;
+- applies loss-on-ignition correction to calcined streams;
+- validates the allowed reported form and unit;
+- converts supported oxides into elemental mass using factor table version `1.0.0`;
+- compares recalculated and declared elemental mass in milligrams;
+- aggregates input, product, other-output, opening-inventory, and closing-inventory mass per element;
+- recalculates declared MUF per element;
+- calculates private product recovery in parts per million;
+- produces a deterministic `ExploreChem/PeriodicElementalBalanceAudit/v1` result hash.
+
+For each supported element:
+
+```text
+MUF = input
+    + opening inventory
+    - product
+    - waste
+    - purge
+    - effluent
+    - closing inventory
+```
+
+When `elementalBalance` is absent, the elemental audit returns `NOT_PRESENT`. If `requireElementalBalance` is `true`, absence of that block becomes an audit error. Otherwise, the Auditor continues with the available document-mass and integrity checks.
+
+## Final verdict
+
+The Auditor combines:
+
+- manifest and on-chain consistency errors;
+- reconstructed commitment errors;
+- independently reproduced document errors;
+- mass-tolerance result;
+- optional elemental-balance errors.
+
+The final evidence state is:
+
+- `VERIFIED` when the combined error list is empty;
+- `DIVERGENT` when the combined error list contains at least one verdict-producing error.
+
+Infrastructure, access, parsing, or other execution failures caught by the outer handler return `RETRY_REQUIRED`. No audit report is derived from that failure, and the evidence remains `MATCHED` for a later attempt.
+
+## On-chain report
+
+The Auditor sends report type `3` with the registry's fixed-width report layout:
 
 ```text
 reportType
@@ -138,13 +290,13 @@ balanceStatus
 calculationVersion
 ```
 
-For report type 3, the unused result fields are zeroed and `balanceStatus` carries evidence status `VERIFIED` or `DIVERGENT`, according to the contract ABI.
+For report type `3`, only `reportType`, `evidenceId`, and the final evidence status carried in `balanceStatus` are populated. The remaining fields are zeroed according to the deployed receiver ABI.
 
-The current audit report changes the evidence state. Detailed calculations and detected errors remain in the private audit receipt; they are not published on-chain.
+The workflow waits for the transaction, checks receiver execution status, rereads the evidence, and requires the observed final state to match the calculated verdict.
 
 ## Private audit receipt
 
-After the on-chain transition is confirmed, the Auditor writes:
+After confirming the on-chain state, the Auditor writes:
 
 ```text
 audit-results/{evidenceId}/{resultId}.json
@@ -152,99 +304,103 @@ audit-results/{evidenceId}/{resultId}.json
 
 The receipt contains:
 
-- evidence and actor identifiers;
-- original result commitments;
-- pairwise recalculated status;
-- the applied tolerance policy and checks;
-- every detected error;
-- final verdict;
+- audited manifest schema and compatibility mode;
+- evidence, actor, and result identifiers;
+- anchored result commitments and calculation version;
+- independent document-verification status, counts, warnings, and errors;
+- declared and recalculated mass status;
+- tolerance policy and individual checks;
+- elemental-balance requirement and result;
+- final verdict and complete error list;
 - audit transaction hash.
 
-The receipt does not replace the original evidence or pairwise result. Its deterministic path is reused if the same result is audited again, while the original evidence and on-chain result history remain preserved.
+The deterministic receipt path is written with Storage upsert enabled.
 
-## Report sequence
+## Supabase boundary
 
-```mermaid
-sequenceDiagram
-    participant Chain as ExploreChem registry
-    participant Audit as CRE confidential workflow
-    participant Store as Private storage
-    Audit->>Chain: getNextMatched()
-    Audit->>Chain: read evidence and result
-    Audit->>Store: load result, current and predecessor JSON
-    Audit->>Audit: reproduce hashes, pair and tolerance
-    Audit->>Chain: report type 3
-    Audit->>Chain: reread final evidence state
-    Audit->>Store: save immutable audit receipt
+The Auditor uses Supabase to:
+
+- locate the selected evidence's private object;
+- read actor metadata;
+- open the primary result manifest;
+- download the original evidence JSON;
+- write the private audit receipt.
+
+The Auditor does not patch the evidence state in Supabase. After the report is confirmed, its simulation output explicitly records:
+
+```json
+{
+  "supabaseMirror": {
+    "updated": false,
+    "policy": "DISABLED_ONCHAIN_ONLY"
+  }
+}
 ```
 
-The Supabase state is mirrored only after the Auditor rereads the expected final state from Ethereum Sepolia.
+Ethereum remains the authority for `MATCHED`, `VERIFIED`, and `DIVERGENT`.
 
 ## Configuration
 
-The workflow requires these configuration properties:
+Configuration is validated with Zod before the workflow runner starts.
 
-| Property | Purpose |
-|---|---|
-| `supabaseUrl` | Base URL of the private Supabase project |
-| `secretNamespace` | Namespace containing the service-role secret |
-| `chainSelectorName` | CRE EVM chain selector name for Sepolia |
-| `contractAddress` | ExploreChem registry address |
-| `gasLimit` | Gas limit used by `writeReport` |
-| `auditSchedule` | Optional cron expression; default is every five minutes |
+| Property | Required | Purpose |
+|---|---:|---|
+| `supabaseUrl` | Yes | Base URL for PostgREST and Storage requests |
+| `secretNamespace` | Yes | CRE secret namespace containing `SUPABASE_SERVICE_ROLE_KEY` |
+| `chainSelectorName` | Yes | CRE EVM testnet selector name |
+| `contractAddress` | Yes | ExploreChem registry that receives the audit report |
+| `gasLimit` | Yes | Decimal gas limit passed to `writeReport` |
+| `auditSchedule` | No | Cron expression; defaults to `0 */5 * * * *` |
+| `requireElementalBalance` | No | Makes the `elementalBalance` block mandatory when `true` |
+| `massToleranceBps` | No | Integer from 0 to 10,000; defaults to `200` |
 
-The TEE retrieves `SUPABASE_SERVICE_ROLE_KEY` from the configured secret namespace. The service-role key must not be committed to Git.
+The workflow obtains `SUPABASE_SERVICE_ROLE_KEY` from the configured secret namespace. The secret value must remain outside Git and the JSON configuration files.
 
-Network selector, registry address, workflow ID, forwarder configuration, storage settings, and secret identifiers are environment-specific. They must be read from the active configuration and are intentionally not fixed in this README.
+## Run the Auditor
 
-## Running the workflow
+From the repository root on Windows Command Prompt:
 
-From the repository root:
+```bat
+cre workflow simulate .\auditor-workflow --broadcast
+```
+
+From the repository root in Bash:
 
 ```bash
-cre workflow simulate auditor-workflow --broadcast
+cre workflow simulate ./auditor-workflow --broadcast
 ```
 
-The `--broadcast` flag is required for the simulator to submit report type 3 to Sepolia.
+After entering `auditor-workflow` itself:
 
-The simulator is not a real TEE and must not receive production-sensitive material. A deployed confidential execution environment would be responsible for protecting the original document and detailed calculations.
-
-## Expected simulation outcomes
-
-No matched evidence:
-
-```json
-{
-  "workflow": "PAIRWISE_MASS_AUDITOR",
-  "message": "nenhuma evidencia MATCHED aguardando auditoria"
-}
+```bash
+cre workflow simulate . --broadcast
 ```
 
-Matched evidence without a balance result:
+`--broadcast` is required when the simulator should submit report type `3` to Sepolia.
 
-```json
-{
-  "workflow": "PAIRWISE_MASS_AUDITOR",
-  "message": "evidencia MATCHED ainda sem resultado de massa; permanece MATCHED"
-}
-```
+## Simulation responses
 
-Processed evidence returns the pairwise result identifiers, independent verification counts, recomputed mass status, tolerance checks, audit errors, final evidence status, audit transaction hash, and private receipt path.
+The workflow can return:
 
-## Security properties
+- no `MATCHED` evidence awaiting audit;
+- `MATCHED` evidence without an anchored mass result;
+- evidence that changed state before audit;
+- `RETRY_REQUIRED` with no derived verdict;
+- a completed audit result.
 
-- Blockchain state determines audit eligibility.
-- Original evidence bytes are hashed again before parsing.
-- The private pairwise manifest is independently canonicalized.
-- Actor and evidence ownership are checked across every layer.
-- No JavaScript floating-point value participates in committed mass arithmetic.
-- Existing pairwise and evidence history is never deleted.
-- Supabase is updated only after confirmation of the on-chain final state.
+A completed result includes:
 
-## Limitations
-
-- The workflow validates commitments and declared pairwise arithmetic; it cannot prove that a physical delivery or measurement was truthful.
-- The workflow processes one matched evidence per trigger.
+- `evidenceId` and `actorId`;
+- `resultId`, `resultHash`, and `aggregateInputHash`;
+- audited manifest schema and compatibility mode;
+- independent verification counts, warnings, and errors;
+- declared and recalculated mass status;
+- tolerance policy and checks;
+- elemental audit result;
+- final evidence status;
+- audit transaction hash;
+- Supabase state-mirror policy;
+- private audit receipt path.
 
 ## Files
 
@@ -263,4 +419,4 @@ auditor-workflow/
 ## License
 
 Apache License 2.0. See the repository root [LICENSE](../LICENSE).
-Apache License 2.0. See the repository root [LICENSE](../LICENSE).
+
