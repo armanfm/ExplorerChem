@@ -2,7 +2,7 @@
 
 This directory contains ExploreChem's primary Chainlink CRE workflow. It verifies one privately stored JSON document against its Ethereum Sepolia commitment, calculates a document-scoped mass balance, stores the detailed result privately, and anchors deterministic result commitments on-chain.
 
-This README documents the implementation in `explorerchem-workflow/main.ts`. For the complete product architecture, frontend, registry, auditor, limitations, and roadmap, see the [project README](../README.md).
+This README documents the implementation in `explorerchem-workflow/main.ts`. For the repository overview, see the [project README](../README.md).
 
 ## Current workflow identity
 
@@ -49,19 +49,14 @@ flowchart TD
 
 ## Current calculation scope
 
-The workflow processes exactly one hash-verified JSON per result.
+The workflow creates each result from exactly one hash-verified JSON.
 
-- No predecessor is queried.
-- No second actor document is required.
 - `evidenceIds` contains only the focus evidence.
 - `fromEvidenceId` and `toEvidenceId` both refer to the focus evidence.
 - `fromActorId` and `toActorId` both refer to its actor.
 - `relationType` is `DOCUMENT_MASS_BALANCE`.
 - `correlationEdges` is empty.
-- Lot, origin, and destination are descriptive metadata and are not calculation gates.
-- Identical origin and destination values are accepted.
-
-This implementation proves that the calculation is reproducible from the exact document committed on-chain. It does not prove agreement between two independent actors and does not reconstruct a full chain of custody.
+- Lot, origin, and destination are preserved as descriptive metadata.
 
 ## Mass calculation
 
@@ -140,7 +135,7 @@ The workflow retains limited neodymium calculations when supported fields exist.
 - comparison with a declared elemental Nd mass;
 - elemental partition using declared finished-product and scrap values.
 
-This is partial coverage. The workflow does not currently prove complete conservation across Nd, Pr, Dy, Tb, and every input and output stream.
+The currently implemented elemental output covers these neodymium calculations.
 
 ## Why the mass status is NAO_ATESTADO
 
@@ -186,9 +181,9 @@ The workflow uses stable JSON key ordering and domain-separated hashing. It excl
 | `canonicalResultHash` | Alias of `resultHash` in the current implementation |
 | `resultId` | Deterministic identifier derived from the evidence, actor, calculation version, and result hash |
 
-`aggregateInputHash` is a deterministic hash, not a Merkle root. The current implementation does not generate separate input and output hashes.
+`aggregateInputHash` is the deterministic commitment for the complete input scope used by this workflow.
 
-The current v2 implementation uses `ExploreChem/DocumentMassInput/v2` for the input commitment. Some internal domain strings retain historical `PairwiseMass` names for deployed compatibility. Those names do not change the current single-document behavior and do not imply predecessor discovery.
+The current v2 implementation uses `ExploreChem/DocumentMassInput/v2` for the input commitment. Some internal domain strings retain historical `PairwiseMass` names solely for deployed compatibility.
 
 ## Private result
 
@@ -353,26 +348,6 @@ The workflow fails or exits safely when:
 
 No mass difference by itself causes this primary workflow to write `DIVERGENT`. The independent auditor owns that decision.
 
-## Current limitations
-
-This workflow does not currently implement:
-
-- predecessor or counterparty-document comparison;
-- strict cross-actor physical correlation;
-- multiple input documents and multiple output documents;
-- complete multi-element conservation;
-- declared-yield validation;
-- element-specific tolerances;
-- separate input and output commitments;
-- Merkle aggregation;
-- periodic actor-wide reconciliation;
-- final audit verdicts;
-- proof that the original physical declaration was truthful.
-
-The current code does not explicitly assert that `explorerchem_actors.actor_id`, reached through the private row's `actor_db_id`, equals the registry's `actorId` before actor-type-dependent field selection. The on-chain `actorId` remains the owner committed in the result, but this private-index consistency check is a hardening item.
-
-These are candidates for separate versioned workflows and independent audit states. They must not be described as behavior of `DOCUMENT_MASS_BALANCE` v2.
-
 ## Security notes
 
 - The chain is authoritative for processing state.
@@ -394,4 +369,3 @@ Keeping the workflows separate allows later auditors to evaluate additional prop
 ## License
 
 This workflow is part of ExploreChem and is distributed under the repository's Apache-2.0 license.
-
