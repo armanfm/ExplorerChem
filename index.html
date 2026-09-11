@@ -1122,8 +1122,7 @@ if("scrollRestoration" in history) history.scrollRestoration="manual";
 const SUPABASE_URL = "https://mnmflnqmohgsxgavwenn.supabase.co";
 const SUPABASE_PUBLISHABLE_KEY = "sb_publishable_va4nLJ-Uzw2KzYzdOel-hQ_Toeddk-1";
 const DEFAULT_EXPLORERCHEM_CONTRACT_ADDRESS = "0xae2FdfcC9584442616fDa974b0a3C101806ff7D5";
-  
-const EXPLORERCHEM_CONTRACT_STORAGE_KEY = "explorechem_contract_address";
+const EXPLORERCHEM_CONTRACT_STORAGE_KEY = "explorechem_contract_address_ae2fdfcc";
 function carregarEnderecoContrato(){
   try{
     const saved=localStorage.getItem(EXPLORERCHEM_CONTRACT_STORAGE_KEY);
@@ -2976,7 +2975,6 @@ function dashboardClienteSemResultadoCarregado(){
    Logic integrated from the dedicated client mass-balance HTML.
    =================================================================== */
 
-const CLIENT_BALANCE_CONTRACT_ADDRESS="0xcd5eDA10c0b3424999626e6A2DaB2909B982866c";
 const CLIENT_BALANCE_ZERO=/^0x0{64}$/i;
 const CLIENT_BALANCE_ABI=[
   "function getEvidence(bytes32 evidenceId) view returns (tuple(bytes32 evidenceId,bytes32 actorId,address submittedBy,bytes32 evidenceHash,uint8 status,uint64 createdAt,uint64 matchedAt,uint64 auditedAt))",
@@ -3093,7 +3091,48 @@ async function clientBalanceSignedJson(path){
   return response.json();
 }
 function clientBalanceRecompute(manifest){
-  if(manifest.schema==="ExploreChem/PrivatePairwiseMass/v1"){
+  const massResultSchema=String(manifest?.schema||"").trim();
+  if(massResultSchema==="ExploreChem/PrivateDocumentMass/v2"||
+     massResultSchema.endsWith("/PrivateDocumentMass/v2")){
+    const result={
+      schema:"ExploreChem/DocumentMassResult/v2",
+      calculationVersion:manifest.calculationVersion,
+      focusActorId:manifest.sourceActorId,
+      focusEvidenceId:manifest.sourceEvidenceId,
+      lotReference:manifest.lotReference,
+      evidenceIds:manifest.evidenceIds,
+      correlationEdges:manifest.correlationEdges,
+      massPairs:manifest.massPairs,
+      elementalCalculations:manifest.elementalCalculations,
+      status:manifest.status
+    };
+    const aggregateInputHash=clientBalanceHashStable({
+      domain:"ExploreChem/DocumentMassInput/v2",
+      sourceEvidenceHash:manifest.sourceEvidenceHash,
+      calculationVersion:manifest.calculationVersion,
+      actorId:manifest.sourceActorId,
+      focusEvidenceId:manifest.sourceEvidenceId,
+      evidenceIds:manifest.evidenceIds,
+      correlationEdges:manifest.correlationEdges
+    });
+    const resultHash=clientBalanceHashStable({
+      domain:"ExploreChem/PairwiseMass/v1",
+      calculationVersion:manifest.calculationVersion,
+      actorId:manifest.sourceActorId,
+      focusEvidenceId:manifest.sourceEvidenceId,
+      result
+    });
+    const resultId=clientBalanceHashStable({
+      domain:"ExploreChem/PairwiseMassResultId/v1",
+      calculationVersion:manifest.calculationVersion,
+      actorId:manifest.sourceActorId,
+      focusEvidenceId:manifest.sourceEvidenceId,
+      resultHash
+    });
+    return {aggregateInputHash,resultHash,resultId};
+  }
+
+  if(massResultSchema==="ExploreChem/PrivatePairwiseMass/v1"){
     const result={
       schema:"ExploreChem/PairwiseMassResult/v1",
       calculationVersion:manifest.calculationVersion,
@@ -3131,7 +3170,7 @@ function clientBalanceRecompute(manifest){
     return {aggregateInputHash,resultHash,resultId};
   }
 
-  if(manifest.schema==="ExploreChem/PrivateLotCorrelatedPairwiseMass/v4"){
+  if(massResultSchema==="ExploreChem/PrivateLotCorrelatedPairwiseMass/v4"){
     const result={
       schema:"ExploreChem/LotCorrelatedPairwiseMassResult/v4",
       focusEvidenceId:manifest.sourceEvidenceId,
@@ -3172,7 +3211,7 @@ function clientBalanceRecompute(manifest){
     return {aggregateInputHash,resultHash,resultId};
   }
 
-  throw new Error("Unsupported mass-result schema: "+String(manifest.schema||"missing"));
+  throw new Error("Unsupported mass-result schema: "+(massResultSchema||"missing"));
 }
 function clientBalanceIsStructuralDivergence(manifest,auditState){
   return Array.isArray(manifest?.massPairs)&&
@@ -3348,7 +3387,7 @@ async function clientBalanceLoadSelectedActor(){
   CLIENT_BALANCE_WARNINGS=[];
 
   const p=await clientBalanceProvider();
-  const contract=new ethers.Contract(CLIENT_BALANCE_CONTRACT_ADDRESS,CLIENT_BALANCE_ABI,p);
+  const contract=new ethers.Contract(EXPLORERCHEM_CONTRACT_ADDRESS,CLIENT_BALANCE_ABI,p);
   const rows=CLIENT_BALANCE_EVIDENCE_ROWS.filter(
     row=>String(row.actor_db_id)===String(actor.id)
   );
@@ -3414,7 +3453,8 @@ async function clientBalanceLoadSelectedActor(){
             throw new Error("Mass verdict does not match the blockchain.");
           }
 
-          if(manifest.schema==="ExploreChem/PrivatePairwiseMass/v1"&&
+          if((manifest.schema==="ExploreChem/PrivatePairwiseMass/v1"||
+              manifest.schema==="ExploreChem/PrivateDocumentMass/v2")&&
              Number(manifest.calculationVersion)!==Number(chainResult.calculationVersion)){
             throw new Error("Calculation version does not match the blockchain.");
           }
