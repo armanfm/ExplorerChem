@@ -1137,9 +1137,8 @@ main{
 if("scrollRestoration" in history) history.scrollRestoration="manual";
 const SUPABASE_URL = "https://mnmflnqmohgsxgavwenn.supabase.co";
 const SUPABASE_PUBLISHABLE_KEY = "sb_publishable_va4nLJ-Uzw2KzYzdOel-hQ_Toeddk-1";
-const DEFAULT_EXPLORERCHEM_CONTRACT_ADDRESS = "0xA89A2669Cc6B4656C5fA7A88b0659Fd08D8009ce";
-const CLIENT_BALANCE_CONTRACT_ADDRESS = "0xae2FdfcC9584442616fDa974b0a3C101806ff7D5";
-const EXPLORERCHEM_CONTRACT_STORAGE_KEY = "explorechem_contract_address_a89a2669";
+const DEFAULT_EXPLORERCHEM_CONTRACT_ADDRESS = "0xC972c271679d3ABca738C69309Dcd3e0a2719905";
+const EXPLORERCHEM_CONTRACT_STORAGE_KEY = "explorechem_contract_address_proof_registry_v2";
 function carregarEnderecoContrato(){
   try{
     const saved=localStorage.getItem(EXPLORERCHEM_CONTRACT_STORAGE_KEY);
@@ -3059,11 +3058,14 @@ function dashboardClienteSemResultadoCarregado(){
 
 const CLIENT_BALANCE_ZERO=/^0x0{64}$/i;
 const CLIENT_BALANCE_ABI=[
-  "function getEvidence(bytes32 evidenceId) view returns (tuple(bytes32 evidenceId,bytes32 actorId,address submittedBy,bytes32 evidenceHash,uint8 status,uint64 createdAt,uint64 matchedAt,uint64 auditedAt))",
-  "function latestResultIdByEvidence(bytes32 evidenceId) view returns (bytes32)",
-  "function getResult(bytes32 resultId) view returns (tuple(bytes32 resultId,bytes32 evidenceId,bytes32 actorId,bytes32 resultHash,bytes32 previousResultId,bytes32 aggregateInputHash,uint8 status,uint32 calculationVersion,uint64 createdAt))",
-  "function verifyResultHash(bytes32 resultId,bytes32 candidateHash) view returns (bool)"
+  "function getEvidence(bytes32 evidenceId) view returns (tuple(bytes32 evidenceId,bytes32 actorId,address submittedBy,bytes32 evidenceHash,uint64 createdAt))",
+  "function getCurrentProofState(bytes32 evidenceId) view returns (tuple(bytes32 mufHash,bytes32 toleranceHash,bytes32 elementalHash,bytes32 yieldHash,bytes32 multiStreamHash,bytes32 auditHash,uint8 mufStatus,uint8 toleranceStatus,uint8 elementalStatus,uint8 yieldStatus,uint8 multiStreamStatus,uint8 auditStatus))",
+  "function latestProofId(bytes32 evidenceId,uint8 proofType) view returns (bytes32)",
+  "function getProof(bytes32 proofId) view returns (tuple(bytes32 proofId,bytes32 evidenceId,bytes32 evidenceHash,uint8 proofType,bytes32 committedHash,bytes32 inputCommitmentHash,bytes32 methodologyHash,bytes32 previousProofId,uint8 status,uint32 revision,bytes32 workflowId,uint64 createdAt))"
 ];
+const CLIENT_PROOF_TYPES=[['MUF','muf'],['TOLERANCE','tolerance'],['ELEMENTAL','elemental'],['YIELD','yield'],['MULTI_STREAM','multiStream'],['AUDIT','audit']];
+function clientProofStatus(value){return ['NONE','PENDING','COMPLIANT','DIVERGENT','NOT_ATTESTED'][Number(value)]||'UNKNOWN';}
+
 
 let CLIENT_BALANCE_ACTORS=[];
 let CLIENT_BALANCE_EVIDENCE_ROWS=[];
@@ -3103,12 +3105,12 @@ function clientBalanceResultState(value){
   return ["UNKNOWN","COMPLIANT","DIVERGENT","NOT ATTESTED"][Number(value)]||"UNKNOWN";
 }
 function clientBalanceMassState(value){
-  return {CONFORME:"COMPLIANT",DIVERGENTE:"DIVERGENT",NAO_ATESTADO:"NOT ATTESTED"}[value]||
+  return {CONFORME:"COMPLIANT",DIVERGENTE:"DIVERGENT",NAO_ATESTADO:"NOT ATTESTED",NOT_ATTESTED:"NOT ATTESTED"}[value]||
     String(value||"UNKNOWN");
 }
 function clientBalanceTag(value){
   const label=clientBalanceMassState(value);
-  const kind=(label==="COMPLIANT"||label==="VERIFIED")?"t-ok":
+  const kind=(label==="COMPLIANT"||label==="VERIFIED"||label==="HASH VERIFIED")?"t-ok":
     label==="DIVERGENT"?"t-div":
     (label==="MATCHED"||label==="NOT ATTESTED"||label==="PENDING")?"t-att":"t-pend";
   return '<span class="tag '+kind+'">'+escaparHtml(label)+'</span>';
@@ -3152,6 +3154,10 @@ async function clientBalanceEnsureSession(){
     const claim=await supabaseClient.rpc("explorerchem_demo_claim_actors");
     if(claim.error){
       throw new Error("Could not prepare authorized storage access: "+claim.error.message);
+    }
+    const mufClaim=await supabaseClient.rpc("explorerchem_demo_claim_muf_access");
+    if(mufClaim.error){
+      throw new Error("Could not prepare authorized MUF-result access: "+mufClaim.error.message);
     }
     return true;
   })().catch(error=>{
@@ -3429,7 +3435,7 @@ async function clientBalanceLoadActorsAndEvidence(){
   let actorData=cachedActors;
 
   const evidencePromise=supabaseClient.from("explorerchem_evidences")
-    .select("id,evidence_id,actor_db_id,state,created_at")
+    .select("id,evidence_id,actor_db_id,origin_actor_db_id,destination_actor_db_id,state,created_at")
     .order("created_at",{ascending:false})
     .limit(250);
 
@@ -3458,153 +3464,139 @@ async function clientBalanceLoadActorsAndEvidence(){
     throw new Error("No active actor is available for the client balance view.");
   }
 }
+async function clientBalanceReadMuf(path,proof,evidence,evidenceActorId){
+  await clientBalanceEnsureSession();
+  const signed=await supabaseClient.storage.from(EVIDENCE_BUCKET).createSignedUrl(path,900);
+  if(signed.error) throw signed.error;
+  const response=await fetch(signed.data.signedUrl,{cache:'no-store'});
+  if(!response.ok) throw new Error('MUF JSON: HTTP '+response.status);
+  const bytes=new Uint8Array(await response.arrayBuffer());
+  if(!clientBalanceSameHex(ethers.keccak256(bytes),proof.committedHash)) throw new Error('MUF JSON hash differs from the on-chain commitment.');
+  const doc=JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(bytes));
+  const r=doc.result;
+  if(doc.schema!=='ExploreChem/PrivateMUFResult/v1'||!r||r.schema!=='ExploreChem/MUFResult/v1'||doc.calculationVersion!==1||r.calculationVersion!==1) throw new Error('Unsupported MUF result schema.');
+  if(!clientBalanceSameHex(r.actorId,evidenceActorId)||!clientBalanceSameHex(r.evidenceId,evidence.evidenceId)||!clientBalanceSameHex(r.expectedEvidenceHash,evidence.evidenceHash)) throw new Error('MUF result ownership/commitment mismatch.');
+  if(r.status!==clientProofStatus(proof.status)||Number(r.statusCode)!==Number(proof.status)) throw new Error('MUF verdict differs from the on-chain proof.');
+  if(!clientBalanceSameHex(clientBalanceHashStable(doc.methodology),proof.methodologyHash)) throw new Error('MUF methodology hash mismatch.');
+  const inputHash=clientBalanceHashStable({domain:'ExploreChem/MUFInputCommitment/v1',evidenceId:evidence.evidenceId,expectedEvidenceHash:evidence.evidenceHash,indexedEvidenceHash:r.indexedEvidenceHash,downloadedDocumentHash:r.downloadedDocumentHash,calculationInputs:r.calculation});
+  if(!clientBalanceSameHex(inputHash,proof.inputCommitmentHash)) throw new Error('MUF input commitment mismatch.');
+  const c=r.calculation;
+  if(c&&c.signedMufMg!=null){
+    const input=BigInt(c.referenceInputMassMg),output=BigInt(c.accountedOutputMassMg),delta=input-output,absolute=delta<0n?-delta:delta;
+    if(delta!==BigInt(c.signedMufMg)||absolute!==BigInt(c.absoluteMufMg)) throw new Error('MUF arithmetic mismatch.');
+    if(input>0n&&BigInt(c.absoluteMufPercentScaled6)!==(absolute*100000000n+input/2n)/input) throw new Error('MUF percentage mismatch.');
+  }
+  return doc;
+}
+function clientBalanceRenderWorkflowStates(entries){
+  const panel=document.getElementById('clientWorkflowStates');
+  if(!panel) return;
+  panel.innerHTML='<div class="panel pad"><h2>Workflow status · active contract</h2><p class="mono">'+escaparHtml(EXPLORERCHEM_CONTRACT_ADDRESS)+'</p><div style="overflow:auto"><table><thead><tr><th>Evidence</th>'+CLIENT_PROOF_TYPES.map(([name])=>'<th>'+name+'</th>').join('')+'</tr></thead><tbody>'+entries.map(({evidenceId,state})=>'<tr><td class="mono" title="'+escaparHtml(evidenceId)+'">'+escaparHtml(clientBalanceShort(evidenceId))+'</td>'+CLIENT_PROOF_TYPES.map(([,key])=>'<td>'+clientBalanceTag(clientProofStatus(state[key+'Status']))+'</td>').join('')+'</tr>').join('')+'</tbody></table></div><p>MUF and TOLERANCE have independent verdicts. A completed MUF does not approve the other workflows.</p></div>';
+}
 async function clientBalanceLoadSelectedActor(){
-  const currentRequest=++CLIENT_BALANCE_REQUEST;
-  const actorId=$("#clientLiveActorSelect")?.value;
+  const request=++CLIENT_BALANCE_REQUEST;
+  const actorId=$('#clientLiveActorSelect')?.value;
   const actor=CLIENT_BALANCE_ACTORS.find(item=>item.actor_id===actorId);
   if(!actor) return;
-
-  try{localStorage.setItem("explorechem_client_live_actor",actorId);}catch(_){}
-
-  const refresh=$("#clientLiveRefresh");
+  const address=EXPLORERCHEM_CONTRACT_ADDRESS;
+  const refresh=$('#clientLiveRefresh'),select=$('#clientLiveResultSelect');
   if(refresh) refresh.disabled=true;
-  $("#clientLiveDashboard")?.classList.add("client-live-hidden");
-  clientBalanceShowMessage(
-    "Reading real mass results",
-    "Checking MATCHED, VERIFIED and DIVERGENT evidence for "+actor.display_name+"."
-  );
-  CLIENT_BALANCE_WARNINGS=[];
-
-  const p=await clientBalanceProvider();
-  const contract=new ethers.Contract(CLIENT_BALANCE_CONTRACT_ADDRESS,CLIENT_BALANCE_ABI,p);
-  const rows=CLIENT_BALANCE_EVIDENCE_ROWS.filter(
-    row=>String(row.actor_db_id)===String(actor.id)
-  );
-  const found=[];
-  const seen=new Set();
-
-  for(const row of rows){
-    try{
-      const evidenceId=String(row.evidence_id||"");
-      if(!/^0x[0-9a-f]{64}$/i.test(evidenceId)){
-        throw new Error("Invalid evidenceId.");
-      }
-
-      const evidence=await contract.getEvidence(evidenceId);
-      if(!clientBalanceSameHex(evidence.actorId,actorId)){
-        throw new Error("Actor mismatch between Supabase and blockchain.");
-      }
-
-      const auditState=clientBalanceEvidenceState(evidence.status);
-      if(!["MATCHED","VERIFIED","DIVERGENT"].includes(auditState)) continue;
-
-      let resultId=String(await contract.latestResultIdByEvidence(evidenceId));
-      let depth=0;
-
-      while(!CLIENT_BALANCE_ZERO.test(resultId)&&depth<20){
-        const key=resultId.toLowerCase();
-        if(seen.has(key)) break;
-        seen.add(key);
-
-        const chainResult=await contract.getResult(resultId);
-        const previousResultId=String(chainResult.previousResultId);
-
-        try{
-          if(!clientBalanceSameHex(chainResult.actorId,actorId)||
-             !clientBalanceSameHex(chainResult.evidenceId,evidenceId)){
-            throw new Error("Result ownership mismatch.");
-          }
-
-          const path=
-            "mass-results/"+
-            evidenceId.slice(2)+"/"+
-            resultId.slice(2)+
-            ".json";
-
-          const manifest=await clientBalanceSignedJson(path);
-
-          if(!clientBalanceSameHex(manifest.sourceActorId,actorId)||
-             !clientBalanceSameHex(manifest.sourceEvidenceId,evidenceId)){
-            throw new Error("Private result ownership mismatch.");
-          }
-
-          clientBalanceValidatePairs(manifest,auditState);
-          const commitments=clientBalanceRecompute(manifest);
-
-          if(!clientBalanceSameHex(commitments.resultId,resultId)||
-             !clientBalanceSameHex(commitments.resultHash,chainResult.resultHash)||
-             !clientBalanceSameHex(commitments.aggregateInputHash,chainResult.aggregateInputHash)){
-            throw new Error("Private commitments do not match the blockchain.");
-          }
-
-          if(clientBalanceResultState(chainResult.status)!==
-             clientBalanceMassState(manifest.status)){
-            throw new Error("Mass verdict does not match the blockchain.");
-          }
-
-          if((manifest.schema==="ExploreChem/PrivatePairwiseMass/v1"||
-              manifest.schema==="ExploreChem/PrivateDocumentMass/v2")&&
-             Number(manifest.calculationVersion)!==Number(chainResult.calculationVersion)){
-            throw new Error("Calculation version does not match the blockchain.");
-          }
-
-          if(!await contract.verifyResultHash(resultId,commitments.resultHash)){
-            throw new Error("The contract rejected the recomputed hash.");
-          }
-
-          found.push({
-            actor,
-            evidenceId,
-            auditState,
-            auditedAt:Number(evidence.auditedAt||0),
-            resultId,
-            resultHash:String(chainResult.resultHash),
-            aggregateInputHash:String(chainResult.aggregateInputHash),
-            previousResultId,
-            calculationVersion:Number(chainResult.calculationVersion),
-            createdAt:Number(chainResult.createdAt),
-            manifest
-          });
-        }catch(error){
-          CLIENT_BALANCE_WARNINGS.push(
-            clientBalanceShort(resultId)+": "+(error?.message||error)
-          );
-        }
-
-        resultId=previousResultId;
-        depth++;
-      }
-    }catch(error){
-      CLIENT_BALANCE_WARNINGS.push(
-        clientBalanceShort(row.evidence_id)+": "+(error?.message||error)
-      );
+  if(select){select.innerHTML='<option>Loading MUF proofs…</option>';select.disabled=true;}
+  CLIENT_BALANCE_RESULTS=[];CLIENT_BALANCE_WARNINGS=[];
+  $('#clientLiveDashboard')?.classList.add('client-live-hidden');
+  const statesPanel=$('#clientWorkflowStates');if(statesPanel)statesPanel.innerHTML='';
+  clientBalanceShowMessage('Reading MUF proofs','Checking the active contract and private result commitments for '+actor.display_name+'.');
+  try{
+    try{localStorage.setItem('explorechem_client_live_actor',actorId);}catch(_){}
+    const contract=new ethers.Contract(address,CLIENT_BALANCE_ABI,await clientBalanceProvider());
+    const rows=[];
+    for(let offset=0;;offset+=100){
+      const page=await supabaseClient.from('explorerchem_evidences')
+        .select('evidence_id,actor_db_id,origin_actor_db_id,destination_actor_db_id,lot_reference,created_at')
+        .or('actor_db_id.eq.'+actor.id+',origin_actor_db_id.eq.'+actor.id+',destination_actor_db_id.eq.'+actor.id)
+        .order('created_at',{ascending:false})
+        .order('evidence_id')
+        .range(offset,offset+99);
+      if(page.error) throw page.error;
+      rows.push(...(page.data||[]));
+      if((page.data||[]).length<100)break;
+      if(request!==CLIENT_BALANCE_REQUEST)return;
     }
-  }
-
-  if(currentRequest!==CLIENT_BALANCE_REQUEST) return;
-
-  CLIENT_BALANCE_RESULTS=found.sort((a,b)=>b.createdAt-a.createdAt);
-  if(refresh) refresh.disabled=false;
-
-  if(!CLIENT_BALANCE_RESULTS.length){
-    if(CLIENT_BALANCE_WARNINGS.length) console.warn("Client balance warnings:",CLIENT_BALANCE_WARNINGS);
-    clientBalanceShowMessage(
-      "No verified balance is available",
-      "This company does not yet have a completed mass-balance result in the results contract.",
-      false
-    );
-    return;
-  }
-
-  clientBalanceHideMessage();
-  clientBalancePopulateResultSelector(actorId);
-  clientBalanceRenderDashboard();
+    const found=[],states=[],warnings=[];
+    for(const row of rows){
+      if(request!==CLIENT_BALANCE_REQUEST||address!==EXPLORERCHEM_CONTRACT_ADDRESS)return;
+      try{
+        const evidenceId=String(row.evidence_id);
+        const participantIds=[row.actor_db_id,row.origin_actor_db_id,row.destination_actor_db_id]
+          .filter(Boolean)
+          .map(String);
+        if(!participantIds.includes(String(actor.id))) throw new Error('Company is not a participant in this evidence.');
+        const evidenceActor=CLIENT_BALANCE_ACTORS.find(item=>String(item.id)===String(row.actor_db_id));
+        if(!evidenceActor) throw new Error('The company that registered this evidence is unavailable.');
+        const evidence=await contract.getEvidence(evidenceId);
+        if(!clientBalanceSameHex(evidence.actorId,evidenceActor.actor_id))throw new Error('Submitting company differs between Supabase and blockchain.');
+        const state=await contract.getCurrentProofState(evidenceId);
+        states.push({evidenceId,state});
+        if(Number(state.mufStatus)===1)continue;
+        let proofId=String(await contract.latestProofId(evidenceId,1));
+        const seen=new Set();let first=true;
+        while(!CLIENT_BALANCE_ZERO.test(proofId)){
+          if(seen.has(proofId))throw new Error('Cyclic proof history.');
+          seen.add(proofId);
+          const proof=await contract.getProof(proofId);
+          if(!clientBalanceSameHex(proof.proofId,proofId)||!clientBalanceSameHex(proof.evidenceId,evidenceId)||!clientBalanceSameHex(proof.evidenceHash,evidence.evidenceHash)||Number(proof.proofType)!==1)throw new Error('Invalid MUF proof identity.');
+          if(first&&(!clientBalanceSameHex(state.mufHash,proof.committedHash)||Number(state.mufStatus)!==Number(proof.status)))throw new Error('Latest MUF state mismatch.');
+          const proofStatus=clientProofStatus(proof.status);
+          const status={COMPLIANT:'CONFORME',DIVERGENT:'DIVERGENTE',NOT_ATTESTED:'NAO_ATESTADO'}[proofStatus]||proofStatus;
+          const path='muf-results/'+evidenceId.slice(2).toLowerCase()+'/'+proofId.slice(2).toLowerCase()+'.json';
+          const relationshipRole=String(row.actor_db_id)===String(actor.id)
+            ? 'REGISTERED_BY_COMPANY'
+            : String(row.origin_actor_db_id)===String(actor.id)
+              ? 'ORIGIN_COMPANY'
+              : 'DESTINATION_COMPANY';
+          const result={
+            actor,evidenceActor,relationshipRole,evidenceId,
+            evidenceHash:String(evidence.evidenceHash),
+            auditState:'ON-CHAIN COMMITMENT',
+            resultId:proofId,
+            resultHash:String(proof.committedHash),
+            aggregateInputHash:String(proof.inputCommitmentHash),
+            methodologyHash:String(proof.methodologyHash),
+            previousResultId:String(proof.previousProofId),
+            calculationVersion:Number(proof.revision),
+            createdAt:Number(proof.createdAt),
+            manifest:{lotReference:row.lot_reference||null,status,massPairs:[]},
+            muf:null,privateDocument:null,jsonVerified:false,path,
+            contractAddress:address,isLatest:first,workflowState:state
+          };
+          try{
+            const doc=await clientBalanceReadMuf(path,proof,evidence,evidenceActor.actor_id),r=doc.result,c=r.calculation;
+            const pairs=c&&c.referenceInputMassMg!=null&&c.accountedOutputMassMg!=null?[{pairId:evidenceId,lotReference:r.lotReference,leftMassField:c.actorType==='CARRIER'?'custody.massCollectedKg':'Reference inputs (including opening inventory)',rightMassField:c.actorType==='CARRIER'?'custody.massDeliveredKg':'Accounted outputs (including closing inventory)',leftMassMg:c.referenceInputMassMg,rightMassMg:c.accountedOutputMassMg,deltaMg:c.signedMufMg,status}]:[];
+            result.auditState='HASH VERIFIED';
+            result.jsonVerified=true;
+            result.manifest={lotReference:r.lotReference||row.lot_reference||null,status,massPairs:pairs};
+            result.muf=r;
+            result.privateDocument=doc;
+          }catch(error){warnings.push(clientBalanceShort(proofId)+': private MUF JSON unavailable — '+(error.message||error));}
+          found.push(result);
+          first=false;proofId=String(proof.previousProofId);
+        }
+      }catch(error){warnings.push(clientBalanceShort(row.evidence_id)+': '+(error.shortMessage||error.message||error));}
+    }
+    if(request!==CLIENT_BALANCE_REQUEST||address!==EXPLORERCHEM_CONTRACT_ADDRESS)return;
+    CLIENT_BALANCE_RESULTS=found.sort((a,b)=>b.createdAt-a.createdAt);CLIENT_BALANCE_WARNINGS=warnings;
+    clientBalanceRenderWorkflowStates(states);
+    clientBalancePopulateResultSelector(actorId);
+    if(!found.length){clientBalanceShowMessage('No completed MUF proof',states.some(x=>Number(x.state.mufStatus)===1)?'MUF is PENDING on the active contract.': 'No completed MUF commitment exists for this company on the active contract.');}
+    else{clientBalanceHideMessage();clientBalanceRenderDashboard();}
+    if(warnings.length&&statesPanel){const details=document.createElement('details');const summary=document.createElement('summary');summary.textContent=warnings.length+' record(s) unavailable or from another contract';const text=document.createElement('pre');text.style.whiteSpace='pre-wrap';text.textContent=warnings.join('\n');details.append(summary,text);statesPanel.append(details);}
+  }finally{if(request===CLIENT_BALANCE_REQUEST&&refresh)refresh.disabled=false;}
 }
 function clientBalancePopulateResultSelector(actorId){
   const select=$("#clientLiveResultSelect");
   if(!select) return;
 
-  const storageKey="explorechem_client_live_result_"+String(actorId||"").toLowerCase();
+  const storageKey="explorechem_client_muf_result_"+EXPLORERCHEM_CONTRACT_ADDRESS.toLowerCase()+"_"+String(actorId||"").toLowerCase();
   let saved="";
   try{saved=localStorage.getItem(storageKey)||"";}catch(_){}
 
@@ -3613,13 +3605,12 @@ function clientBalancePopulateResultSelector(actorId){
       clientBalanceDateFromUnix(result.createdAt)+" · "+
       (result.manifest.lotReference||"No lot reference")+" · "+
       clientBalanceMassState(result.manifest.status)+" · "+
-      result.auditState;
+      result.auditState+" · "+
+      (result.evidenceActor?.display_name||"Unknown submitter");
     return '<option value="'+escaparHtml(result.resultId)+'">'+escaparHtml(label)+'</option>';
   }).join("");
 
-  if(saved&&CLIENT_BALANCE_RESULTS.some(result=>result.resultId===saved)){
-    select.value=saved;
-  }else if(CLIENT_BALANCE_RESULTS[0]){
+  if(CLIENT_BALANCE_RESULTS[0]){
     select.value=CLIENT_BALANCE_RESULTS[0].resultId;
   }
   select.disabled=!CLIENT_BALANCE_RESULTS.length;
@@ -3632,7 +3623,7 @@ function clientBalanceSelectedResult(){
 }
 function clientBalanceAllUniquePairs(){
   const map=new Map();
-  for(const result of CLIENT_BALANCE_RESULTS){
+  for(const result of CLIENT_BALANCE_RESULTS.filter(item=>item.isLatest)){
     for(const pair of result.manifest.massPairs||[]){
       const key=String(
         pair.pairId||pair.fromEvidenceId+":"+pair.toEvidenceId
@@ -3653,7 +3644,7 @@ function clientBalanceRoute(pair,actorId){
   if(clientBalanceSameHex(pair.toActorId,actorId)){
     return "Counterparty → selected actor";
   }
-  return "Correlated handoff";
+  return "MUF · inputs − accounted outputs";
 }
 function clientBalanceRenderDashboard(){
   const selected=clientBalanceSelectedResult();
@@ -3666,6 +3657,9 @@ function clientBalanceRenderDashboard(){
     selected.auditState
   );
   const compliant=allPairs.filter(pair=>pair.status==="CONFORME").length;
+  const hasCurrentVerifiedCalculation=CLIENT_BALANCE_RESULTS.some(
+    result=>result.isLatest&&result.jsonVerified&&Array.isArray(result.manifest?.massPairs)
+  );
   const absoluteDelta=allPairs.reduce((sum,pair)=>{
     if(pair.deltaMg===null||pair.deltaMg===undefined) return sum;
     const n=BigInt(pair.deltaMg);
@@ -3675,19 +3669,27 @@ function clientBalanceRenderDashboard(){
   const setText=(id,value)=>{const el=$(id);if(el)el.textContent=String(value);};
   setText("#clientStatResults",CLIENT_BALANCE_RESULTS.length);
   setText("#clientStatVerified",
-    CLIENT_BALANCE_RESULTS.filter(item=>item.auditState==="VERIFIED").length
+    CLIENT_BALANCE_RESULTS.filter(item=>item.auditState==="HASH VERIFIED").length
   );
-  setText("#clientStatPairs",allPairs.length);
+  setText("#clientStatPairs",hasCurrentVerifiedCalculation?allPairs.length:"—");
   setText("#clientStatCompliance",
-    (allPairs.length?Math.round(compliant/allPairs.length*100):0)+"%"
+    hasCurrentVerifiedCalculation&&allPairs.length
+      ? Math.round(compliant/allPairs.length*100)+"%"
+      : "—"
   );
-  setText("#clientStatDelta",clientBalanceKgFromMg(absoluteDelta.toString()));
+  setText("#clientStatDelta",
+    hasCurrentVerifiedCalculation&&allPairs.length
+      ? clientBalanceKgFromMg(absoluteDelta.toString())
+      : "—"
+  );
 
   setText("#clientLatestTitle",selected.actor.display_name);
   setText(
     "#clientLatestSubtitle",
     (selected.manifest.lotReference||"No lot reference")+
-    " · calculation v"+selected.calculationVersion
+    " · calculation v"+selected.calculationVersion+
+    " · "+selected.relationshipRole+
+    " · registered by "+(selected.evidenceActor?.display_name||"—")
   );
 
   const audit=$("#clientLatestAudit");
@@ -3700,9 +3702,27 @@ function clientBalanceRenderDashboard(){
 
   setText("#clientLatestCreated",clientBalanceDateFromUnix(selected.createdAt));
   setText("#clientLatestEvidence",selected.evidenceId);
+  setText("#clientLatestEvidenceHash",selected.evidenceHash);
   setText("#clientLatestResult",selected.resultId);
   setText("#clientLatestHash",selected.resultHash);
   setText("#clientLatestInputHash",selected.aggregateInputHash);
+  setText('#clientLatestMethodology',selected.methodologyHash);
+  setText('#clientLatestContract',selected.contractAddress);
+  const calculation=selected.muf?.calculation;
+  setText('#clientLatestMufMass',calculation?.absoluteMufMg==null?'Requires access to the verified private JSON':clientBalanceKgFromMg(calculation.absoluteMufMg));
+  setText('#clientLatestMufPercent',calculation?.absoluteMufPercentScaled6==null?'Requires access to the verified private JSON':(Number(calculation.absoluteMufPercentScaled6)/1e6).toLocaleString('en-US',{minimumFractionDigits:0,maximumFractionDigits:6})+'%');
+  setText('#clientLatestFormula',calculation?.formula||'Requires access to the verified private JSON');
+  setText('#clientLatestReason',selected.muf?(selected.muf.reasonCodes||[]).join(', ')||'No exceptions reported':'Requires access to the verified private JSON');
+  setText('#clientLatestInterpretation',selected.muf?.interpretation||'');
+  setText('#clientLatestPath',selected.jsonVerified?selected.path:'Committed on-chain; private JSON is not accessible to this session');
+  const integrity=$('#clientLatestIntegrity');
+  if(integrity)integrity.innerHTML=clientBalanceTag(selected.jsonVerified?'JSON HASH VERIFIED':'ON-CHAIN COMMITMENT');
+  const jsonButton=$('#clientJsonButton');
+  if(jsonButton){
+    jsonButton.disabled=!selected.privateDocument;
+    jsonButton.title=selected.privateDocument?'Download the hash-verified private MUF JSON':'The private MUF JSON is not accessible to this session';
+    jsonButton.onclick=selected.privateDocument?()=>{const blob=new Blob([clientBalanceStableJson(selected.privateDocument)],{type:'application/json'});const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download='MUF-'+selected.resultId+'.json';a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);}:null;
+  }
 
   const rows=$("#clientPairRows");
   if(rows){
@@ -3720,7 +3740,7 @@ function clientBalanceRenderDashboard(){
       : '<tr><td colspan="6" class="client-live-empty">'+
           (structuralDivergence
             ? 'Structural divergence recorded on-chain. No pairwise mass comparison applies.'
-            : 'No attested mass pair in this result.')+
+            : 'No usable mass calculation in this MUF result.')+
         '</td></tr>';
   }
 
@@ -3746,7 +3766,7 @@ function clientBalanceRenderDashboard(){
           const actorId=$("#clientLiveActorSelect")?.value||"";
           try{
             localStorage.setItem(
-              "explorechem_client_live_result_"+actorId.toLowerCase(),
+              "explorechem_client_muf_result_"+EXPLORERCHEM_CONTRACT_ADDRESS.toLowerCase()+"_"+actorId.toLowerCase(),
               select.value
             );
           }catch(_){}
@@ -3760,10 +3780,10 @@ function clientBalanceRenderDashboard(){
   if(warning){
     warning.textContent=CLIENT_BALANCE_WARNINGS.length
       ? CLIENT_BALANCE_WARNINGS.length+
-        " inaccessible or incompatible historical record(s) were ignored. Only independently reproduced commitments are displayed."
+        " private JSON record(s) could not be opened or verified. Their blockchain commitments remain visible; calculation values appear only after private JSON verification."
       : structuralDivergence
         ? "Structural divergence and all displayed commitments were verified against the blockchain."
-        : "All displayed result commitments were reproduced successfully.";
+        : "All displayed private JSON hashes and result commitments were reproduced successfully.";
   }
 
   $("#clientLiveDashboard")?.classList.remove("client-live-hidden");
@@ -3787,24 +3807,24 @@ function clientBalanceRenderHistoryChart(){
       if(pair.leftMassMg==null||pair.rightMassMg==null) continue;
       const left=Number(pair.leftMassMg),right=Number(pair.rightMassMg);
       if(!Number.isFinite(left)||!Number.isFinite(right)||left<=0) continue;
-      const key=pair.pairId||[pair.fromEvidenceId,pair.toEvidenceId,pair.leftMassField,pair.rightMassField].join("|");
+      const key=result.resultId;
       if(seen.has(key)) continue;
       seen.add(key);
       points.push({result,pair,value:100*(left-right)/left});
     }
   }
-  panel.innerHTML='<h3>Mass difference history</h3><p>One point per unique mass pair, ordered by first result date. Reference band: ±2% of outgoing mass [ARBITRATED]. This reference does not change the audit verdict. Hover for details; click a point to open its result.</p>';
+  panel.innerHTML='<h3>Mass difference history</h3><p>One point per MUF revision, ordered by proof date. Tolerance is evaluated by its own workflow; this chart shows the measured difference only. Hover for details; click a point to open its result.</p>';
   if(!points.length){panel.insertAdjacentHTML("beforeend","<p>No comparable mass pairs with a positive outgoing mass.</p>");return;}
   const width=900,height=280,pad=50;
   const extent=Math.max(3,...points.map(p=>Math.abs(p.value)*1.15));
   const x=i=>pad+(width-2*pad)*(points.length===1?.5:i/(points.length-1));
   const y=v=>height/2-v*(height/2-pad)/extent;
-  let svg='<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 280" role="img" aria-label="Historical percentage mass differences with a plus or minus two percent reference band" style="width:100%;min-width:560px">';
-  svg+='<rect x="50" y="'+y(2)+'" width="800" height="'+(y(-2)-y(2))+'" fill="#36bfa0" opacity="0.15"/>';
-  for(const v of [-extent,-2,0,2,extent]) svg+='<line x1="50" x2="850" y1="'+y(v)+'" y2="'+y(v)+'" stroke="#63938a" stroke-dasharray="4 4"/><text x="2" y="'+(y(v)+4)+'" fill="#bbd9d3" font-size="12">'+v.toFixed(1)+'%</text>';
+  let svg='<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 280" role="img" aria-label="Historical MUF percentage differences" style="width:100%;min-width:560px">';
+
+  for(const v of [-extent,0,extent]) svg+='<line x1="50" x2="850" y1="'+y(v)+'" y2="'+y(v)+'" stroke="#63938a" stroke-dasharray="4 4"/><text x="2" y="'+(y(v)+4)+'" fill="#bbd9d3" font-size="12">'+v.toFixed(1)+'%</text>';
   points.forEach((p,i)=>{
     const title=clientBalanceDateFromUnix(p.result.createdAt)+' | '+p.result.manifest.lotReference+' | '+p.value.toFixed(4)+'% | '+clientBalanceKgFromMg(p.pair.leftMassMg)+' → '+clientBalanceKgFromMg(p.pair.rightMassMg)+' | Audit: '+p.result.auditState;
-    svg+='<circle data-history-point="'+i+'" tabindex="0" role="button" aria-label="'+escaparHtml(title)+'" cx="'+x(i)+'" cy="'+y(p.value)+'" r="6" fill="'+(Math.abs(p.value)<=2?'#37d8be':'#ff907b')+'" style="cursor:pointer"><title>'+escaparHtml(title)+'</title></circle>';
+    svg+='<circle data-history-point="'+i+'" tabindex="0" role="button" aria-label="'+escaparHtml(title)+'" cx="'+x(i)+'" cy="'+y(p.value)+'" r="6" fill="'+(p.pair.status==='CONFORME'?'#37d8be':'#ff907b')+'" style="cursor:pointer"><title>'+escaparHtml(title)+'</title></circle>';
   });
   svg+='<text x="50" y="275" fill="#bbd9d3" font-size="12">'+escaparHtml(clientBalanceDateFromUnix(points[0].result.createdAt))+'</text><text x="850" y="275" text-anchor="end" fill="#bbd9d3" font-size="12">'+escaparHtml(clientBalanceDateFromUnix(points[points.length-1].result.createdAt))+'</text></svg>';
   panel.insertAdjacentHTML("beforeend",svg);
@@ -3843,13 +3863,13 @@ function clientBalanceRenderChart(pairs,structuralDivergence=false){
       labels,
       datasets:[
         {
-          label:"Origin mass (kg)",
+          label:"Reference inputs (kg)",
           data:pairs.map(pair=>pair.leftMassMg===null?null:Number(pair.leftMassMg)/1e6),
           backgroundColor:"#0ea7a0",
           borderRadius:7
         },
         {
-          label:"Destination mass (kg)",
+          label:"Accounted outputs (kg)",
           data:pairs.map(pair=>pair.rightMassMg===null?null:Number(pair.rightMassMg)/1e6),
           backgroundColor:"#8bcfc7",
           borderRadius:7
@@ -3897,12 +3917,12 @@ function clientBalanceOpenProof(){
   ).join("");
   const emptyPairMessage=structuralDivergence
     ? "Structural divergence recorded on-chain. No pairwise mass comparison applies."
-    : "No attested mass pair.";
+    : "No usable mass calculation in this MUF result.";
 
   const win=window.open("","_blank");
   if(!win) return;
 
-  win.document.write(`<!doctype html><html lang="en"><head><meta charset="utf-8"><title>ExploreChem — Mass Balance Proof</title><style>@page{size:A4;margin:15mm}body{font-family:Arial;color:#14252d}button{padding:9px 12px;margin-right:8px}h1{margin-bottom:4px}.sub{color:#52666e}.box{border-left:4px solid #0ea7a0;background:#eef9f6;padding:12px;margin:18px 0}dl{display:grid;grid-template-columns:150px 1fr;border:1px solid #dbe8e7}dt,dd{padding:7px;margin:0;border-bottom:1px solid #dbe8e7;word-break:break-all}dt{font-weight:bold;background:#f3f7f7}table{width:100%;border-collapse:collapse;font-size:11px}th,td{border:1px solid #dbe8e7;padding:7px;text-align:left}.note{font-size:11px;margin-top:18px}@media print{.controls{display:none}}</style></head><body><div class="controls"><button onclick="print()">Print / Save PDF</button><button onclick="close()">Close</button></div><h1>ExploreChem — Verified Mass Balance</h1><p class="sub">Client proof for one selected actor and one blockchain-selected result.</p><div class="box"><b>${escaparHtml(selected.actor.display_name)}</b><br>${escaparHtml(selected.actor.actor_type)} · ${escaparHtml(selected.auditState)}</div><dl><dt>Lot</dt><dd>${escaparHtml(selected.manifest.lotReference||"—")}</dd><dt>Mass verdict</dt><dd>${escaparHtml(clientBalanceMassState(selected.manifest.status))}</dd><dt>Created</dt><dd>${escaparHtml(clientBalanceDateFromUnix(selected.createdAt))}</dd><dt>evidenceId</dt><dd>${escaparHtml(selected.evidenceId)}</dd><dt>resultId</dt><dd>${escaparHtml(selected.resultId)}</dd><dt>resultHash</dt><dd>${escaparHtml(selected.resultHash)}</dd><dt>aggregateInputHash</dt><dd>${escaparHtml(selected.aggregateInputHash)}</dd><dt>Integrity</dt><dd>RECOMPUTED AND VERIFIED</dd></dl><h2>Pairwise mass checks</h2><table><thead><tr><th>Lot</th><th>Origin</th><th>Destination</th><th>Difference</th><th>Verdict</th></tr></thead><tbody>${rows||'<tr><td colspan="5">'+escaparHtml(emptyPairMessage)+'</td></tr>'}</tbody></table><p class="note"><b>Privacy boundary.</b> This proof contains the selected actor's balance and public commitments. Original evidence files and counterparty documents are not exposed.</p></body></html>`);
+  win.document.write(`<!doctype html><html lang="en"><head><meta charset="utf-8"><title>ExploreChem — Mass Balance Proof</title><style>@page{size:A4;margin:15mm}body{font-family:Arial;color:#14252d}button{padding:9px 12px;margin-right:8px}h1{margin-bottom:4px}.sub{color:#52666e}.box{border-left:4px solid #0ea7a0;background:#eef9f6;padding:12px;margin:18px 0}dl{display:grid;grid-template-columns:150px 1fr;border:1px solid #dbe8e7}dt,dd{padding:7px;margin:0;border-bottom:1px solid #dbe8e7;word-break:break-all}dt{font-weight:bold;background:#f3f7f7}table{width:100%;border-collapse:collapse;font-size:11px}th,td{border:1px solid #dbe8e7;padding:7px;text-align:left}.note{font-size:11px;margin-top:18px}@media print{.controls{display:none}}</style></head><body><div class="controls"><button onclick="print()">Print / Save PDF</button><button onclick="close()">Close</button></div><h1>ExploreChem — Verified Mass Balance</h1><p class="sub">Client proof for one selected actor and one blockchain-selected result.</p><div class="box"><b>${escaparHtml(selected.actor.display_name)}</b><br>${escaparHtml(selected.actor.actor_type)} · ${escaparHtml(selected.auditState)}</div><dl><dt>Lot</dt><dd>${escaparHtml(selected.manifest.lotReference||"—")}</dd><dt>Mass verdict</dt><dd>${escaparHtml(clientBalanceMassState(selected.manifest.status))}</dd><dt>Created</dt><dd>${escaparHtml(clientBalanceDateFromUnix(selected.createdAt))}</dd><dt>evidenceId</dt><dd>${escaparHtml(selected.evidenceId)}</dd><dt>evidenceHash</dt><dd>${escaparHtml(selected.evidenceHash)}</dd><dt>proofId</dt><dd>${escaparHtml(selected.resultId)}</dd><dt>mufHash</dt><dd>${escaparHtml(selected.resultHash)}</dd><dt>inputCommitmentHash</dt><dd>${escaparHtml(selected.aggregateInputHash)}</dd><dt>methodologyHash</dt><dd>${escaparHtml(selected.methodologyHash)}</dd><dt>Absolute MUF</dt><dd>${escaparHtml(selected.muf?.calculation?.absoluteMufMg==null?'Private JSON unavailable':clientBalanceKgFromMg(selected.muf.calculation.absoluteMufMg))}</dd><dt>MUF percentage</dt><dd>${escaparHtml(selected.muf?.calculation?.absoluteMufPercentScaled6==null?'Private JSON unavailable':(Number(selected.muf.calculation.absoluteMufPercentScaled6)/1e6).toFixed(6)+'%')}</dd><dt>Integrity</dt><dd>${selected.jsonVerified?'JSON HASH VERIFIED':'ON-CHAIN COMMITMENT'}</dd></dl><h2>MUF mass balance</h2><table><thead><tr><th>Lot</th><th>Origin</th><th>Destination</th><th>Difference</th><th>Verdict</th></tr></thead><tbody>${rows||'<tr><td colspan="5">'+escaparHtml(emptyPairMessage)+'</td></tr>'}</tbody></table><p class="note"><b>Privacy boundary.</b> This proof contains the selected actor's balance and public commitments. Original evidence files and counterparty documents are not exposed.</p></body></html>`);
   win.document.close();
 }
 async function clientBalanceRefreshAll(){
@@ -3960,7 +3980,7 @@ function clientBalanceBindUi(){
       const actorId=$("#clientLiveActorSelect")?.value||"";
       try{
         localStorage.setItem(
-          "explorechem_client_live_result_"+actorId.toLowerCase(),
+          "explorechem_client_muf_result_"+EXPLORERCHEM_CONTRACT_ADDRESS.toLowerCase()+"_"+actorId.toLowerCase(),
           result.value
         );
       }catch(_){}
@@ -3984,7 +4004,7 @@ function clientBalanceBindUi(){
 T.dashboard=()=>{
   return '<div class="crumb">Client · verified mass balance</div>'+
     '<div class="headrow"><div class="grow"><h1>Verified Mass Dashboard</h1>'+
-    '<p class="sub">One company at a time. Results are discovered on Ethereum Sepolia, opened from the exact private mass-result path and independently reproduced before they are displayed.</p></div></div>'+ 
+    '<p class="sub">One company at a time. MUF proofs are read from the active Sepolia contract. The private JSON hash, input commitment and methodology are checked before display.</p></div></div>'+ 
 
     '<div class="client-live-toolbar">'+
       '<div class="field"><label for="clientLiveActorSelect">Company</label>'+ 
@@ -3998,13 +4018,14 @@ T.dashboard=()=>{
       '<b>Loading verified balances</b><span>Reading actors, evidence states and result commitments.</span>'+
     '</div>'+
 
+    '<div id="clientWorkflowStates"></div>'+
     '<section id="clientLiveDashboard" class="client-live-hidden">'+
       '<div class="client-live-stats">'+
-        '<div class="client-live-stat"><b id="clientStatResults">0</b><span>Valid result revisions</span></div>'+
-        '<div class="client-live-stat"><b id="clientStatVerified">0</b><span>Verified revisions</span></div>'+
-        '<div class="client-live-stat"><b id="clientStatPairs">0</b><span>Unique mass checks</span></div>'+
-        '<div class="client-live-stat"><b id="clientStatCompliance">0%</b><span>Pair compliance rate</span></div>'+
-        '<div class="client-live-stat"><b id="clientStatDelta">0 kg</b><span>Absolute discrepancy</span></div>'+
+        '<div class="client-live-stat"><b id="clientStatResults">0</b><span>On-chain MUF revisions</span></div>'+
+        '<div class="client-live-stat"><b id="clientStatVerified">0</b><span>Hash-verified revisions</span></div>'+
+        '<div class="client-live-stat"><b id="clientStatPairs">0</b><span>Current MUF checks</span></div>'+
+        '<div class="client-live-stat"><b id="clientStatCompliance">0%</b><span>MUF compliance rate</span></div>'+
+        '<div class="client-live-stat"><b id="clientStatDelta">0 kg</b><span>Absolute MUF · current proofs</span></div>'+
       '</div>'+
 
       '<div class="client-live-grid">'+
@@ -4018,25 +4039,34 @@ T.dashboard=()=>{
             '<dt>Mass verdict</dt><dd id="clientLatestVerdict"></dd>'+
             '<dt>Created at</dt><dd id="clientLatestCreated"></dd>'+
             '<dt>evidenceId</dt><dd id="clientLatestEvidence" class="mono"></dd>'+
-            '<dt>resultId</dt><dd id="clientLatestResult" class="mono"></dd>'+
-            '<dt>resultHash</dt><dd id="clientLatestHash" class="hash"></dd>'+
-            '<dt>aggregateInputHash</dt><dd id="clientLatestInputHash" class="hash"></dd>'+
-            '<dt>Integrity</dt><dd><span class="tag t-ok">RECOMPUTED AND VERIFIED</span></dd>'+
+            '<dt>evidenceHash</dt><dd id="clientLatestEvidenceHash" class="hash"></dd>'+
+            '<dt>proofId</dt><dd id="clientLatestResult" class="mono"></dd>'+
+            '<dt>mufHash</dt><dd id="clientLatestHash" class="hash"></dd>'+
+            '<dt>inputCommitmentHash</dt><dd id="clientLatestInputHash" class="hash"></dd>'+
+             '<dt>methodologyHash</dt><dd id="clientLatestMethodology" class="hash"></dd>'+
+            '<dt>Contract</dt><dd id="clientLatestContract" class="mono"></dd>'+
+            '<dt>Absolute MUF</dt><dd id="clientLatestMufMass"></dd>'+
+            '<dt>MUF percentage</dt><dd id="clientLatestMufPercent"></dd>'+
+            '<dt>Formula</dt><dd id="clientLatestFormula"></dd>'+
+            '<dt>Reason codes</dt><dd id="clientLatestReason"></dd>'+
+            '<dt>Interpretation</dt><dd id="clientLatestInterpretation"></dd>'+
+            '<dt>Private JSON</dt><dd id="clientLatestPath" class="hash"></dd>'+
+            '<dt>Integrity</dt><dd id="clientLatestIntegrity"></dd>'+
           '</dl>'+
-          '<div class="client-live-proof-actions"><button id="clientProofButton" class="btn ghost">Open / Save Balance PDF</button></div>'+
+          '<div class="client-live-proof-actions"><button id="clientProofButton" class="btn ghost">Open / Save Balance PDF</button><button id="clientJsonButton" class="btn ghost">Download MUF JSON</button></div>'+
         '</section>'+
 
         '<section class="panel pad">'+
           '<div class="client-live-result-head"><div>'+
             '<span class="section-eyebrow">MASS COMPARISON</span>'+
-            '<h2>Origin versus destination</h2>'+
+            '<h2>Inputs versus accounted outputs</h2>'+
             '<p>Mass values from the selected blockchain result.</p>'+
           '</div></div>'+
           '<div class="client-live-chart"><canvas id="clientMassChart"></canvas></div>'+
         '</section>'+
       '</div>'+
 
-      '<h2>Pairwise mass checks</h2>'+
+      '<h2>MUF mass balance</h2>'+
       '<section class="panel client-live-table"><table>'+
         '<thead><tr><th>Lot</th><th>Route</th><th>Origin declaration</th><th>Destination declaration</th><th class="num">Difference</th><th>Verdict</th></tr></thead>'+
         '<tbody id="clientPairRows"></tbody>'+
@@ -4044,7 +4074,7 @@ T.dashboard=()=>{
 
       '<h2>Result history</h2>'+
       '<section class="panel client-live-table"><table>'+
-        '<thead><tr><th>Created</th><th>Audit state</th><th>Mass verdict</th><th>Lot</th><th>Evidence</th><th>Result</th><th>Version</th></tr></thead>'+
+        '<thead><tr><th>Created</th><th>JSON integrity</th><th>Mass verdict</th><th>Lot</th><th>Evidence</th><th>Result</th><th>Version</th></tr></thead>'+
         '<tbody id="clientHistoryRows"></tbody>'+
       '</table></section>'+
       '<p id="clientWarnings" class="client-live-warning"></p>'+
