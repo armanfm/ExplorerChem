@@ -1084,6 +1084,9 @@ main{
   main{max-width:calc(100vw - 230px)}
 }
 
+
+.chain-heading{display:flex;justify-content:space-between;align-items:center;gap:20px;flex-wrap:wrap}.chain-heading h2{font-size:30px;margin:8px 0}.chain-heading label{display:grid;gap:8px}.chain-route{margin:24px 0;border:1px solid var(--line,#24504b);border-radius:18px;background:rgba(0,0,0,.12)}.chain-scroll{overflow-x:auto;padding:24px}.chain-branch,.chain-transfer{display:flex;align-items:center}.chain-next{display:grid;gap:24px}.chain-stage{flex:0 0 285px;width:285px;padding:22px;border:1px solid #28544d;border-radius:16px;background:#0d302b;box-sizing:border-box}.chain-stage h3{font-size:19px;margin:12px 0 8px}.chain-lot{font-size:12px;overflow-wrap:anywhere}.chain-input{display:grid;gap:8px;margin:22px 0}.chain-input strong{font-size:28px}.chain-input small,.chain-arrow small{color:#a0beb7}.chain-outputs>div{margin:16px 0}.chain-outputs span{font-size:13px}.chain-outputs b{float:right;font-size:13px}.chain-bar{height:8px;background:#173e37;border-radius:9px;margin-top:8px;overflow:hidden}.chain-bar i{display:block;height:100%;background:#2ad4be;border-radius:9px}.chain-delta{padding-top:14px;border-top:1px solid #28544d;font-size:13px}.chain-delta b{float:right}.chain-arrow{width:135px;flex:0 0 135px;text-align:center;display:grid;justify-items:center;gap:8px;color:#32d6c3}.chain-arrow small{font-size:10px;max-width:110px}.chain-arrow span{font-weight:700;font-size:14px}.chain-actions{display:flex;gap:8px;margin-top:18px}.chain-actions .btn{font-size:11px;padding:8px}.chain-issue{font-size:12px;color:#f5c86b}.chain-note{font-size:12px;line-height:1.7;color:#a0beb7}
+
 </style>
 
 <style id="product-dashboard-design">
@@ -1125,7 +1128,7 @@ main{
 </style>
 <style>
 #productProof .product-proof-card{padding:22px 0;border-top:1px solid #315347}#productProof a{color:#72e5c4;text-decoration:underline;text-underline-offset:4px;overflow-wrap:anywhere}#productProof a:hover{color:#d4fff0}#productProof .kv dd{overflow-wrap:anywhere;min-width:0}#productProof .product-proof-status{font-size:12px}#productProof .kv{grid-template-columns:minmax(110px,180px) minmax(0,1fr)}@media(max-width:640px){#productProof .kv{display:block}#productProof dt{margin-top:14px}#productProof dd{margin-left:0}}
-</style></head>
+</style><style>.product-analysis-history{margin:24px 0}.product-analysis-history [data-history-plot]{margin-top:22px}.product-analysis-history select{max-width:100%}</style></head>
 <body>
 
 <header class="top">
@@ -3649,16 +3652,108 @@ function clientConsolidationChart(data,unit){
   return h;
 }
 function clientConsolidationHistory(host,rows){
-  const metrics=[['input','Entradas de material','kg',false],['output','Saídas contabilizadas','kg',false],['difference','Diferença de massa','kg',false],['ratio','Saída / entrada','%',false],['elementInput','Elemento disponível','kg',true],['elementOutput','Elemento contabilizado','kg',true],['elementDifference','Diferença elemental','kg',true],['recovery','Recuperação global do elemento','%',true],['yield','YIELD de produção','%',true],['productRecovery','Recuperação do elemento no produto','%',true]];
-  const oldMetric=host.querySelector('[data-history-metric]')?.value||(host.hasAttribute('data-production-history')?'yield':'output');
-  const oldMode=host.querySelector('[data-history-mode]')?.value||'operation';
+  if(!host)return;
+  const allMetrics=[['input','Entradas de material','kg',false],['output','Saídas contabilizadas','kg',false],['difference','Diferença de massa','kg',false],['ratio','Saída / entrada','%',false],['elementInput','Elemento disponível','kg',true],['elementOutput','Elemento contabilizado','kg',true],['elementDifference','Diferença elemental','kg',true],['recovery','Recuperação global do elemento','%',true],['yield','YIELD de produção','%',true],['productRecovery','Recuperação do elemento no produto','%',true]];
+  const scope=host.hasAttribute('data-mass-history')?'mass':host.hasAttribute('data-element-history')?'element':host.hasAttribute('data-production-history')?'production':'overview';
+  const allowed={mass:['input','output','difference','ratio'],element:['elementInput','elementOutput','elementDifference','recovery'],production:['yield','productRecovery'],overview:allMetrics.map(m=>m[0])};
+  const metrics=allMetrics.filter(m=>allowed[scope].includes(m[0]));
+  const requested=host.querySelector('[data-history-metric]')?.value||({mass:'difference',element:'elementDifference',production:'yield',overview:'output'}[scope]);
+  const oldMetric=metrics.some(m=>m[0]===requested)?requested:metrics[0][0];
+  const oldMode=host.querySelector('[data-history-mode]')?.value||'cumulative';
   const oldGroup=host.querySelector('[data-history-group]')?.value;
   host.innerHTML='<span class="section-eyebrow">HISTÓRICO</span><h2>Evolução de desempenho</h2><details class="product-details"><summary>Como interpretar o histórico</summary><p>Resultados por data de publicação das provas; sem prova ELEMENTAL, a lacuna usa a data MUF disponível. Os filtros usam os status atuais e a última revisão; este gráfico não reconstrói mudanças passadas de status nem representa estoque.</p></details><div style="display:flex;flex-wrap:wrap;gap:16px"><label>Indicador<br><select data-history-metric>'+metrics.map(m=>'<option value="'+m[0]+'">'+m[1]+'</option>').join('')+'</select></label><label>Etapa / elemento<br><select data-history-group></select></label><label>Visualização<br><select data-history-mode><option value="operation">Por operação</option><option value="cumulative">Acumulado dos resultados conhecidos</option></select></label></div><div data-history-plot></div>';
   const metric=host.querySelector('[data-history-metric]'),group=host.querySelector('[data-history-group]'),mode=host.querySelector('[data-history-mode]'),plot=host.querySelector('[data-history-plot]');metric.value=oldMetric;mode.value=oldMode;
   const draw=()=>{const m=metrics.find(x=>x[0]===metric.value);const data=clientConsolidationTimeline(rows,group.value,m[0],mode.value==='cumulative');plot.innerHTML='<h3>'+escaparHtml(m[1])+' · '+escaparHtml(group.value||'Sem dados')+'</h3><p>'+data.missing+' registro(s) selecionado(s) fora desta série ou sem valor. Acumulados representam apenas valores conhecidos; lacunas não equivalem a zero.</p>'+clientConsolidationChart(data,m[2]);};
-  const groups=()=>{const m=metrics.find(x=>x[0]===metric.value),a=clientConsolidationCalculate(rows);const keys=m[3]?a.elements.map(x=>x.key):a.groups.map(x=>x.type);group.innerHTML=keys.map(k=>'<option value="'+escaparHtml(k)+'">'+escaparHtml(k)+'</option>').join('');if(keys.includes(oldGroup))group.value=oldGroup;draw();};
-  metric.onchange=groups;group.onchange=draw;mode.onchange=draw;groups();
+  const groups=()=>{
+    // Read the live selection before rebuilding options; oldGroup is only the initial fallback.
+    const selected=group.value||oldGroup||'',stage=selected.split(' / ')[0];
+    const m=metrics.find(x=>x[0]===metric.value),a=clientConsolidationCalculate(rows);
+    const keys=m[3]?a.elements.filter(x=>scope!=='production'||x.yieldCount>0).map(x=>x.key):a.groups.map(x=>x.type);
+    let next=selected;
+    if(!keys.includes(next)){
+      const sameStage=keys.filter(k=>k.split(' / ')[0]===stage);
+      next=sameStage.find(k=>k===host.historyElementGroup)||sameStage[0]||selected||keys[0]||'';
+    }
+    // A missing series stays selected and displays no data instead of switching companies/stages.
+    const options=next&&!keys.includes(next)?[next,...keys]:keys;
+    group.innerHTML=options.map(k=>'<option value="'+escaparHtml(k)+'">'+escaparHtml(k)+(keys.includes(k)?'':' · sem dados para este indicador')+'</option>').join('');
+    group.value=next;
+    if(next.includes(' / '))host.historyElementGroup=next;
+    draw();
+  };
+  metric.onchange=groups;group.onchange=()=>{if(group.value.includes(' / '))host.historyElementGroup=group.value;draw();};mode.onchange=draw;groups();
 }
+async function productChainReadDocument(row){
+  try{
+    const meta=row.evidenceStorage;
+    if(!meta?.storage_bucket||!meta.storage_path)throw new Error('Documento de origem sem caminho disponível');
+    const signed=await supabaseClient.storage.from(meta.storage_bucket).createSignedUrl(meta.storage_path,900);
+    if(signed.error)throw signed.error;
+    const response=await fetch(signed.data.signedUrl,{cache:'no-store'});
+    if(!response.ok)throw new Error('Documento de origem indisponível nesta sessão');
+    const bytes=new Uint8Array(await response.arrayBuffer());
+    const algorithm=String(meta.hash_algorithm||'').toUpperCase().replace(/-/g,'');
+    let hash;
+    if(algorithm==='SHA256')hash='0x'+Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',bytes)),b=>b.toString(16).padStart(2,'0')).join('');
+    else if(algorithm==='KECCAK256')hash=ethers.keccak256(bytes);
+    else throw new Error('Algoritmo do documento não reconhecido');
+    if(!clientBalanceSameHex(hash,row.evidenceHash))throw new Error('Hash do documento de origem divergente');
+    row.chainDocument=JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(bytes));
+  }catch(e){row.chainError=e.message||String(e);}
+}
+function productChainModel(rows,address){
+  const nodes=rows.map(row=>({row,id:row.evidenceId.toLowerCase(),parent:null,children:[],issue:row.chainError||'',allocation:null}));
+  const byId=new Map(nodes.map(n=>[n.id,n]));
+  const mg=value=>{const s=String(value);if(!/^\d+(\.\d{1,6})?$/.test(s))throw new Error('Massa alocada inválida');const [a,b='']=s.split('.');return BigInt(a)*1000000n+BigInt(b.padEnd(6,'0'));};
+  for(const n of nodes){
+    const ref=n.row.chainDocument?.sourceEvidence;if(!ref)continue;
+    try{
+      const p=byId.get(String(ref.evidenceId).toLowerCase());
+      if(!p)throw new Error('Origem fora da seleção ou sem acesso');
+      if(p===n)throw new Error('Referência circular');
+      if(Number(ref.chainId)!==11155111||!clientBalanceSameHex(ref.contractAddress,address))throw new Error('Origem em outro contrato ou rede');
+      if(!p.row.jsonVerified||!n.row.jsonVerified)throw new Error('Cálculo MUF indisponível');
+      if(!clientBalanceSameHex(ref.mufProofId,p.row.resultId)||!clientBalanceSameHex(ref.mufHash,p.row.resultHash))throw new Error('Referência aponta para outra revisão MUF');
+      if(ref.elementalProofId&&(!p.row.elementalVerified||!clientBalanceSameHex(ref.elementalProofId,p.row.elementalProofId)||!clientBalanceSameHex(ref.elementalHash,p.row.elementalHash)))throw new Error('Referência ELEMENTAL não conferida');
+      const stream=p.row.elementalVerified?p.row.elementalResult?.calculation?.streams?.find(s=>s.streamId===ref.sourceStreamId&&s.side==='ACCOUNTED'):null;
+      if(!stream)throw new Error('Fluxo de origem sem valores verificados');
+      const allocation=mg(ref.allocatedDryMassKg);
+      if(allocation<=0n||allocation>BigInt(stream.dryMassMg))throw new Error('Alocação excede o fluxo de origem');
+      if(allocation!==BigInt(n.row.muf.calculation?.inputMassMg))throw new Error('Alocação não corresponde à entrada do processo');
+      n.parent=p;n.allocation=allocation;n.sourceStream=ref.sourceStreamId;
+    }catch(e){n.issue=e.message;}
+  }
+  // Reject cycles and over-allocation as a group, without choosing an arbitrary winner.
+  const invalid=new Map();
+  for(const n of nodes){const seen=new Set();let cur=n;while(cur){if(seen.has(cur)){invalid.set(n,'Vínculo circular');break;}seen.add(cur);cur=cur.parent;}}
+  const allocations=new Map();for(const n of nodes){if(n.parent){const key=n.parent.id+'|'+n.sourceStream;const group=allocations.get(key)||[];group.push(n);allocations.set(key,group);}}
+  for(const group of allocations.values()){const first=group[0],s=first.parent.row.elementalResult.calculation.streams.find(s=>s.streamId===first.sourceStream&&s.side==='ACCOUNTED');if(group.reduce((sum,n)=>sum+n.allocation,0n)>BigInt(s.dryMassMg))for(const n of group)invalid.set(n,'Mais de uma operação aloca a mesma massa além do disponível');}
+  for(const [n,reason] of invalid){n.parent=null;n.issue=reason;}
+  for(const n of nodes)if(n.parent)n.parent.children.push(n);
+  return {nodes,roots:nodes.filter(n=>!n.parent),links:nodes.filter(n=>n.parent).length};
+}
+function productChainRender(host,rows){
+  if(!host)return;
+  const mode=host.querySelector('[data-chain-mode]')?.value||'all';
+  const filtered=mode==='compliant'?rows.filter(r=>Number((r.workflowState||r.state).mufStatus)===2&&Number((r.workflowState||r.state).elementalStatus)===2):rows;
+  const model=productChainModel(filtered,EXPLORERCHEM_CONTRACT_ADDRESS),esc=escaparHtml;
+  const kg=v=>v==null?'Indisponível':clientBalanceKgFromMg(String(v));
+  const labels={CARRIER:'Transporte',REFINER:'Processamento',MANUFACTURER:'Fabricação',MINER:'Extração'};
+  const types={PRODUCT:'Produto',REJECT:'Rejeito',SCRAP:'Resíduo',DELIVERED:'Entregue',CLOSING_INVENTORY:'Estoque final',OTHER_OUTPUT:'Outra saída'};
+  const card=n=>{
+    const r=n.row,c=r.jsonVerified?r.muf?.calculation:null,st=r.workflowState||r.state;
+    const streams=r.elementalVerified?r.elementalResult?.calculation?.streams?.filter(s=>s.side==='ACCOUNTED'):null;
+    const outputs=streams?.length?streams.map(s=>({label:types[s.streamType]||s.streamType,value:s.dryMassMg})):c?(c.actorType==='CARRIER'?[{label:'Entregue',value:c.accountedOutputMassMg}]:[['Produto',c.productMassMg],['Resíduo',c.scrapMassMg],['Outra saída',c.otherOutputMassMg],['Estoque final',c.closingInventoryMassMg]].filter(x=>x[1]!=null&&BigInt(x[1])!==0n).map(([label,value])=>({label,value}))):[];
+    const index=model.nodes.indexOf(n);
+    return '<article class="chain-stage"><span class="section-eyebrow">'+esc(labels[c?.actorType]||c?.actorType||'Operação')+'</span><h3>'+esc(r.evidenceActor?.display_name||'Empresa')+'</h3><p class="chain-lot">'+esc(r.manifest?.lotReference||'Lote não informado')+'</p>'+clientBalanceTag(clientProofStatus(st.mufStatus))+'<div class="chain-input"><small>Entrada da etapa</small><strong>'+esc(kg(c?.referenceInputMassMg))+'</strong></div><div class="chain-outputs">'+outputs.map(o=>'<div><span>'+esc(o.label)+'</span><b>'+esc(kg(o.value))+'</b><div class="chain-bar"><i style="width:'+Math.max(0,Math.min(100,Number(o.value)/Math.max(1,Number(c?.referenceInputMassMg))*100))+'%"></i></div></div>').join('')+'</div><p class="chain-delta">Diferença MUF <b>'+esc(kg(c?.signedMufMg))+'</b></p>'+(n.issue?'<p class="chain-issue">'+esc(n.issue)+'</p>':'')+'<div class="chain-actions"><button class="btn ghost" data-chain-node="'+index+'" data-chain-tab="mass">Ver cálculo</button><button class="btn ghost" data-chain-node="'+index+'" data-chain-tab="proof">Ver comprovação</button></div></article>';
+  };
+  const branch=n=>'<div class="chain-branch">'+card(n)+(n.children.length?'<div class="chain-next">'+n.children.map(child=>'<div class="chain-transfer"><div class="chain-arrow" aria-label="Massa transferida"><span>'+esc(kg(child.allocation))+'</span><svg width="110" height="28" viewBox="0 0 110 28" aria-hidden="true"><path d="M2 14H101M91 5L101 14L91 23" fill="none" stroke="currentColor" stroke-width="3"/></svg><small>Vínculo documental conferido</small></div>'+branch(child)+'</div>').join('')+'</div>':'')+'</div>';
+  host.innerHTML='<div class="chain-heading"><div><span class="section-eyebrow">RASTREABILIDADE DO MATERIAL</span><h2>Da origem ao produto</h2><p>Acompanhe as entradas, as saídas e a diferença de cada etapa.</p></div><label>Visão<select data-chain-mode><option value="all">Total · todos os status</option><option value="compliant">MUF + ELEMENTAL COMPLIANT</option></select></label></div><p>'+model.links+' vínculo(s) documental(is) conferido(s) · '+model.nodes.length+' operação(ões) neste recorte.</p>'+(model.nodes.length?model.roots.map(n=>'<section class="chain-route"><div class="chain-scroll">'+branch(n)+'</div></section>').join(''):'<p>Nenhuma operação neste recorte.</p>')+'<p class="chain-note">Cada linha acompanha somente vínculos explícitos entre evidências. Operações sem vínculo ficam separadas. As massas das etapas não são somadas como estoque. Destinos declarados não comprovam recebimento. Dados visíveis respeitam o acesso desta sessão.</p>';
+  host.querySelector('[data-chain-mode]').value=mode;
+  host.querySelector('[data-chain-mode]').onchange=()=>productChainRender(host,rows);
+  host.querySelectorAll('[data-chain-node]').forEach(button=>{const row=model.nodes[Number(button.dataset.chainNode)].row;button.disabled=!row.resultId;button.onclick=()=>{const select=document.getElementById('clientLiveResultSelect');select.value=row.resultId;select.dispatchEvent(new Event('change',{bubbles:true}));document.querySelector('[data-product-tab="'+button.dataset.chainTab+'"]').click();document.querySelector('[role="tablist"]')?.scrollIntoView({behavior:'smooth',block:'start'});};});
+}
+
 async function clientConsolidationRender(candidates){
   const host=document.getElementById('clientWorkflowStates');if(!host)return;
   document.getElementById('clientConsolidationPanel')?.remove();
@@ -3673,6 +3768,8 @@ async function clientConsolidationRender(candidates){
     for(const row of rows){
       if(!active())return;
       try{
+        await productChainReadDocument(row);
+        if(!active())return;
         const id=String(await contract.latestProofId(row.evidenceId,3));
         if(CLIENT_BALANCE_ZERO.test(id)){row.elementalError='Sem prova ELEMENTAL concluída';continue;}
         const proof=await contract.getProof(id);
@@ -3685,13 +3782,13 @@ async function clientConsolidationRender(candidates){
         const r=clientElementalValidate(JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(bytes)),proof,row);
         // Require the same current MUF revision for consolidation, avoiding stale dependencies.
         if(!row.resultId||!clientBalanceSameHex(r.mufProofId,row.resultId)||!clientBalanceSameHex(r.expectedMufHash,row.resultHash))throw new Error('ELEMENTAL não referencia o MUF atual');
-        row.elementalResult=r;row.elementalCreatedAt=Number(proof.createdAt);row.elementalVerified=true;
+        row.elementalResult=r;row.elementalProofId=id;row.elementalHash=String(proof.committedHash);row.elementalCreatedAt=Number(proof.createdAt);row.elementalVerified=true;
       }catch(e){row.elementalError=e.message||String(e);}
     }
     if(!active())return;
     const esc=escaparHtml;
-    panel.innerHTML='<span class="section-eyebrow">VISÃO CONSOLIDADA</span><h2>Desempenho das operações</h2><p>Compare massa, recuperação elemental e rendimento da empresa.</p><details class="product-details"><summary>Selecionar operações e consultar critérios</summary><p>Estas são somas de operações selecionadas, não saldo de estoque. Desmarque reenvios ou etapas que representam o mesmo material. Não somamos etapas diferentes em um único estoque.</p><div style="overflow:auto"><table><thead><tr><th>Incluir</th><th>Lote / evidência</th><th>Registrado por</th><th>MUF</th><th>ELEMENTAL</th><th>Disponibilidade</th></tr></thead><tbody>'+rows.map((r,i)=>{const st=r.workflowState||r.state;return '<tr><td><input type="checkbox" checked data-consolidation-index="'+i+'" aria-label="Incluir '+esc(r.evidenceId)+'"></td><td>'+esc(r.manifest?.lotReference||'Sem lote')+'<br><span title="'+esc(r.evidenceId)+'">'+esc(clientBalanceShort(r.evidenceId))+'</span></td><td>'+esc(r.evidenceActor?.display_name||'—')+'</td><td>'+clientBalanceTag(clientProofStatus(st.mufStatus))+'</td><td>'+clientBalanceTag(clientProofStatus(st.elementalStatus))+'</td><td>'+esc(r.elementalError||(!r.jsonVerified?'JSON MUF não verificado':r.elementalResult?.reasonCodes?.join(', ')||'JSONs conferidos'))+'</td></tr>';}).join('')+'</tbody></table></div><p>Na visão Total, valores existentes em resultados DIVERGENT ou NOT_ATTESTED não se tornam atestados. JSON sem integridade verificada não fornece valores. Registros sem cálculo permanecem na cobertura.</p></details><section data-consolidation-history class="panel pad" style="margin:20px 0"></section><div data-consolidation-views style="display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,440px),1fr));gap:16px"></div><p>Consolidação local baseada nos resultados privados e provas consultadas. Não publica nem altera os status YIELD / MULTI_STREAM na blockchain.</p>';
-    const draw=()=>{const selected=productFilterRows(rows.filter(r=>r.checked));const compliant=selected.filter(r=>Number((r.workflowState||r.state).mufStatus)===2&&Number((r.workflowState||r.state).elementalStatus)===2);panel.querySelector('[data-consolidation-views]').innerHTML=clientConsolidationView('Total · todos os status',selected)+clientConsolidationView('Somente COMPLIANT · MUF + ELEMENTAL',compliant);clientConsolidationHistory(panel.querySelector('[data-consolidation-history]'),selected);const production=document.querySelector('[data-production-views]');if(production){production.innerHTML=clientConsolidationView('Total',selected)+clientConsolidationView('Somente COMPLIANT',compliant);clientConsolidationHistory(document.querySelector('[data-production-history]'),selected);} };
+    panel.innerHTML='<span class="section-eyebrow">VISÃO CONSOLIDADA</span><h2>Desempenho das operações</h2><p>Compare massa, recuperação elemental e rendimento da empresa.</p><details class="product-details"><summary>Selecionar operações e consultar critérios</summary><p>Estas são somas de operações selecionadas, não saldo de estoque. Desmarque reenvios ou etapas que representam o mesmo material. Não somamos etapas diferentes em um único estoque.</p><div style="overflow:auto"><table><thead><tr><th>Incluir</th><th>Lote / evidência</th><th>Registrado por</th><th>MUF</th><th>ELEMENTAL</th><th>Disponibilidade</th></tr></thead><tbody>'+rows.map((r,i)=>{const st=r.workflowState||r.state;return '<tr><td><input type="checkbox" checked data-consolidation-index="'+i+'" aria-label="Incluir '+esc(r.evidenceId)+'"></td><td>'+esc(r.manifest?.lotReference||'Sem lote')+'<br><span title="'+esc(r.evidenceId)+'">'+esc(clientBalanceShort(r.evidenceId))+'</span></td><td>'+esc(r.evidenceActor?.display_name||'—')+'</td><td>'+clientBalanceTag(clientProofStatus(st.mufStatus))+'</td><td>'+clientBalanceTag(clientProofStatus(st.elementalStatus))+'</td><td>'+esc(r.elementalError||(!r.jsonVerified?'JSON MUF não verificado':r.elementalResult?.reasonCodes?.join(', ')||'JSONs conferidos'))+'</td></tr>';}).join('')+'</tbody></table></div><p>Na visão Total, valores existentes em resultados DIVERGENT ou NOT_ATTESTED não se tornam atestados. JSON sem integridade verificada não fornece valores. Registros sem cálculo permanecem na cobertura.</p></details><section data-chain-flow class="panel pad"></section><section data-consolidation-history class="panel pad" style="margin:20px 0"></section><div data-consolidation-views style="display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,440px),1fr));gap:16px"></div><p>Consolidação local baseada nos resultados privados e provas consultadas. Não publica nem altera os status YIELD / MULTI_STREAM na blockchain.</p>';
+    const draw=()=>{const selected=productFilterRows(rows.filter(r=>r.checked));const compliant=selected.filter(r=>Number((r.workflowState||r.state).mufStatus)===2&&Number((r.workflowState||r.state).elementalStatus)===2);productChainRender(panel.querySelector('[data-chain-flow]'),selected);panel.querySelector('[data-consolidation-views]').innerHTML=clientConsolidationView('Total · todos os status',selected)+clientConsolidationView('Somente COMPLIANT · MUF + ELEMENTAL',compliant);clientConsolidationHistory(panel.querySelector('[data-consolidation-history]'),selected);clientConsolidationHistory(document.querySelector('[data-mass-history]'),selected);clientConsolidationHistory(document.querySelector('[data-element-history]'),selected);const production=document.querySelector('[data-production-views]');if(production){production.innerHTML=clientConsolidationView('Total',selected)+clientConsolidationView('Somente COMPLIANT',compliant);clientConsolidationHistory(document.querySelector('[data-production-history]'),selected);} };
     const selection=document.getElementById('productSelection');if(selection){const picker=panel.querySelector('details');if(picker)selection.replaceChildren(picker);}const root=document.querySelector('.product-dashboard');if(root)root.productRedraw=draw;
     (selection||panel).querySelectorAll('[data-consolidation-index]').forEach(input=>input.onchange=()=>{rows[Number(input.dataset.consolidationIndex)].checked=input.checked;draw();});draw();
   }catch(e){if(active())panel.innerHTML='<h2>YIELD + MULTI_STREAM</h2><p>'+escaparHtml(e.message||String(e))+'</p>';}
@@ -3785,7 +3882,7 @@ function clientBalanceRenderWorkflowStates(entries){
 }
 async function clientBalanceLoadSelectedActor(){
   document.getElementById('clientElementalPanel')?.replaceChildren();
-  const productRoot=document.querySelector('.product-dashboard');if(productRoot)productRoot.productRedraw=null;document.getElementById('productSelection')?.replaceChildren();document.getElementById('productProofContent')?.replaceChildren();document.querySelector('[data-production-views]')?.replaceChildren();document.querySelector('[data-production-history]')?.replaceChildren();
+  const productRoot=document.querySelector('.product-dashboard');if(productRoot)productRoot.productRedraw=null;document.getElementById('productSelection')?.replaceChildren();document.getElementById('productProofContent')?.replaceChildren();document.querySelector('[data-production-views]')?.replaceChildren();document.querySelector('[data-production-history]')?.replaceChildren();for(const history of document.querySelectorAll('[data-mass-history],[data-element-history]'))history.innerHTML='<p>Carregando histórico da empresa…</p>';
   const request=++CLIENT_BALANCE_REQUEST;
   const actorId=$('#clientLiveActorSelect')?.value;
   const actor=CLIENT_BALANCE_ACTORS.find(item=>item.actor_id===actorId);
@@ -3805,7 +3902,7 @@ async function clientBalanceLoadSelectedActor(){
     const rows=[];
     for(let offset=0;;offset+=100){
       const page=await supabaseClient.from('explorerchem_evidences')
-        .select('evidence_id,actor_db_id,origin_actor_db_id,destination_actor_db_id,lot_reference,created_at')
+        .select('evidence_id,actor_db_id,origin_actor_db_id,destination_actor_db_id,lot_reference,created_at,storage_bucket,storage_path,hash_algorithm')
         .or('actor_db_id.eq.'+actor.id+',origin_actor_db_id.eq.'+actor.id+',destination_actor_db_id.eq.'+actor.id)
         .order('created_at',{ascending:false})
         .order('evidence_id')
@@ -3829,7 +3926,7 @@ async function clientBalanceLoadSelectedActor(){
         const evidence=await contract.getEvidence(evidenceId);
         if(!clientBalanceSameHex(evidence.actorId,evidenceActor.actor_id))throw new Error('Submitting company differs between Supabase and blockchain.');
         const state=await contract.getCurrentProofState(evidenceId);
-        states.push({evidenceId,state,evidenceCreatedAt:Math.floor(new Date(row.created_at).getTime()/1000),evidenceHash:String(evidence.evidenceHash),evidenceActor,actor,manifest:{lotReference:row.lot_reference},isLatest:true});
+        states.push({evidenceStorage:row,evidenceId,state,evidenceCreatedAt:Math.floor(new Date(row.created_at).getTime()/1000),evidenceHash:String(evidence.evidenceHash),evidenceActor,actor,manifest:{lotReference:row.lot_reference},isLatest:true});
         if(Number(state.mufStatus)===1)continue;
         let proofId=String(await contract.latestProofId(evidenceId,1));
         const seen=new Set();let first=true;
@@ -3848,7 +3945,7 @@ async function clientBalanceLoadSelectedActor(){
               ? 'ORIGIN_COMPANY'
               : 'DESTINATION_COMPANY';
           const result={
-            actor,evidenceActor,relationshipRole,evidenceId,
+            actor,evidenceActor,relationshipRole,evidenceId,evidenceStorage:row,
             evidenceHash:String(evidence.evidenceHash),
             auditState:'ON-CHAIN COMMITMENT',
             resultId:proofId,
@@ -4082,7 +4179,7 @@ function clientBalanceRenderDashboard(){
 
   $("#clientLiveDashboard")?.classList.remove("client-live-hidden");
   clientBalanceRenderChart(pairs,structuralDivergence);
-  clientBalanceRenderHistoryChart();
+  // Histórico unificado renderizado pela consolidação, com os filtros comuns.
   if(document.querySelector('.product-dashboard')?.dataset.activeTab==='proof')productProofRender();
   clientElementalRender(selected);
 }
@@ -4397,8 +4494,8 @@ T.dashboard=()=>{
       '<b>Loading verified balances</b><span>Reading actors, evidence states and result commitments.</span>'+
     '</div>'+
 
-    '<details class="product-details"><summary>Status dos workflows e evidências</summary><div id="clientWorkflowStates"></div></details><div class="product-filters"><label>Desde<input type="date" id="productFrom"></label><label>Até<input type="date" id="productTo"></label><button class="btn ghost" id="productResetDates">Todo o período</button><span id="productPeriodNote" role="status">Período da consolidação · datas das provas MUF</span></div><div id="productSelection"></div><nav class="product-nav" role="tablist" aria-label="Análises"><button type="button" role="tab" id="tab-overview" data-product-tab="overview" aria-controls="productOverview" aria-selected="true" tabindex="0">Visão geral</button><button type="button" role="tab" id="tab-mass" data-product-tab="mass" aria-controls="clientLiveDashboard" aria-selected="false" tabindex="-1">Balanço de massa</button><button type="button" role="tab" id="tab-element" data-product-tab="element" aria-controls="productElement" aria-selected="false" tabindex="-1">Elemental</button><button type="button" role="tab" id="tab-production" data-product-tab="production" aria-controls="productProduction" aria-selected="false" tabindex="-1">Produção</button><button type="button" role="tab" id="tab-proof" data-product-tab="proof" aria-controls="productProof" aria-selected="false" tabindex="-1">Comprovação</button></nav><section id="productProof" role="tabpanel" aria-labelledby="tab-proof" hidden><div class="panel pad"><span class="section-eyebrow">REGISTROS NA SEPOLIA</span><h2>Comprovação</h2><p>Os hashes clicáveis abrem a transação que registrou cada compromisso no Etherscan.</p><div id="productProofContent"></div></div></section><section id="productOverview" role="tabpanel" aria-labelledby="tab-overview"><p>Carregando consolidação…</p></section><section id="productProduction" role="tabpanel" aria-labelledby="tab-production" hidden><div class="panel pad"><span class="section-eyebrow">PRODUÇÃO</span><h2>Rendimento do processo</h2><p>Rendimento em massa e recuperação no produto, calculados a partir das operações selecionadas.</p><div data-production-history></div><div data-production-views></div></div></section><section id="productElement" role="tabpanel" aria-labelledby="tab-element" hidden><p data-element-empty>Selecione um resultado para consultar a análise elemental.</p></section>'+
-    '<section id="clientLiveDashboard" role="tabpanel" aria-labelledby="tab-mass" hidden class="client-live-hidden">'+
+    '<details class="product-details"><summary>Status dos workflows e evidências</summary><div id="clientWorkflowStates"></div></details><div class="product-filters"><label>Desde<input type="date" id="productFrom"></label><label>Até<input type="date" id="productTo"></label><button class="btn ghost" id="productResetDates">Todo o período</button><span id="productPeriodNote" role="status">Período dos históricos e da consolidação · datas das provas MUF</span></div><div id="productSelection"></div><nav class="product-nav" role="tablist" aria-label="Análises"><button type="button" role="tab" id="tab-overview" data-product-tab="overview" aria-controls="productOverview" aria-selected="true" tabindex="0">Visão geral</button><button type="button" role="tab" id="tab-mass" data-product-tab="mass" aria-controls="clientLiveDashboard" aria-selected="false" tabindex="-1">Balanço de massa</button><button type="button" role="tab" id="tab-element" data-product-tab="element" aria-controls="productElement" aria-selected="false" tabindex="-1">Elemental</button><button type="button" role="tab" id="tab-production" data-product-tab="production" aria-controls="productProduction" aria-selected="false" tabindex="-1">Produção</button><button type="button" role="tab" id="tab-proof" data-product-tab="proof" aria-controls="productProof" aria-selected="false" tabindex="-1">Comprovação</button></nav><section id="productProof" role="tabpanel" aria-labelledby="tab-proof" hidden><div class="panel pad"><span class="section-eyebrow">REGISTROS NA SEPOLIA</span><h2>Comprovação</h2><p>Os hashes clicáveis abrem a transação que registrou cada compromisso no Etherscan.</p><div id="productProofContent"></div></div></section><section id="productOverview" role="tabpanel" aria-labelledby="tab-overview"><p>Carregando consolidação…</p></section><section id="productProduction" role="tabpanel" aria-labelledby="tab-production" hidden><div class="panel pad"><span class="section-eyebrow">PRODUÇÃO</span><h2>Rendimento do processo</h2><p>Rendimento em massa e recuperação no produto, calculados a partir das operações selecionadas.</p><div data-production-history></div><div data-production-views></div></div></section><section id="productElement" role="tabpanel" aria-labelledby="tab-element" hidden><section data-element-history class="panel pad product-analysis-history"><p>Carregando histórico elemental…</p></section><p data-element-empty>Selecione um resultado para consultar a análise elemental.</p></section>'+
+    '<section id="clientLiveDashboard" role="tabpanel" aria-labelledby="tab-mass" hidden class="client-live-hidden"><section data-mass-history class="panel pad product-analysis-history"><p>Carregando histórico de massa…</p></section><h2>Resultado selecionado · MUF</h2>'+
       '<div class="client-live-stats">'+
         '<div class="client-live-stat"><b id="clientStatResults">0</b><span>On-chain MUF revisions</span></div>'+
         '<div class="client-live-stat"><b id="clientStatVerified">0</b><span>Hash-verified revisions</span></div>'+
