@@ -1085,7 +1085,47 @@ main{
 }
 
 </style>
-</head>
+
+<style id="product-dashboard-design">
+.product-dashboard{max-width:1440px;margin:auto;font-family:Inter,Arial,sans-serif;color:#dcece9}
+.product-dashboard h1{font-family:Inter,Arial,sans-serif!important;font-size:clamp(28px,3vw,42px)!important;font-weight:650;letter-spacing:-1.5px;margin-bottom:12px}
+.product-dashboard h2{font-family:Inter,Arial,sans-serif!important;font-size:22px!important;letter-spacing:-.5px;margin:8px 0 16px}
+.product-dashboard h3{font-size:18px!important;margin:10px 0}.product-dashboard h4{font-size:13px;letter-spacing:1px;color:#a6c3bd;margin:0 0 18px}
+.product-dashboard p{font-size:13px;line-height:1.65;color:#91b0a9}.product-dashboard .sub{max-width:none}
+.product-dashboard .panel{background:#0b2625;border:1px solid #23403c;border-radius:18px;box-shadow:0 8px 30px #00000010}
+.product-dashboard .pad{padding:26px}.product-dashboard .section-eyebrow{font-size:10px;letter-spacing:1.8px;color:#57d9c6}
+.product-dashboard .client-live-toolbar{padding:20px;background:#0b2625;border:1px solid #23403c;border-radius:16px;margin:24px 0 16px}
+.product-dashboard select{min-height:44px;border-radius:9px;font-size:13px!important;max-width:100%}
+.product-dashboard .client-live-stats{gap:12px;margin:22px 0}.product-dashboard .client-live-stat{border:1px solid #29413d;border-top:0;background:#102e2b;border-radius:14px;padding:20px;min-width:0}
+.product-dashboard .client-live-stat b{font-family:Inter,Arial,sans-serif;font-size:26px;letter-spacing:-.8px;font-variant-numeric:tabular-nums}.product-dashboard .client-live-stat span{font-size:11px;color:#9dbab3}
+.product-dashboard .client-live-grid{grid-template-columns:1fr 1fr;gap:20px}.product-dashboard .client-live-chart{height:280px}
+.product-nav{display:flex;gap:8px;border-bottom:1px solid #29443d;margin:16px 0 24px;padding-bottom:12px;flex-wrap:wrap}.product-nav a{font-size:13px;color:#b4cbc5;padding:10px 16px;text-decoration:none;border-radius:8px}.product-nav a:hover,.product-nav a:focus{background:#16443c;color:#65ead0}
+.product-details{border-top:1px solid #29443d;margin:18px 0 8px;padding-top:14px}.product-details summary{cursor:pointer;color:#a2bfb7;font-size:12px;font-weight:600;padding:5px 0;list-style-position:inside}.product-details[open] summary{color:#5ce0c6;margin-bottom:18px}
+.product-metrics{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin:20px 0}.product-metric{min-width:0}.product-metric span{display:block;color:#98b8ad;font-size:11px;margin-bottom:8px}.product-metric strong{display:block;font-size:clamp(22px,2.4vw,32px);font-weight:600;letter-spacing:-1px;font-variant-numeric:tabular-nums;color:#e5f5ef}
+.product-flow{padding:24px 0;border-bottom:1px solid #28433b}.product-bar-label{display:flex;justify-content:space-between;font-size:12px;gap:12px;margin:12px 0 8px;color:#a5beb5}.product-bar-label b{color:#e2f2ed;font-variant-numeric:tabular-nums}.product-track{height:9px;background:#203d35;border-radius:8px;overflow:hidden}.product-track i{display:block;height:100%;background:#45d6b5;border-radius:8px}.product-track.secondary i{background:#8cb4dd}.product-yield{margin-top:24px;padding:20px;background:#12362e;border:1px solid #2c5746;border-radius:12px}.product-yield h4{margin-top:18px}.product-yield .product-metric strong{color:#88efd0}
+.product-dashboard .product-coverage{font-size:12px;color:#9bb5ad}.product-table-scroll{overflow:auto}.product-dashboard table{font-size:12px}.product-dashboard th{font-size:10px;padding:12px;white-space:nowrap}.product-dashboard td{padding:14px 12px}.product-dashboard .kv{font-size:12px;line-height:1.8}.product-dashboard .kv dd{min-width:0;overflow-wrap:anywhere}
+.product-dashboard [data-consolidation-history]{box-shadow:none!important;background:#0a2423!important}.product-dashboard [data-history-plot]>p{font-size:11px}.product-dashboard [data-consolidation-views]{align-items:start}.product-dashboard .btn{border-radius:9px;font-size:12px}.product-dashboard .tag{font-size:10px}.product-dashboard section{scroll-margin-top:90px}.product-dashboard svg{max-height:340px}.product-dashboard [data-history-plot] svg{min-height:220px}
+@media(max-width:760px){.product-dashboard .pad{padding:18px}.product-dashboard .client-live-grid{grid-template-columns:1fr}.product-dashboard .client-live-stats{grid-template-columns:repeat(2,minmax(0,1fr))}.product-dashboard .client-live-toolbar{display:flex;flex-direction:column;align-items:stretch}.product-dashboard .client-live-toolbar .field{width:100%}.product-metric strong{font-size:24px}}
+</style>
+
+<style id="dashboard-tabs-design">
+.product-dashboard [hidden]{display:none!important}
+.product-nav button{background:none;border:0;color:#9ebbb2;font:600 13px Inter,Arial,sans-serif;padding:13px 20px;border-radius:10px;cursor:pointer;transition:background .15s}
+.product-nav button[aria-selected="true"]{background:#214a3f;color:#96f5d8;box-shadow:inset 0 -2px #5ae1bb}
+.product-nav button:focus-visible{outline:2px solid #85edd3;outline-offset:3px}
+.product-filters{display:flex;align-items:end;gap:12px;flex-wrap:wrap;margin:18px 0}.product-filters label{font-size:11px;color:#a2beb5;display:grid;gap:7px}.product-filters input{background:#102d28;border:1px solid #345248;border-radius:8px;color:#e1efe9;padding:10px;font:13px Arial;color-scheme:dark}.product-filters>span{font-size:11px;color:#94afa5;flex-basis:100%}
+#productSelection details{margin:10px 0}#productProduction [data-production-views]{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:18px;margin-top:22px}
+#productProduction .product-flow{display:none}#productProduction .product-yield{margin-top:18px}#productOverview .product-yield{display:none}
+#productProduction [data-production-history]{margin-top:24px}#productElement:has(#clientElementalPanel:not(:empty)) [data-element-empty]{display:none}
+#productProofDrawer{position:fixed;inset:0 0 0 auto;margin:0;width:min(580px,100vw);max-width:100vw;height:100dvh;max-height:100dvh;box-sizing:border-box;background:#0b2421;color:#def0e8;border:0;border-left:1px solid #3c5d51;padding:28px;box-shadow:-20px 0 80px #0006;overflow:auto}
+#productProofDrawer::backdrop{background:#001912b3;backdrop-filter:blur(3px)}#productProofDrawer header{display:flex;justify-content:space-between;gap:20px;align-items:center}#productProofDrawer h2{font:600 22px Arial}#productProofDrawer h3{margin-top:30px;font-size:16px}#productProofDrawer p{font-size:13px;color:#a1bcb1}#productProofDrawer .kv{display:block}#productProofDrawer dt{font-size:11px;color:#96b6a8;margin:18px 0 5px}#productProofDrawer dd{margin:0;font-size:12px;overflow-wrap:anywhere}#productProofOpen{margin-left:auto}
+.product-dashboard details:has(>summary):has(#clientLatestHash){display:none}
+#clientElementalPanel>details:has(.kv):last-of-type{display:none}
+@media(max-width:760px){.product-nav{flex-wrap:nowrap;overflow:auto}.product-nav button{white-space:nowrap;flex-shrink:0;padding:12px}.product-filters input{min-width:0}.product-filters label{flex:1}#productProduction [data-production-views]{grid-template-columns:1fr}#productProofOpen{margin-left:0}}
+</style>
+<style>
+#productProof .product-proof-card{padding:22px 0;border-top:1px solid #315347}#productProof a{color:#72e5c4;text-decoration:underline;text-underline-offset:4px;overflow-wrap:anywhere}#productProof a:hover{color:#d4fff0}#productProof .kv dd{overflow-wrap:anywhere;min-width:0}#productProof .product-proof-status{font-size:12px}#productProof .kv{grid-template-columns:minmax(110px,180px) minmax(0,1fr)}@media(max-width:640px){#productProof .kv{display:block}#productProof dt{margin-top:14px}#productProof dd{margin-left:0}}
+</style></head>
 <body>
 
 <header class="top">
@@ -3488,6 +3528,174 @@ async function clientBalanceReadMuf(path,proof,evidence,evidenceActorId){
   }
   return doc;
 }
+
+function clientConsolidationCalculate(rows){
+  const groups=new Map(),elements=new Map();
+  let massCount=0,elementCount=0,yieldCount=0;
+  for(const row of rows){
+    const c=row.jsonVerified?row.muf?.calculation:null;
+    const e=row.elementalVerified?row.elementalResult?.calculation:null;
+    const valid=v=>typeof v==='string'&&/^\d+$/.test(v);
+    if(c&&valid(c.referenceInputMassMg)&&valid(c.accountedOutputMassMg)){
+      massCount++;
+      const type=c.actorType||'UNKNOWN';
+      const g=groups.get(type)||{type,input:0n,output:0n,count:0};
+      g.input+=BigInt(c.referenceInputMassMg);g.output+=BigInt(c.accountedOutputMassMg);g.count++;
+      groups.set(type,g);
+    }
+    if(e&&valid(e.availableElementMassMg)&&valid(e.accountedElementMassMg)){
+      elementCount++;
+      // Never combine different elements or stages into one apparent stock balance.
+      const key=(c?.actorType||'UNKNOWN')+' / '+e.element;
+      const g=elements.get(key)||{key,input:0n,output:0n,count:0,process:0n,product:0n,elementProcess:0n,elementProduct:0n,yieldCount:0};
+      g.input+=BigInt(e.availableElementMassMg);g.output+=BigInt(e.accountedElementMassMg);g.count++;
+      const streams=e.streams||[];
+      if(c&&c.actorType!=='CARRIER'&&clientBalanceSameHex(row.resultId,row.elementalResult.mufProofId)&&streams.length&&streams.every(x=>valid(x.dryMassMg)&&valid(x.containedElementMassMg))){
+        const available=streams.filter(x=>x.side==='AVAILABLE');
+        const accounted=streams.filter(x=>x.side==='ACCOUNTED');
+        const products=accounted.filter(x=>x.streamType==='PRODUCT');
+        const closing=accounted.filter(x=>x.streamType==='CLOSING_INVENTORY');
+        const sum=(a,k)=>a.reduce((n,x)=>n+BigInt(x[k]),0n);
+        const dryIn=sum(available,'dryMassMg'),dryOut=sum(accounted,'dryMassMg');
+        const process=dryIn-sum(closing,'dryMassMg');
+        const elementProcess=BigInt(e.availableElementMassMg)-sum(closing,'containedElementMassMg');
+        if(products.length&&available.length&&available.every(x=>['INPUT','OPENING_INVENTORY'].includes(x.streamType))&&valid(c.referenceInputMassMg)&&valid(c.accountedOutputMassMg)&&dryIn===BigInt(c.referenceInputMassMg)&&dryOut===BigInt(c.accountedOutputMassMg)&&process>0n&&elementProcess>0n){
+          g.process+=process;g.product+=sum(products,'dryMassMg');g.elementProcess+=elementProcess;g.elementProduct+=sum(products,'containedElementMassMg');g.yieldCount++;yieldCount++;
+        }
+      }
+      elements.set(key,g);
+    }
+  }
+  return {count:rows.length,massCount,elementCount,yieldCount,groups:[...groups.values()],elements:[...elements.values()]};
+}
+function clientConsolidationView(title,rows){
+  const a=clientConsolidationCalculate(rows),esc=escaparHtml;
+  const kg=n=>clientBalanceKgFromMg(n.toString());
+  const pct=(n,d,precision=2)=>d>0n?(Number((n*100000000n+d/2n)/d)/1e6).toLocaleString('pt-BR',{maximumFractionDigits:precision})+'%':'—';
+  const table=(heads,data)=>'<div class="product-table-scroll"><table><thead><tr>'+heads.map(h=>'<th>'+esc(h)+'</th>').join('')+'</tr></thead><tbody>'+data.map(r=>'<tr>'+r.map(v=>'<td>'+esc(String(v))+'</td>').join('')+'</tr>').join('')+'</tbody></table></div>';
+  const tile=(label,value)=>'<div class="product-metric"><span>'+esc(label)+'</span><strong>'+esc(value)+'</strong></div>';
+  let h='<article class="panel pad product-comparison"><span class="section-eyebrow">'+(title.startsWith('Total')?'TODOS OS STATUS':'MUF + ELEMENTAL COMPLIANT')+'</span><h3>'+esc(title.startsWith('Total')?'Visão total':'Visão atestada')+'</h3><div class="product-coverage">'+a.count+' operações · massas '+a.massCount+'/'+a.count+' · elementos '+a.elementCount+'/'+a.count+'</div>';
+  if(!a.count)return h+'<p>Nenhuma operação nesta seleção.</p></article>';
+  h+='<p class="product-coverage">'+((a.massCount===a.count&&a.elementCount===a.count)?'● Dados completos neste recorte':'◐ Cobertura parcial — existem dados indisponíveis')+'</p>';
+  for(const g of a.groups){
+    const max=g.input>g.output?g.input:g.output;
+    const width=n=>max>0n?Number(n*10000n/max)/100:0;
+    h+='<div class="product-flow"><h4>'+esc(g.type)+'</h4><div class="product-bar-label"><span>Entrada</span><b>'+esc(kg(g.input))+'</b></div><div class="product-track"><i style="width:'+width(g.input)+'%"></i></div><div class="product-bar-label"><span>Saída contabilizada</span><b>'+esc(kg(g.output))+'</b></div><div class="product-track secondary"><i style="width:'+width(g.output)+'%"></i></div><div class="product-metrics">'+tile('Diferença de massa',kg(g.input-g.output))+tile('Saída / entrada',pct(g.output,g.input))+'</div></div>';
+  }
+  const ys=a.elements.filter(g=>g.yieldCount);
+  h+='<div class="product-yield"><span class="section-eyebrow">YIELD · PRODUÇÃO</span>';
+  h+=ys.length?ys.map(g=>'<h4>'+esc(g.key)+'</h4><div class="product-metrics">'+tile('Rendimento em massa',pct(g.product,g.process))+tile('Recuperação no produto',pct(g.elementProduct,g.elementProcess))+'</div><p>'+esc(kg(g.process))+' processados → '+esc(kg(g.product))+' de produto</p>').join(''):'<p>Sem operação de produção calculável nesta seleção.</p>';
+  h+='</div><details class="product-details"><summary>Composição elemental e memória de cálculo</summary>';
+  h+=a.elements.length?table(['Etapa / elemento','Disponível','Contabilizado','Diferença','Recuperação global'],a.elements.map(g=>[g.key,kg(g.input),kg(g.output),kg(g.input-g.output),pct(g.output,g.input,6)])):'<p>Composição elemental indisponível.</p>';
+  h+=ys.length?table(['Etapa / elemento','Massa processada','Produto','YIELD em massa','Recuperação no produto'],ys.map(g=>[g.key,kg(g.process),kg(g.product),pct(g.product,g.process,6),pct(g.elementProduct,g.elementProcess,6)])):'';
+  h+='<p>YIELD disponível em '+a.yieldCount+'/'+a.count+' operações. Percentuais pela razão das somas. Base: entradas menos estoque final; produto: fluxos PRODUCT. Recuperação global inclui todas as saídas contabilizadas. Totais representam operações selecionadas, não saldo de estoque.</p></details></article>';
+  return h;
+}
+
+function clientConsolidationTimeline(rows,key,metric,cumulative){
+  const elementMetric=['elementInput','elementOutput','elementDifference','recovery','yield','productRecovery'].includes(metric);
+  const ordered=rows.map(row=>{
+    const c=row.jsonVerified?row.muf?.calculation:null;
+    const e=row.elementalVerified?row.elementalResult?.calculation:null;
+    const group=elementMetric?(c?.actorType||'UNKNOWN')+' / '+(e?.element||'UNKNOWN'):c?.actorType||'UNKNOWN';
+    return {row,group,unknownElement:elementMetric&&!e&&key.startsWith((c?.actorType||'UNKNOWN')+' / '),time:elementMetric?row.elementalCreatedAt||row.createdAt||row.evidenceCreatedAt:row.createdAt||row.evidenceCreatedAt};
+  }).filter(x=>(x.group===key||x.unknownElement)&&Number.isFinite(Number(x.time))&&Number(x.time)>0).sort((a,b)=>Number(a.time)-Number(b.time)||a.row.evidenceId.localeCompare(b.row.evidenceId));
+  const total=[],compliant=[];let all=[],approved=[];
+  const value=items=>{
+    const a=clientConsolidationCalculate(items),g=elementMetric?a.elements.find(x=>x.key===key):a.groups.find(x=>x.type===key);
+    if(!g)return null;
+    if(['yield','productRecovery'].includes(metric)&&!g.yieldCount)return null;
+    if(metric==='yield')return Number(g.product*100000000n/g.process)/1e6;
+    if(metric==='productRecovery')return Number(g.elementProduct*100000000n/g.elementProcess)/1e6;
+    if(metric==='recovery'||metric==='ratio')return g.input>0n?Number(g.output*100000000n/g.input)/1e6:null;
+    if(metric==='input'||metric==='elementInput')return Number(g.input)/1e6;
+    if(metric==='output'||metric==='elementOutput')return Number(g.output)/1e6;
+    return Number(g.input-g.output)/1e6;
+  };
+  for(const x of ordered){
+    const row=x.row,st=row.workflowState||row.state;
+    const ok=Number(st?.mufStatus)===2&&Number(st?.elementalStatus)===2;
+    all.push(row);if(ok)approved.push(row);
+    const own=value([row]);
+    const point=(v,items)=>({time:Number(x.time),value:v,id:row.evidenceId,lot:row.manifest?.lotReference||'Sem lote',count:items.length,status:clientProofStatus(st?.mufStatus)+' / '+clientProofStatus(st?.elementalStatus)});
+    total.push(point(own===null?null:value(cumulative?all:[row]),cumulative?all:[row]));
+    compliant.push(point(ok&&own!==null?value(cumulative?approved:[row]):null,cumulative?approved:ok?[row]:[]));
+  }
+  return {total,compliant,missing:rows.length-ordered.filter(x=>value([x.row])!==null).length};
+}
+function clientConsolidationChart(data,unit){
+  const esc=escaparHtml,series=[{name:'Total · todos os status',color:'#30d5c3',points:data.total},{name:'Somente COMPLIANT',color:'#ffce73',points:data.compliant}];
+  const points=series.flatMap(s=>s.points).filter(p=>p.value!==null&&Number.isFinite(p.value));
+  if(!points.length)return '<p>Nenhum valor disponível para este gráfico. Ausência de cálculo não é zero.</p>';
+  const times=data.total.map(p=>p.time),minT=Math.min(...times),maxT=Math.max(...times);
+  const lo=Math.min(0,...points.map(p=>p.value)),hi=Math.max(0,...points.map(p=>p.value));
+  const pad=(hi-lo||1)*.12,minY=lo<0?lo-pad:0,maxY=hi+pad;
+  const x=t=>maxT===minT?490:90+(t-minT)/(maxT-minT)*800;
+  const y=v=>260-(v-minY)/(maxY-minY)*215;
+  const fmt=v=>v.toLocaleString('pt-BR',{maximumFractionDigits:unit==='%'?6:3})+' '+unit;
+  const date=t=>new Date(t*1000).toLocaleString('pt-BR');
+  let h='<svg viewBox="0 0 960 330" style="width:100%;height:300px;display:block" role="img" aria-label="Evolução dos resultados: Total e somente COMPLIANT"><title>Evolução por data de publicação das provas</title>';
+  for(let i=0;i<5;i++){const v=minY+(maxY-minY)*i/4;h+='<line x1="90" x2="890" y1="'+y(v)+'" y2="'+y(v)+'" stroke="#36645e" stroke-dasharray="4 5"/><text x="80" y="'+(y(v)+4)+'" text-anchor="end" fill="#bbd9d3" font-size="12">'+esc(fmt(v))+'</text>';}
+  series.forEach((s,j)=>{
+    let path='',last=false;
+    for(const p of s.points){if(p.value===null){last=false;continue;}path+=(last?' L':' M')+x(p.time)+' '+y(p.value);last=true;}
+    h+='<path d="'+path+'" fill="none" stroke="'+s.color+'" stroke-width="'+(j?2:3)+'"'+(j?' stroke-dasharray="7 5"':'')+'/>';
+    for(const p of s.points){if(p.value===null)continue;const tip=s.name+' · '+date(p.time)+' · '+fmt(p.value)+' · '+p.lot+' · '+p.id+' · '+p.status+' · '+p.count+' registro(s)';h+='<circle tabindex="0" cx="'+x(p.time)+'" cy="'+y(p.value)+'" r="'+(j?4:7)+'" fill="'+s.color+'" stroke="#062a25" stroke-width="1" aria-label="'+esc(tip)+'"><title>'+esc(tip)+'</title></circle>';}
+  });
+  h+='<text x="90" y="295" fill="#bbd9d3" font-size="12">'+esc(date(minT))+'</text>';
+  if(maxT!==minT)h+='<text x="890" y="295" text-anchor="end" fill="#bbd9d3" font-size="12">'+esc(date(maxT))+'</text>';
+  h+='</svg><p><span style="color:#30d5c3">● Total</span> &nbsp; <span style="color:#ffce73">● Somente COMPLIANT</span> · Passe o mouse nos pontos para consultar data, valor e evidência.</p>';
+  h+='<details><summary>Valores do gráfico em tabela</summary><div style="overflow:auto"><table><thead><tr><th>Data da prova</th><th>Evidência</th><th>Total</th><th>Somente COMPLIANT</th></tr></thead><tbody>'+data.total.map((p,i)=>'<tr><td>'+esc(date(p.time))+'</td><td>'+esc(p.id)+'</td><td>'+esc(p.value===null?'Sem cálculo':fmt(p.value))+'</td><td>'+esc(data.compliant[i]?.value==null?'Não incluído / sem cálculo':fmt(data.compliant[i].value))+'</td></tr>').join('')+'</tbody></table></div></details>';
+  return h;
+}
+function clientConsolidationHistory(host,rows){
+  const metrics=[['input','Entradas de material','kg',false],['output','Saídas contabilizadas','kg',false],['difference','Diferença de massa','kg',false],['ratio','Saída / entrada','%',false],['elementInput','Elemento disponível','kg',true],['elementOutput','Elemento contabilizado','kg',true],['elementDifference','Diferença elemental','kg',true],['recovery','Recuperação global do elemento','%',true],['yield','YIELD de produção','%',true],['productRecovery','Recuperação do elemento no produto','%',true]];
+  const oldMetric=host.querySelector('[data-history-metric]')?.value||(host.hasAttribute('data-production-history')?'yield':'output');
+  const oldMode=host.querySelector('[data-history-mode]')?.value||'operation';
+  const oldGroup=host.querySelector('[data-history-group]')?.value;
+  host.innerHTML='<span class="section-eyebrow">HISTÓRICO</span><h2>Evolução de desempenho</h2><details class="product-details"><summary>Como interpretar o histórico</summary><p>Resultados por data de publicação das provas; sem prova ELEMENTAL, a lacuna usa a data MUF disponível. Os filtros usam os status atuais e a última revisão; este gráfico não reconstrói mudanças passadas de status nem representa estoque.</p></details><div style="display:flex;flex-wrap:wrap;gap:16px"><label>Indicador<br><select data-history-metric>'+metrics.map(m=>'<option value="'+m[0]+'">'+m[1]+'</option>').join('')+'</select></label><label>Etapa / elemento<br><select data-history-group></select></label><label>Visualização<br><select data-history-mode><option value="operation">Por operação</option><option value="cumulative">Acumulado dos resultados conhecidos</option></select></label></div><div data-history-plot></div>';
+  const metric=host.querySelector('[data-history-metric]'),group=host.querySelector('[data-history-group]'),mode=host.querySelector('[data-history-mode]'),plot=host.querySelector('[data-history-plot]');metric.value=oldMetric;mode.value=oldMode;
+  const draw=()=>{const m=metrics.find(x=>x[0]===metric.value);const data=clientConsolidationTimeline(rows,group.value,m[0],mode.value==='cumulative');plot.innerHTML='<h3>'+escaparHtml(m[1])+' · '+escaparHtml(group.value||'Sem dados')+'</h3><p>'+data.missing+' registro(s) selecionado(s) fora desta série ou sem valor. Acumulados representam apenas valores conhecidos; lacunas não equivalem a zero.</p>'+clientConsolidationChart(data,m[2]);};
+  const groups=()=>{const m=metrics.find(x=>x[0]===metric.value),a=clientConsolidationCalculate(rows);const keys=m[3]?a.elements.map(x=>x.key):a.groups.map(x=>x.type);group.innerHTML=keys.map(k=>'<option value="'+escaparHtml(k)+'">'+escaparHtml(k)+'</option>').join('');if(keys.includes(oldGroup))group.value=oldGroup;draw();};
+  metric.onchange=groups;group.onchange=draw;mode.onchange=draw;groups();
+}
+async function clientConsolidationRender(candidates){
+  const host=document.getElementById('clientWorkflowStates');if(!host)return;
+  document.getElementById('clientConsolidationPanel')?.remove();
+  const panel=document.createElement('section');panel.id='clientConsolidationPanel';panel.className='panel pad';panel.style.margin='24px 0';const overview=document.getElementById('productOverview');if(overview){overview.replaceChildren(panel);}else{host.after(panel);}
+  const request=CLIENT_BALANCE_REQUEST,address=EXPLORERCHEM_CONTRACT_ADDRESS;
+  const active=()=>panel.isConnected&&request===CLIENT_BALANCE_REQUEST&&address===EXPLORERCHEM_CONTRACT_ADDRESS;
+  const rows=[...new Map(candidates.map(r=>[r.evidenceId.toLowerCase(),{...r,checked:true,elementalVerified:false,elementalError:''}])).values()];
+  panel.innerHTML='<span class="section-eyebrow">VISÃO CONSOLIDADA</span><h2>Desempenho das operações</h2><p>Conferindo os resultados ELEMENTAL…</p>';
+  try{
+    const contract=new ethers.Contract(address,CLIENT_BALANCE_ABI,await clientBalanceProvider());
+    await clientBalanceEnsureSession();
+    for(const row of rows){
+      if(!active())return;
+      try{
+        const id=String(await contract.latestProofId(row.evidenceId,3));
+        if(CLIENT_BALANCE_ZERO.test(id)){row.elementalError='Sem prova ELEMENTAL concluída';continue;}
+        const proof=await contract.getProof(id);
+        const state=row.workflowState||row.state;
+        if(!clientBalanceSameHex(proof.proofId,id)||Number(proof.proofType)!==3||!clientBalanceSameHex(proof.evidenceId,row.evidenceId)||!clientBalanceSameHex(proof.evidenceHash,row.evidenceHash)||!clientBalanceSameHex(proof.committedHash,state.elementalHash)||Number(proof.status)!==Number(state.elementalStatus))throw new Error('Prova ELEMENTAL incompatível');
+        const path='elemental-results/'+row.evidenceId.slice(2).toLowerCase()+'/'+id.slice(2).toLowerCase()+'.json';
+        const signed=await supabaseClient.storage.from(EVIDENCE_BUCKET).createSignedUrl(path,900);if(signed.error)throw signed.error;
+        const res=await fetch(signed.data.signedUrl,{cache:'no-store'});if(!res.ok)throw new Error('JSON ELEMENTAL: HTTP '+res.status);
+        const bytes=new Uint8Array(await res.arrayBuffer());if(!clientBalanceSameHex(ethers.keccak256(bytes),proof.committedHash))throw new Error('Hash do JSON ELEMENTAL divergente');
+        const r=clientElementalValidate(JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(bytes)),proof,row);
+        // Require the same current MUF revision for consolidation, avoiding stale dependencies.
+        if(!row.resultId||!clientBalanceSameHex(r.mufProofId,row.resultId)||!clientBalanceSameHex(r.expectedMufHash,row.resultHash))throw new Error('ELEMENTAL não referencia o MUF atual');
+        row.elementalResult=r;row.elementalCreatedAt=Number(proof.createdAt);row.elementalVerified=true;
+      }catch(e){row.elementalError=e.message||String(e);}
+    }
+    if(!active())return;
+    const esc=escaparHtml;
+    panel.innerHTML='<span class="section-eyebrow">VISÃO CONSOLIDADA</span><h2>Desempenho das operações</h2><p>Compare massa, recuperação elemental e rendimento da empresa.</p><details class="product-details"><summary>Selecionar operações e consultar critérios</summary><p>Estas são somas de operações selecionadas, não saldo de estoque. Desmarque reenvios ou etapas que representam o mesmo material. Não somamos etapas diferentes em um único estoque.</p><div style="overflow:auto"><table><thead><tr><th>Incluir</th><th>Lote / evidência</th><th>Registrado por</th><th>MUF</th><th>ELEMENTAL</th><th>Disponibilidade</th></tr></thead><tbody>'+rows.map((r,i)=>{const st=r.workflowState||r.state;return '<tr><td><input type="checkbox" checked data-consolidation-index="'+i+'" aria-label="Incluir '+esc(r.evidenceId)+'"></td><td>'+esc(r.manifest?.lotReference||'Sem lote')+'<br><span title="'+esc(r.evidenceId)+'">'+esc(clientBalanceShort(r.evidenceId))+'</span></td><td>'+esc(r.evidenceActor?.display_name||'—')+'</td><td>'+clientBalanceTag(clientProofStatus(st.mufStatus))+'</td><td>'+clientBalanceTag(clientProofStatus(st.elementalStatus))+'</td><td>'+esc(r.elementalError||(!r.jsonVerified?'JSON MUF não verificado':r.elementalResult?.reasonCodes?.join(', ')||'JSONs conferidos'))+'</td></tr>';}).join('')+'</tbody></table></div><p>Na visão Total, valores existentes em resultados DIVERGENT ou NOT_ATTESTED não se tornam atestados. JSON sem integridade verificada não fornece valores. Registros sem cálculo permanecem na cobertura.</p></details><section data-consolidation-history class="panel pad" style="margin:20px 0"></section><div data-consolidation-views style="display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,440px),1fr));gap:16px"></div><p>Consolidação local baseada nos resultados privados e provas consultadas. Não publica nem altera os status YIELD / MULTI_STREAM na blockchain.</p>';
+    const draw=()=>{const selected=productFilterRows(rows.filter(r=>r.checked));const compliant=selected.filter(r=>Number((r.workflowState||r.state).mufStatus)===2&&Number((r.workflowState||r.state).elementalStatus)===2);panel.querySelector('[data-consolidation-views]').innerHTML=clientConsolidationView('Total · todos os status',selected)+clientConsolidationView('Somente COMPLIANT · MUF + ELEMENTAL',compliant);clientConsolidationHistory(panel.querySelector('[data-consolidation-history]'),selected);const production=document.querySelector('[data-production-views]');if(production){production.innerHTML=clientConsolidationView('Total',selected)+clientConsolidationView('Somente COMPLIANT',compliant);clientConsolidationHistory(document.querySelector('[data-production-history]'),selected);} };
+    const selection=document.getElementById('productSelection');if(selection){const picker=panel.querySelector('details');if(picker)selection.replaceChildren(picker);}const root=document.querySelector('.product-dashboard');if(root)root.productRedraw=draw;
+    (selection||panel).querySelectorAll('[data-consolidation-index]').forEach(input=>input.onchange=()=>{rows[Number(input.dataset.consolidationIndex)].checked=input.checked;draw();});draw();
+  }catch(e){if(active())panel.innerHTML='<h2>YIELD + MULTI_STREAM</h2><p>'+escaparHtml(e.message||String(e))+'</p>';}
+}
 function clientElementalValidate(doc,proof,selected){
   const r=doc.result;
   if(doc.schema!=='ExploreChem/PrivateElementalResult/v1'||doc.calculationVersion!==1||r?.schema!=='ExploreChem/ElementalResult/v1'||r.calculationVersion!==1)throw new Error('Unsupported ELEMENTAL JSON schema.');
@@ -3521,10 +3729,10 @@ function clientElementalBody(proof,r,path,error){
     html+='<div class="client-live-stats">'+[['Element',c.element],['Available element',kg(c.availableElementMassMg)],['Accounted element',kg(c.accountedElementMassMg)],['Absolute difference',kg(c.absoluteElementalDifferenceMg)],['Difference',pct(c.absoluteElementalDifferencePercentScaled6)]].map(([k,v])=>'<div class="client-live-stat"><b>'+esc(v)+'</b><span>'+esc(k)+'</span></div>').join('')+'</div>';
     const max=Math.max(Number(c.availableElementMassMg),Number(c.accountedElementMassMg));
     html+='<h3>Element mass comparison · '+esc(c.element)+'</h3><div role="img" aria-label="Available and accounted element mass">'+[['Available',c.availableElementMassMg],['Accounted',c.accountedElementMassMg]].map(([label,value])=>'<p>'+label+' · '+esc(kg(value))+'</p><div style="height:24px;background:#092e2a;border-radius:4px"><div style="height:24px;background:#26cabb;border-radius:4px;width:'+Math.max(0,Math.min(100,Number(value)/max*100))+'%"></div></div>').join('')+'</div>';
-    html+='<dl class="kv">'+field('Signed difference',kg(c.signedElementalDifferenceMg))+field('Elemental recovery',pct(c.elementalRecoveryPercentScaled6))+field('Expanded balance uncertainty',kg(c.balanceExpandedUncertaintyMg))+field('Formula',c.formula)+'</dl>';
-    html+='<div style="overflow:auto"><table><thead><tr><th>Stream</th><th>Type</th><th>Side</th><th>Dry mass</th><th>Element</th><th>Assay basis</th><th>Assay</th><th>Compound</th><th>Contained element</th></tr></thead><tbody>'+c.streams.map(s=>'<tr>'+[s.streamId,s.streamType,s.side,kg(s.dryMassMg),s.element,s.assayBasis,pct(s.assayValuePctScaled6),s.compound||'—',kg(s.containedElementMassMg)].map(v=>'<td>'+esc(v)+'</td>').join('')+'</tr>').join('')+'</tbody></table></div>';
+    html+='<details class="product-details"><summary>Fluxos, fórmula e incerteza</summary><dl class="kv">'+field('Signed difference',kg(c.signedElementalDifferenceMg))+field('Elemental recovery',pct(c.elementalRecoveryPercentScaled6))+field('Expanded balance uncertainty',kg(c.balanceExpandedUncertaintyMg))+field('Formula',c.formula)+'</dl>';
+    html+='<div style="overflow:auto"><table><thead><tr><th>Stream</th><th>Type</th><th>Side</th><th>Dry mass</th><th>Element</th><th>Assay basis</th><th>Assay</th><th>Compound</th><th>Contained element</th></tr></thead><tbody>'+c.streams.map(s=>'<tr>'+[s.streamId,s.streamType,s.side,kg(s.dryMassMg),s.element,s.assayBasis,pct(s.assayValuePctScaled6),s.compound||'—',kg(s.containedElementMassMg)].map(v=>'<td>'+esc(v)+'</td>').join('')+'</tr>').join('')+'</tbody></table></div></details>';
   }
-  html+='<dl class="kv">'+field('Created at',clientBalanceDateFromUnix(Number(proof.createdAt)))+field('evidenceId',proof.evidenceId)+field('evidenceHash',proof.evidenceHash)+field('ELEMENTAL proofId',proof.proofId)+field('elementalHash',proof.committedHash)+field('inputCommitmentHash',proof.inputCommitmentHash)+field('methodologyHash',proof.methodologyHash)+field('Revision',proof.revision)+field('MUF proof used',r?.mufProofId)+field('MUF hash used',r?.expectedMufHash)+field('Reason codes',r?(r.reasonCodes||[]).join(', ')||'None':'Private JSON not verified')+field('Integrity',r?'JSON HASH VERIFIED':'ON-CHAIN COMMITMENT ONLY')+field('Private JSON',path)+'</dl>';
+  html+='<details class="product-details"><summary>Prova elemental · hashes e rastreabilidade</summary><dl class="kv">'+field('Created at',clientBalanceDateFromUnix(Number(proof.createdAt)))+field('evidenceId',proof.evidenceId)+field('evidenceHash',proof.evidenceHash)+field('ELEMENTAL proofId',proof.proofId)+field('elementalHash',proof.committedHash)+field('inputCommitmentHash',proof.inputCommitmentHash)+field('methodologyHash',proof.methodologyHash)+field('Revision',proof.revision)+field('MUF proof used',r?.mufProofId)+field('MUF hash used',r?.expectedMufHash)+field('Reason codes',r?(r.reasonCodes||[]).join(', ')||'None':'Private JSON not verified')+field('Integrity',r?'JSON HASH VERIFIED':'ON-CHAIN COMMITMENT ONLY')+field('Private JSON',path)+'</dl></details>';
   html+='<button id="clientElementalDownload" class="btn ghost"'+(r?'':' disabled')+'>Download ELEMENTAL JSON</button>';
   return html;
 }
@@ -3561,6 +3769,7 @@ async function clientElementalRender(selected){
     }catch(e){r=null;bytes=null;error=e.message||String(e);}
     if(!active())return;
     panel.innerHTML=clientElementalBody(proof,r,path,error);
+    if(document.querySelector('.product-dashboard')?.dataset.activeTab==='proof')productProofRender();
     if(r){
       panel.querySelector('#clientElementalDownload').onclick=()=>{
         const url=URL.createObjectURL(new Blob([bytes],{type:'application/json'}));
@@ -3575,6 +3784,8 @@ function clientBalanceRenderWorkflowStates(entries){
   panel.innerHTML='<div class="panel pad"><h2>Workflow status · active contract</h2><p class="mono">'+escaparHtml(EXPLORERCHEM_CONTRACT_ADDRESS)+'</p><div style="overflow:auto"><table><thead><tr><th>Evidence</th>'+CLIENT_PROOF_TYPES.map(([name])=>'<th>'+name+'</th>').join('')+'</tr></thead><tbody>'+entries.map(({evidenceId,state})=>'<tr><td class="mono" title="'+escaparHtml(evidenceId)+'">'+escaparHtml(clientBalanceShort(evidenceId))+'</td>'+CLIENT_PROOF_TYPES.map(([,key])=>'<td>'+clientBalanceTag(clientProofStatus(state[key+'Status']))+'</td>').join('')+'</tr>').join('')+'</tbody></table></div><p>MUF and TOLERANCE have independent verdicts. A completed MUF does not approve the other workflows.</p></div>';
 }
 async function clientBalanceLoadSelectedActor(){
+  document.getElementById('clientElementalPanel')?.replaceChildren();
+  const productRoot=document.querySelector('.product-dashboard');if(productRoot)productRoot.productRedraw=null;document.getElementById('productSelection')?.replaceChildren();document.getElementById('productProofContent')?.replaceChildren();document.querySelector('[data-production-views]')?.replaceChildren();document.querySelector('[data-production-history]')?.replaceChildren();
   const request=++CLIENT_BALANCE_REQUEST;
   const actorId=$('#clientLiveActorSelect')?.value;
   const actor=CLIENT_BALANCE_ACTORS.find(item=>item.actor_id===actorId);
@@ -3584,6 +3795,7 @@ async function clientBalanceLoadSelectedActor(){
   if(refresh) refresh.disabled=true;
   if(select){select.innerHTML='<option>Loading MUF proofs…</option>';select.disabled=true;}
   CLIENT_BALANCE_RESULTS=[];CLIENT_BALANCE_WARNINGS=[];
+  document.getElementById('clientConsolidationPanel')?.remove();
   $('#clientLiveDashboard')?.classList.add('client-live-hidden');
   const statesPanel=$('#clientWorkflowStates');if(statesPanel)statesPanel.innerHTML='';
   clientBalanceShowMessage('Reading MUF proofs','Checking the active contract and private result commitments for '+actor.display_name+'.');
@@ -3617,7 +3829,7 @@ async function clientBalanceLoadSelectedActor(){
         const evidence=await contract.getEvidence(evidenceId);
         if(!clientBalanceSameHex(evidence.actorId,evidenceActor.actor_id))throw new Error('Submitting company differs between Supabase and blockchain.');
         const state=await contract.getCurrentProofState(evidenceId);
-        states.push({evidenceId,state});
+        states.push({evidenceId,state,evidenceCreatedAt:Math.floor(new Date(row.created_at).getTime()/1000),evidenceHash:String(evidence.evidenceHash),evidenceActor,actor,manifest:{lotReference:row.lot_reference},isLatest:true});
         if(Number(state.mufStatus)===1)continue;
         let proofId=String(await contract.latestProofId(evidenceId,1));
         const seen=new Set();let first=true;
@@ -3667,6 +3879,7 @@ async function clientBalanceLoadSelectedActor(){
     if(request!==CLIENT_BALANCE_REQUEST||address!==EXPLORERCHEM_CONTRACT_ADDRESS)return;
     CLIENT_BALANCE_RESULTS=found.sort((a,b)=>b.createdAt-a.createdAt);CLIENT_BALANCE_WARNINGS=warnings;
     clientBalanceRenderWorkflowStates(states);
+    clientConsolidationRender(states.map(entry=>({...entry,...found.find(r=>r.isLatest&&r.evidenceId===entry.evidenceId)})));
     clientBalancePopulateResultSelector(actorId);
     if(!found.length){clientBalanceShowMessage('No completed MUF proof',states.some(x=>Number(x.state.mufStatus)===1)?'MUF is PENDING on the active contract.': 'No completed MUF commitment exists for this company on the active contract.');}
     else{clientBalanceHideMessage();clientBalanceRenderDashboard();}
@@ -3870,6 +4083,7 @@ function clientBalanceRenderDashboard(){
   $("#clientLiveDashboard")?.classList.remove("client-live-hidden");
   clientBalanceRenderChart(pairs,structuralDivergence);
   clientBalanceRenderHistoryChart();
+  if(document.querySelector('.product-dashboard')?.dataset.activeTab==='proof')productProofRender();
   clientElementalRender(selected);
 }
 function clientBalanceRenderHistoryChart(){
@@ -4033,7 +4247,90 @@ async function clientBalanceRefreshAll(){
     CLIENT_BALANCE_INITIALIZING=false;
   }
 }
+
+function productFilterRows(rows){
+ const from=document.getElementById('productFrom')?.value,to=document.getElementById('productTo')?.value;
+ const lo=from?new Date(from+'T00:00:00').getTime()/1000:-Infinity;
+ const hi=to?new Date(to+'T23:59:59').getTime()/1000:Infinity;
+ return rows.filter(r=>{if(!from&&!to)return true;const stamp=Number(r.createdAt);return Number.isFinite(stamp)&&stamp>0&&stamp>=lo&&stamp<=hi;});
+}
+
+const PRODUCT_EXPLORER='https://sepolia.etherscan.io';
+const PRODUCT_PROOF_EVENTS=[
+ 'event EvidenceSubmitted(bytes32 indexed evidenceId,bytes32 indexed actorId,address indexed submittedBy,bytes32 evidenceHash,uint64 createdAt)',
+ 'event ProofAnchored(bytes32 indexed proofId,bytes32 indexed evidenceId,uint8 indexed proofType,bytes32 committedHash,uint8 status,uint32 revision,bytes32 previousProofId,bytes32 inputCommitmentHash,bytes32 methodologyHash,bytes32 workflowId,uint64 createdAt)'
+];
+const PRODUCT_TX_CACHE=new Map();
+function productExplorerAnchor(text,tx,address){
+ const a=document.createElement('a');a.textContent=text;a.target='_blank';a.rel='noopener noreferrer';
+ if(tx&&/^0x[0-9a-f]{64}$/i.test(tx))a.href=PRODUCT_EXPLORER+'/tx/'+tx+'#eventlog';
+ else if(address&&/^0x[0-9a-f]{40}$/i.test(address))a.href=PRODUCT_EXPLORER+'/address/'+address;
+ else return document.createTextNode(text);
+ a.title=tx?'Abrir transação de registro no Etherscan':'Abrir contrato no Etherscan';return a;
+}
+async function productFindProofTransaction(provider,address,kind,record,active){
+ const id=String(kind==='EvidenceSubmitted'?record.evidenceId:record.proofId);
+ const key=address.toLowerCase()+':'+kind+':'+id.toLowerCase();if(PRODUCT_TX_CACHE.has(key))return PRODUCT_TX_CACHE.get(key);
+ const iface=new ethers.Interface(PRODUCT_PROOF_EVENTS),stamp=Number(record.createdAt);
+ if(!Number.isSafeInteger(stamp)||stamp<=0)throw Error('Data de registro indisponível.');
+ const head=await provider.getBlockNumber();let low=0,high=head;
+ // Localiza o bloco pelo timestamp on-chain, sem varrer intervalos extensos.
+ while(low<high){if(!active())throw Error('Seleção alterada.');const mid=Math.floor((low+high)/2);const block=await provider.getBlock(mid);if(!block)throw Error('Bloco indisponível no RPC.');if(Number(block.timestamp)<stamp)low=mid+1;else high=mid;}
+ if(!active())throw Error('Seleção alterada.');
+ const logs=await provider.getLogs({address,topics:[iface.getEvent(kind).topicHash,id],fromBlock:Math.max(0,low-1),toBlock:Math.min(head,low+1)});
+ for(const log of logs){if(log.removed)continue;const parsed=iface.parseLog(log),a=parsed?.args;if(!a||!clientBalanceSameHex(a.evidenceId,record.evidenceId))continue;
+ const hash=kind==='EvidenceSubmitted'?a.evidenceHash:a.committedHash;
+ const expected=kind==='EvidenceSubmitted'?record.evidenceHash:record.committedHash;
+ if(!clientBalanceSameHex(hash,expected)||Number(a.createdAt)!==stamp)continue;
+ if(kind==='ProofAnchored'&&(!clientBalanceSameHex(a.proofId,record.proofId)||Number(a.proofType)!==Number(record.proofType)))continue;
+ if(!/^0x[0-9a-f]{64}$/i.test(log.transactionHash))continue;
+ PRODUCT_TX_CACHE.set(key,log.transactionHash);return log.transactionHash;}
+ throw Error('Transação de registro não localizada.');
+}
+async function productProofRender(){
+ const host=document.getElementById('productProofContent');if(!host)return;
+ const selected=clientBalanceSelectedResult(),token={};host.proofToken=token;host.replaceChildren();
+ if(!selected){host.textContent='Selecione um resultado disponível para consultar as provas.';return;}
+ const request=CLIENT_BALANCE_REQUEST,address=EXPLORERCHEM_CONTRACT_ADDRESS;
+ const active=()=>host.isConnected&&host.proofToken===token&&request===CLIENT_BALANCE_REQUEST&&address===EXPLORERCHEM_CONTRACT_ADDRESS&&clientBalanceSelectedResult()?.resultId===selected.resultId;
+ const contractLine=document.createElement('p');contractLine.append('Contrato · ',productExplorerAnchor(address,null,address));host.append(contractLine);
+ const boxes={};
+ for(const [key,title,selector] of [['evidence','Evidência original',null],['muf','Prova MUF','#clientLatestHash'],['elemental','Prova ELEMENTAL','#clientElementalPanel']]){
+  const box=document.createElement('section');box.className='product-proof-card';const h=document.createElement('h3');h.textContent=title;box.append(h);
+  let dl;
+  if(key==='evidence'){dl=document.createElement('dl');dl.className='kv';for(const [label,value] of [['evidenceId',selected.evidenceId],['evidenceHash',selected.evidenceHash]]){const dt=document.createElement('dt'),dd=document.createElement('dd');dt.textContent=label;dd.textContent=value;dl.append(dt,dd);}}
+  else {const source=key==='muf'?document.querySelector(selector)?.closest('dl'):[...document.querySelectorAll('#clientElementalPanel > details')].find(d=>d.querySelector('summary')?.textContent.startsWith('Prova '))?.querySelector('dl');dl=source?.cloneNode(true);}
+  if(dl){dl.querySelectorAll('[id]').forEach(n=>n.removeAttribute('id'));box.append(dl);}
+  const status=document.createElement('p');status.className='product-proof-status';status.textContent='Localizando transação de registro…';box.append(status);host.append(box);boxes[key]={box,dl,status};
+ }
+ const downloads=document.createElement('div');downloads.className='client-live-proof-actions';
+ for(const [id,label] of [['clientProofButton','Abrir / salvar PDF'],['clientJsonButton','Baixar JSON MUF'],['clientElementalDownload','Baixar JSON ELEMENTAL']]){const source=document.getElementById(id);if(!source||source.disabled)continue;const button=document.createElement('button');button.className='btn ghost';button.textContent=label;button.onclick=()=>{if(active())document.getElementById(id)?.click();};downloads.append(button);}host.append(downloads);
+ function linkBox(key,record,tx){const {box,dl,status}=boxes[key];if(dl)for(const dt of dl.querySelectorAll('dt')){const dd=dt.nextElementSibling;if(!dd)continue;const label=dt.textContent.trim();const value=dd.textContent.trim();if(key!=='evidence'&&label==='evidenceHash')continue;if(key!=='evidence'&&label==='evidenceId')continue;if(/^(mufHash|elementalHash|proofId|ELEMENTAL proofId|inputCommitmentHash|methodologyHash|evidenceHash|evidenceId)$/.test(label)&&/^0x[0-9a-f]{64}$/i.test(value))dd.replaceChildren(productExplorerAnchor(value,tx));if(label==='Contract')dd.replaceChildren(productExplorerAnchor(value,null,address));}
+ status.replaceChildren('Transação · ',productExplorerAnchor(tx,tx));}
+ try{const provider=await clientBalanceProvider();const contract=new ethers.Contract(address,CLIENT_BALANCE_ABI,provider);
+  const tasks=[['evidence',async()=>contract.getEvidence(selected.evidenceId),'EvidenceSubmitted'],['muf',async()=>contract.getProof(selected.resultId),'ProofAnchored'],['elemental',async()=>{const id=String(await contract.latestProofId(selected.evidenceId,3));if(CLIENT_BALANCE_ZERO.test(id))throw Error('Ainda não há prova ELEMENTAL registrada.');return contract.getProof(id);},'ProofAnchored']];
+  // Sequencial para não disparar várias buscas de blocos simultaneamente.
+  for(const [key,read,kind] of tasks){if(!active())return;try{const record=await read();if(!active())return;const tx=await productFindProofTransaction(provider,address,kind,record,active);if(!active())return;linkBox(key,record,tx);
+   if(key==='evidence')for(const other of ['muf','elemental'])for(const dt of boxes[other].dl?.querySelectorAll('dt')||[]){if(['evidenceHash','evidenceId'].includes(dt.textContent.trim())){const dd=dt.nextElementSibling;dd.replaceChildren(productExplorerAnchor(dd.textContent,tx));}}
+  }catch(e){if(active())boxes[key].status.textContent='Link indisponível: '+(e.shortMessage||e.message||String(e));}}
+ }catch(e){if(active())for(const b of Object.values(boxes))b.status.textContent='Não foi possível consultar as transações: '+(e.message||String(e));}
+}
+
+function productDashboardBind(){
+ const root=document.querySelector('.product-dashboard');if(!root||root.dataset.tabsBound)return;root.dataset.tabsBound='1';
+ const element=document.getElementById('clientElementalPanel');if(element)document.getElementById('productElement').append(element);
+ const panels={overview:'productOverview',mass:'clientLiveDashboard',element:'productElement',production:'productProduction',proof:'productProof'};
+ const tabs=[...root.querySelectorAll('[data-product-tab]')];
+ function activate(key){root.dataset.activeTab=key;for(const [name,id] of Object.entries(panels)){const panel=document.getElementById(id);if(panel)panel.hidden=name!==key;}tabs.forEach(t=>{const active=t.dataset.productTab===key;t.setAttribute('aria-selected',String(active));t.tabIndex=active?0:-1;});if(key==='proof')productProofRender();if(key==='mass')requestAnimationFrame(()=>{if(typeof Chart!=='undefined')Chart.getChart?.('clientMassChart')?.resize();});}
+ tabs.forEach((tab,i)=>{tab.onclick=()=>activate(tab.dataset.productTab);tab.onkeydown=e=>{let next;if(e.key==='ArrowRight')next=(i+1)%tabs.length;else if(e.key==='ArrowLeft')next=(i+tabs.length-1)%tabs.length;else if(e.key==='Home')next=0;else if(e.key==='End')next=tabs.length-1;else return;e.preventDefault();tabs[next].focus();activate(tabs[next].dataset.productTab);};});
+ const from=document.getElementById('productFrom'),to=document.getElementById('productTo');
+ const filter=()=>{const invalid=from.value&&to.value&&from.value>to.value;to.setCustomValidity(invalid?'A data final deve ser posterior à inicial.':'');if(invalid){to.reportValidity();return;}root.productRedraw?.();};from.onchange=filter;to.onchange=filter;
+ document.getElementById('productResetDates').onclick=()=>{from.value='';to.value='';filter();};
+ activate('overview');
+}
+
 function clientBalanceBindUi(){
+  productDashboardBind();
   clientBalancePrefillActorsFromMainApp();
   const actor=$("#clientLiveActorSelect");
   if(actor&&!actor.dataset.bound){
@@ -4084,9 +4381,9 @@ function clientBalanceBindUi(){
 }
 
 T.dashboard=()=>{
-  return '<div class="crumb">Client · verified mass balance</div>'+
-    '<div class="headrow"><div class="grow"><h1>Verified Mass Dashboard</h1>'+
-    '<p class="sub">One company at a time. MUF proofs are read from the active Sepolia contract. The private JSON hash, input commitment and methodology are checked before display.</p></div></div>'+ 
+  return '<div class="product-dashboard" data-active-tab="overview"><div class="crumb">Client · verified mass balance</div>'+
+    '<div class="headrow"><div class="grow"><h1>Material Intelligence</h1>'+
+    '<p class="sub">Mass balance, elemental recovery and process performance in one place.</p></div></div>'+ 
 
     '<div class="client-live-toolbar">'+
       '<div class="field"><label for="clientLiveActorSelect">Company</label>'+ 
@@ -4100,8 +4397,8 @@ T.dashboard=()=>{
       '<b>Loading verified balances</b><span>Reading actors, evidence states and result commitments.</span>'+
     '</div>'+
 
-    '<div id="clientWorkflowStates"></div>'+
-    '<section id="clientLiveDashboard" class="client-live-hidden">'+
+    '<details class="product-details"><summary>Status dos workflows e evidências</summary><div id="clientWorkflowStates"></div></details><div class="product-filters"><label>Desde<input type="date" id="productFrom"></label><label>Até<input type="date" id="productTo"></label><button class="btn ghost" id="productResetDates">Todo o período</button><span id="productPeriodNote" role="status">Período da consolidação · datas das provas MUF</span></div><div id="productSelection"></div><nav class="product-nav" role="tablist" aria-label="Análises"><button type="button" role="tab" id="tab-overview" data-product-tab="overview" aria-controls="productOverview" aria-selected="true" tabindex="0">Visão geral</button><button type="button" role="tab" id="tab-mass" data-product-tab="mass" aria-controls="clientLiveDashboard" aria-selected="false" tabindex="-1">Balanço de massa</button><button type="button" role="tab" id="tab-element" data-product-tab="element" aria-controls="productElement" aria-selected="false" tabindex="-1">Elemental</button><button type="button" role="tab" id="tab-production" data-product-tab="production" aria-controls="productProduction" aria-selected="false" tabindex="-1">Produção</button><button type="button" role="tab" id="tab-proof" data-product-tab="proof" aria-controls="productProof" aria-selected="false" tabindex="-1">Comprovação</button></nav><section id="productProof" role="tabpanel" aria-labelledby="tab-proof" hidden><div class="panel pad"><span class="section-eyebrow">REGISTROS NA SEPOLIA</span><h2>Comprovação</h2><p>Os hashes clicáveis abrem a transação que registrou cada compromisso no Etherscan.</p><div id="productProofContent"></div></div></section><section id="productOverview" role="tabpanel" aria-labelledby="tab-overview"><p>Carregando consolidação…</p></section><section id="productProduction" role="tabpanel" aria-labelledby="tab-production" hidden><div class="panel pad"><span class="section-eyebrow">PRODUÇÃO</span><h2>Rendimento do processo</h2><p>Rendimento em massa e recuperação no produto, calculados a partir das operações selecionadas.</p><div data-production-history></div><div data-production-views></div></div></section><section id="productElement" role="tabpanel" aria-labelledby="tab-element" hidden><p data-element-empty>Selecione um resultado para consultar a análise elemental.</p></section>'+
+    '<section id="clientLiveDashboard" role="tabpanel" aria-labelledby="tab-mass" hidden class="client-live-hidden">'+
       '<div class="client-live-stats">'+
         '<div class="client-live-stat"><b id="clientStatResults">0</b><span>On-chain MUF revisions</span></div>'+
         '<div class="client-live-stat"><b id="clientStatVerified">0</b><span>Hash-verified revisions</span></div>'+
@@ -4117,7 +4414,7 @@ T.dashboard=()=>{
             '<h2 id="clientLatestTitle">Mass balance</h2>'+
             '<p id="clientLatestSubtitle"></p>'+
           '</div><span id="clientLatestAudit" class="tag t-pend">—</span></div>'+
-          '<dl class="kv">'+
+          '<div class="product-metrics"><div class="product-metric"><span>Diferença de massa · MUF</span><strong id="clientLatestMufMass"></strong></div><div class="product-metric"><span>Diferença percentual</span><strong id="clientLatestMufPercent"></strong></div></div><details class="product-details"><summary>Prova MUF · hashes e metodologia</summary><dl class="kv">'+
             '<dt>Mass verdict</dt><dd id="clientLatestVerdict"></dd>'+
             '<dt>Created at</dt><dd id="clientLatestCreated"></dd>'+
             '<dt>evidenceId</dt><dd id="clientLatestEvidence" class="mono"></dd>'+
@@ -4127,14 +4424,12 @@ T.dashboard=()=>{
             '<dt>inputCommitmentHash</dt><dd id="clientLatestInputHash" class="hash"></dd>'+
              '<dt>methodologyHash</dt><dd id="clientLatestMethodology" class="hash"></dd>'+
             '<dt>Contract</dt><dd id="clientLatestContract" class="mono"></dd>'+
-            '<dt>Absolute MUF</dt><dd id="clientLatestMufMass"></dd>'+
-            '<dt>MUF percentage</dt><dd id="clientLatestMufPercent"></dd>'+
             '<dt>Formula</dt><dd id="clientLatestFormula"></dd>'+
             '<dt>Reason codes</dt><dd id="clientLatestReason"></dd>'+
             '<dt>Interpretation</dt><dd id="clientLatestInterpretation"></dd>'+
             '<dt>Private JSON</dt><dd id="clientLatestPath" class="hash"></dd>'+
             '<dt>Integrity</dt><dd id="clientLatestIntegrity"></dd>'+
-          '</dl>'+
+          '</dl></details>'+
           '<div class="client-live-proof-actions"><button id="clientProofButton" class="btn ghost">Open / Save Balance PDF</button><button id="clientJsonButton" class="btn ghost">Download MUF JSON</button></div>'+
         '</section>'+
 
@@ -4149,7 +4444,7 @@ T.dashboard=()=>{
       '</div>'+
 
       '<section id="clientElementalPanel" class="panel pad" style="margin:24px 0"></section>'+
-      '<h2>MUF mass balance</h2>'+
+      '<details class="product-details"><summary>Fluxos de massa e histórico de evidências</summary><h2>MUF mass balance</h2>'+
       '<section class="panel client-live-table"><table>'+
         '<thead><tr><th>Lot</th><th>Route</th><th>Origin declaration</th><th>Destination declaration</th><th class="num">Difference</th><th>Verdict</th></tr></thead>'+
         '<tbody id="clientPairRows"></tbody>'+
@@ -4160,8 +4455,8 @@ T.dashboard=()=>{
         '<thead><tr><th>Created</th><th>JSON integrity</th><th>Mass verdict</th><th>Lot</th><th>Evidence</th><th>Result</th><th>Version</th></tr></thead>'+
         '<tbody id="clientHistoryRows"></tbody>'+
       '</table></section>'+
-      '<p id="clientWarnings" class="client-live-warning"></p>'+
-    '</section>';
+      '</details><p id="clientWarnings" class="client-live-warning"></p>'+
+    '</section></div>';
 };
 
 /* ===== TELA DO LABORATÓRIO ===== */
@@ -4636,4 +4931,3 @@ if(walletProvider&&typeof walletProvider.on==="function"){
 </script>
 </body>
 </html>
-
