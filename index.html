@@ -3488,6 +3488,87 @@ async function clientBalanceReadMuf(path,proof,evidence,evidenceActorId){
   }
   return doc;
 }
+function clientElementalValidate(doc,proof,selected){
+  const r=doc.result;
+  if(doc.schema!=='ExploreChem/PrivateElementalResult/v1'||doc.calculationVersion!==1||r?.schema!=='ExploreChem/ElementalResult/v1'||r.calculationVersion!==1)throw new Error('Unsupported ELEMENTAL JSON schema.');
+  if(!clientBalanceSameHex(r.evidenceId,selected.evidenceId)||!clientBalanceSameHex(r.actorId,selected.evidenceActor.actor_id)||!clientBalanceSameHex(r.expectedEvidenceHash,selected.evidenceHash))throw new Error('ELEMENTAL evidence identity mismatch.');
+  if(r.status!==clientProofStatus(proof.status)||Number(r.statusCode)!==Number(proof.status))throw new Error('ELEMENTAL status mismatch.');
+  if(!clientBalanceSameHex(clientBalanceHashStable(doc.methodology),proof.methodologyHash))throw new Error('ELEMENTAL methodology mismatch.');
+  const input=clientBalanceHashStable({domain:'ExploreChem/ElementalInputCommitment/v1',evidenceId:selected.evidenceId,expectedEvidenceHash:selected.evidenceHash,indexedEvidenceHash:r.indexedEvidenceHash,downloadedDocumentHash:r.downloadedDocumentHash,mufProofId:r.mufProofId,expectedMufHash:r.expectedMufHash,downloadedMufResultHash:r.downloadedMufResultHash,calculationInputs:r.calculation});
+  if(!clientBalanceSameHex(input,proof.inputCommitmentHash))throw new Error('ELEMENTAL input commitment mismatch.');
+  const c=r.calculation;
+  if(c){
+    const a=BigInt(c.availableElementMassMg),b=BigInt(c.accountedElementMassMg),delta=a-b,abs=delta<0n?-delta:delta;
+    if(a<=0n||b<0n||delta!==BigInt(c.signedElementalDifferenceMg)||abs!==BigInt(c.absoluteElementalDifferenceMg))throw new Error('ELEMENTAL mass arithmetic mismatch.');
+    if(BigInt(c.absoluteElementalDifferencePercentScaled6)!==(abs*100000000n+a/2n)/a||BigInt(c.elementalRecoveryPercentScaled6)!==(b*100000000n+a/2n)/a)throw new Error('ELEMENTAL percentage mismatch.');
+    if(!Array.isArray(c.streams)||!c.streams.length)throw new Error('ELEMENTAL streams missing.');
+    for(const side of ['AVAILABLE','ACCOUNTED']){
+      const sum=c.streams.filter(s=>s.side===side).reduce((n,s)=>n+BigInt(s.containedElementMassMg),0n);
+      if(sum!==(side==='AVAILABLE'?a:b))throw new Error('ELEMENTAL stream totals mismatch.');
+    }
+  }
+  return r;
+}
+function clientElementalBody(proof,r,path,error){
+  const esc=escaparHtml,c=r?.calculation;
+  const field=(label,value)=>'<dt>'+esc(label)+'</dt><dd style="overflow-wrap:anywhere">'+esc(value==null?'—':String(value))+'</dd>';
+  const kg=value=>value==null?'—':clientBalanceKgFromMg(value);
+  const pct=value=>value==null?'—':(Number(value)/1e6).toFixed(6)+'%';
+  let html='<div class="client-live-result-head"><div><span class="section-eyebrow">ELEMENTAL · CURRENT PROOF</span><h2>Elemental analysis</h2></div>'+clientBalanceTag(clientProofStatus(proof.status))+'</div>';
+  html+='<p>'+esc(r?(c?'Verified private JSON. Tolerance is not evaluated.':'No calculation available — '+(r.reasonCodes||[]).join(', ')):'Private JSON unavailable or not verified. Calculation values are not displayed.')+'</p>';
+  if(error)html+='<p class="client-live-warning">'+esc(error)+'</p>';
+  if(c){
+    html+='<div class="client-live-stats">'+[['Element',c.element],['Available element',kg(c.availableElementMassMg)],['Accounted element',kg(c.accountedElementMassMg)],['Absolute difference',kg(c.absoluteElementalDifferenceMg)],['Difference',pct(c.absoluteElementalDifferencePercentScaled6)]].map(([k,v])=>'<div class="client-live-stat"><b>'+esc(v)+'</b><span>'+esc(k)+'</span></div>').join('')+'</div>';
+    const max=Math.max(Number(c.availableElementMassMg),Number(c.accountedElementMassMg));
+    html+='<h3>Element mass comparison · '+esc(c.element)+'</h3><div role="img" aria-label="Available and accounted element mass">'+[['Available',c.availableElementMassMg],['Accounted',c.accountedElementMassMg]].map(([label,value])=>'<p>'+label+' · '+esc(kg(value))+'</p><div style="height:24px;background:#092e2a;border-radius:4px"><div style="height:24px;background:#26cabb;border-radius:4px;width:'+Math.max(0,Math.min(100,Number(value)/max*100))+'%"></div></div>').join('')+'</div>';
+    html+='<dl class="kv">'+field('Signed difference',kg(c.signedElementalDifferenceMg))+field('Elemental recovery',pct(c.elementalRecoveryPercentScaled6))+field('Expanded balance uncertainty',kg(c.balanceExpandedUncertaintyMg))+field('Formula',c.formula)+'</dl>';
+    html+='<div style="overflow:auto"><table><thead><tr><th>Stream</th><th>Type</th><th>Side</th><th>Dry mass</th><th>Element</th><th>Assay basis</th><th>Assay</th><th>Compound</th><th>Contained element</th></tr></thead><tbody>'+c.streams.map(s=>'<tr>'+[s.streamId,s.streamType,s.side,kg(s.dryMassMg),s.element,s.assayBasis,pct(s.assayValuePctScaled6),s.compound||'—',kg(s.containedElementMassMg)].map(v=>'<td>'+esc(v)+'</td>').join('')+'</tr>').join('')+'</tbody></table></div>';
+  }
+  html+='<dl class="kv">'+field('Created at',clientBalanceDateFromUnix(Number(proof.createdAt)))+field('evidenceId',proof.evidenceId)+field('evidenceHash',proof.evidenceHash)+field('ELEMENTAL proofId',proof.proofId)+field('elementalHash',proof.committedHash)+field('inputCommitmentHash',proof.inputCommitmentHash)+field('methodologyHash',proof.methodologyHash)+field('Revision',proof.revision)+field('MUF proof used',r?.mufProofId)+field('MUF hash used',r?.expectedMufHash)+field('Reason codes',r?(r.reasonCodes||[]).join(', ')||'None':'Private JSON not verified')+field('Integrity',r?'JSON HASH VERIFIED':'ON-CHAIN COMMITMENT ONLY')+field('Private JSON',path)+'</dl>';
+  html+='<button id="clientElementalDownload" class="btn ghost"'+(r?'':' disabled')+'>Download ELEMENTAL JSON</button>';
+  return html;
+}
+async function clientElementalRender(selected){
+  const panel=document.getElementById('clientElementalPanel');
+  if(!panel)return;
+  const request=CLIENT_BALANCE_REQUEST,address=EXPLORERCHEM_CONTRACT_ADDRESS;
+  const token={};panel.elementalRequest=token;
+  const active=()=>panel.isConnected&&panel.elementalRequest===token&&request===CLIENT_BALANCE_REQUEST&&address===EXPLORERCHEM_CONTRACT_ADDRESS&&clientBalanceSelectedResult()?.resultId===selected.resultId;
+  panel.innerHTML='<h2>Elemental analysis</h2><p>Loading current ELEMENTAL proof for this evidence…</p>';
+  try{
+    const contract=new ethers.Contract(address,CLIENT_BALANCE_ABI,await clientBalanceProvider());
+    const state=await contract.getCurrentProofState(selected.evidenceId);
+    const id=String(await contract.latestProofId(selected.evidenceId,3));
+    if(!active())return;
+    if(CLIENT_BALANCE_ZERO.test(id)){
+      panel.innerHTML='<h2>Elemental analysis</h2>'+clientBalanceTag(clientProofStatus(state.elementalStatus))+'<p>No completed ELEMENTAL proof for this evidence. No calculation or result JSON is available yet.</p>';return;
+    }
+    const proof=await contract.getProof(id);
+    if(!clientBalanceSameHex(proof.proofId,id)||Number(proof.proofType)!==3||!clientBalanceSameHex(proof.evidenceId,selected.evidenceId)||!clientBalanceSameHex(proof.evidenceHash,selected.evidenceHash)||!clientBalanceSameHex(proof.committedHash,state.elementalHash)||Number(proof.status)!==Number(state.elementalStatus))throw new Error('ELEMENTAL on-chain proof identity/state mismatch.');
+    const path='elemental-results/'+selected.evidenceId.slice(2).toLowerCase()+'/'+id.slice(2).toLowerCase()+'.json';
+    let r=null,bytes=null,error='';
+    try{
+      await clientBalanceEnsureSession();
+      const signed=await supabaseClient.storage.from(EVIDENCE_BUCKET).createSignedUrl(path,900);
+      if(signed.error)throw signed.error;
+      const response=await fetch(signed.data.signedUrl,{cache:'no-store'});
+      if(!response.ok)throw new Error('ELEMENTAL JSON: HTTP '+response.status);
+      bytes=new Uint8Array(await response.arrayBuffer());
+      if(!clientBalanceSameHex(ethers.keccak256(bytes),proof.committedHash))throw new Error('ELEMENTAL JSON hash differs from on-chain commitment.');
+      r=clientElementalValidate(JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(bytes)),proof,selected);
+      const usedMuf=await contract.getProof(r.mufProofId);
+      if(Number(usedMuf.proofType)!==1||!clientBalanceSameHex(usedMuf.proofId,r.mufProofId)||!clientBalanceSameHex(usedMuf.evidenceId,selected.evidenceId)||!clientBalanceSameHex(usedMuf.committedHash,r.expectedMufHash))throw new Error('Referenced MUF proof mismatch.');
+    }catch(e){r=null;bytes=null;error=e.message||String(e);}
+    if(!active())return;
+    panel.innerHTML=clientElementalBody(proof,r,path,error);
+    if(r){
+      panel.querySelector('#clientElementalDownload').onclick=()=>{
+        const url=URL.createObjectURL(new Blob([bytes],{type:'application/json'}));
+        const a=document.createElement('a');a.href=url;a.download='elemental-'+id.slice(2)+'.json';a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);
+      };
+    }
+  }catch(error){if(active())panel.innerHTML='<h2>Elemental analysis</h2><p class="client-live-warning">'+escaparHtml(error.shortMessage||error.message||String(error))+'</p>';}
+}
 function clientBalanceRenderWorkflowStates(entries){
   const panel=document.getElementById('clientWorkflowStates');
   if(!panel) return;
@@ -3789,6 +3870,7 @@ function clientBalanceRenderDashboard(){
   $("#clientLiveDashboard")?.classList.remove("client-live-hidden");
   clientBalanceRenderChart(pairs,structuralDivergence);
   clientBalanceRenderHistoryChart();
+  clientElementalRender(selected);
 }
 function clientBalanceRenderHistoryChart(){
   let panel=document.getElementById("clientMassHistoryChart");
@@ -4066,6 +4148,7 @@ T.dashboard=()=>{
         '</section>'+
       '</div>'+
 
+      '<section id="clientElementalPanel" class="panel pad" style="margin:24px 0"></section>'+
       '<h2>MUF mass balance</h2>'+
       '<section class="panel client-live-table"><table>'+
         '<thead><tr><th>Lot</th><th>Route</th><th>Origin declaration</th><th>Destination declaration</th><th class="num">Difference</th><th>Verdict</th></tr></thead>'+
@@ -4553,3 +4636,4 @@ if(walletProvider&&typeof walletProvider.on==="function"){
 </script>
 </body>
 </html>
+
