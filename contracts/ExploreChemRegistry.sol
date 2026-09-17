@@ -868,6 +868,9 @@ contract ExploreChemProofRegistry is IReceiver, IERC721, IERC5192 {
     function _readWorkflowId(
         bytes calldata metadata
     ) internal pure returns (bytes32 workflowId) {
+        // The forwarder removes the first 45 bytes of the raw report header.
+        // Receiver metadata starts with workflowId (32 bytes), followed by
+        // workflowName (10), workflowOwner (20), and reportId (2).
         if (metadata.length < 32) revert InvalidMetadataLength(metadata.length);
         assembly {
             workflowId := calldataload(metadata.offset)
