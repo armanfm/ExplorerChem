@@ -1909,11 +1909,11 @@ function aplicarSomenteLeitura(){
 async function carregarAtores(){
   try{
     const {data,error}=await supabaseClient.from("explorerchem_actors")
-      .select("id,actor_id,display_name,actor_type,country_code,created_at")
+      .select("id,actor_id,display_name,actor_type,country_code,public_wallet_address,created_at")
       .eq("active",true)
       .order("created_at",{ascending:false});
     if(!error&&Array.isArray(data)){
-      ATORES=data.map(a=>({dbId:a.id,id:a.actor_id,nome:a.display_name,papel:actorTypeLabel[a.actor_type]||a.actor_type,praca:a.country_code||"—",carteiras:1,evid:0,desde:a.created_at?new Date(a.created_at).toLocaleDateString("en-US"):"—"}));
+      ATORES=data.map(a=>({dbId:a.id,id:a.actor_id,nome:a.display_name,papel:actorTypeLabel[a.actor_type]||a.actor_type,praca:a.country_code||"—",publicWalletAddress:a.public_wallet_address||null,carteiras:a.public_wallet_address?1:0,evid:0,desde:a.created_at?new Date(a.created_at).toLocaleDateString("en-US"):"—"}));
       if(ATOR_ATIVO&&!ATORES.some(a=>a.id===ATOR_ATIVO)){
         ATOR_ATIVO=null;
         persistirAtorAtivo();
@@ -2565,15 +2565,50 @@ T.atores=()=>
   'carteiras autorizadas. Trocar a chave não muda a identidade nem apaga o histórico já ancorado.</p>'+
   (ATORES.length
     ? '<div class="panel scrollx"><table><thead><tr><th>Empresa</th><th>Praça</th>'+
-      '<th>Identidade</th><th class="num">Carteiras</th><th class="num">Evidências</th><th>Desde</th></tr></thead><tbody>'+
+      '<th>Identidade</th><th>Carteira pública</th><th class="num">Evidências</th><th>Desde</th><th></th></tr></thead><tbody>'+
       ATORES.map(a=>'<tr><td style="font-weight:500">'+val(a.nome)+'</td>'+
         '<td>'+val(a.praca)+'</td><td class="mono" style="font-size:12.5px">'+val(a.id)+'</td>'+
-        '<td class="num">'+val(a.carteiras,0)+'</td><td class="num">'+val(a.evid,0)+'</td>'+
-        '<td>'+val(a.desde)+'</td></tr>').join("")+'</tbody></table></div>'
+        '<td class="mono" style="font-size:12px">'+(a.publicWalletAddress?val(a.publicWalletAddress.slice(0,8)+'…'+a.publicWalletAddress.slice(-6)):'Não cadastrada')+'</td>'+
+        '<td class="num">'+val(a.evid,0)+'</td><td>'+val(a.desde)+'</td>'+
+        '<td><button type="button" class="btn ghost sm" data-edit-actor-wallet="'+val(a.dbId)+'">Alterar carteira</button></td></tr>').join("")+'</tbody></table></div>'
     : vazio("Nenhum ator cadastrado",
         "Nenhuma empresa ativa foi encontrada."))+
+  '<section class="panel pad" id="actorWalletEditor" hidden style="margin-top:16px">'+
+  '<h3 id="actorWalletEditorTitle">Alterar carteira pública</h3>'+
+  '<p class="sm">Informe a nova carteira Ethereum que receberá os tokens destinados a esta empresa.</p>'+
+  '<div class="field"><label for="actorWalletAddress">Nova carteira pública</label>'+
+  '<input id="actorWalletAddress" class="mono" placeholder="0x…" autocomplete="off" spellcheck="false"></div>'+
+  '<div class="actions"><button type="button" class="btn" id="saveActorWallet">Salvar carteira</button>'+
+  '<button type="button" class="btn ghost" id="cancelActorWallet">Cancelar</button></div></section>'+
   '<p class="note">Documento de registro da empresa não aparece aqui nem para os participantes. '+
   'Um ator reconhece o outro por nome, praça e carteira.</p>';
+
+async function salvarCarteiraPublicaAtor(actorDbId,addressInput,button){
+  const actor=ATORES.find(a=>String(a.dbId)===String(actorDbId));
+  if(!actor){toast("Empresa não encontrada.");return;}
+  if(!window.ethers){toast("Biblioteca Web3 não carregou.");return;}
+  const raw=String(addressInput?.value||"").trim();
+  if(!ethers.isAddress(raw)){toast("Informe um endereço Ethereum válido.");return;}
+  const address=ethers.getAddress(raw),originalText=button.textContent;
+  button.disabled=true;button.textContent="Salvando…";
+  try{
+    const {data,error}=await supabaseClient.from("explorerchem_actors")
+      .update({public_wallet_address:address})
+      .eq("id",actor.dbId)
+      .select("id,public_wallet_address")
+      .single();
+    if(error)throw new Error(error.message);
+    actor.publicWalletAddress=data.public_wallet_address;
+    actor.carteiras=1;
+    toast("Carteira pública de "+actor.nome+" atualizada.");
+    await carregarAtores();
+  }catch(error){
+    console.error(error);
+    toast("Não foi possível atualizar a carteira: "+(error.message||error));
+  }finally{
+    button.disabled=false;button.textContent=originalText;
+  }
+}
 
 function adminStatusLabel(status){
   return ({0:"INEXISTENTE",1:"PENDENTE",2:"ATIVA",3:"SUSPENSA",4:"REJEITADA"})[Number(status)]||"DESCONHECIDO";
@@ -2638,10 +2673,9 @@ T.cadastro=()=>
   '<input id="rp" placeholder="Nome do responsável"></div>'+
   '<div class="field"><label for="em">E-mail</label>'+
   '<input id="em" type="email" placeholder="contato@empresa.com"></div></div>'+
-  '<div class="field"><label for="wl">Carteira autorizada</label>'+
-  '<input id="wl" class="mono" placeholder="0x…"></div>'+
-  '<p class="note">A carteira assina o envio de evidências. Outras podem ser autorizadas depois, '+
-  'sem trocar a identidade.</p></div><div class="stack">'+
+  '<div class="field"><label for="wl">Carteira pública do ator</label>'+
+  '<input id="wl" class="mono" placeholder="0x…" autocomplete="off" spellcheck="false"></div>'+
+  '<p class="note">Esta carteira receberá os tokens destinados à empresa. Ela poderá ser alterada depois em uma tela própria.</p></div><div class="stack">'+
   '<div class="panel pad"><h3>O que este ator poderá ver</h3><dl class="kv">'+
   '<dt>As próprias evidências</dt><dd><span class="tag t-ok">Sim</span></dd>'+
   '<dt>A etapa seguinte da cadeia</dt><dd><span class="tag t-ok">Sim</span></dd>'+
@@ -4993,6 +5027,22 @@ function render(){
     if(revoke)revoke.onclick=()=>adminSetWalletPermission(false,revoke);
   }
 
+  if(role==="op"&&page==="atores"){
+    const editor=$("#actorWalletEditor"),input=$("#actorWalletAddress"),title=$("#actorWalletEditorTitle"),save=$("#saveActorWallet"),cancel=$("#cancelActorWallet");
+    document.querySelectorAll("[data-edit-actor-wallet]").forEach(button=>button.onclick=function(){
+      const actor=ATORES.find(a=>String(a.dbId)===String(button.dataset.editActorWallet));
+      if(!actor||!editor||!input||!save)return;
+      editor.hidden=false;
+      editor.dataset.actorDbId=actor.dbId;
+      input.value=actor.publicWalletAddress||"";
+      if(title)title.textContent="Alterar carteira pública · "+actor.nome;
+      input.focus();
+      editor.scrollIntoView({behavior:"smooth",block:"center"});
+    });
+    if(save)save.onclick=()=>salvarCarteiraPublicaAtor(editor?.dataset.actorDbId,input,save);
+    if(cancel)cancel.onclick=()=>{if(editor){editor.hidden=true;delete editor.dataset.actorDbId;}if(input)input.value="";};
+  }
+
   const bind=function(sel,msg){const el=$(sel);if(el)el.onclick=function(e){e.preventDefault();toast(msg);};};
   const bindOnchain=function(sel){const el=$(sel);if(el)el.onclick=function(e){
     e.preventDefault(); enviarEvidenciaReal(el);
@@ -5005,8 +5055,9 @@ function render(){
     if(!walletAddress){toast("Conecte uma carteira autorizada antes de continuar.");return;}
     const chainAtual=await refreshWalletChain();
     if(chainAtual!=="0xaa36a7"){toast("Troque a carteira para a rede Sepolia antes de assinar.");return;}
-    const nome=$("#rs")?.value.trim(),papel="Empresa",existing=ATORES.find(a=>normalizarNomeEmpresa(a.nome)===normalizarNomeEmpresa(nome));
+    const nome=$("#rs")?.value.trim(),publicWalletRaw=$("#wl")?.value.trim(),papel="Empresa",existing=ATORES.find(a=>normalizarNomeEmpresa(a.nome)===normalizarNomeEmpresa(nome));
     if(!nome){toast("Informe a razão social.");return;}
+    if(!publicWalletRaw){toast("Informe a carteira pública do ator.");return;}
     const novo={id:existing?.id||$("#actorId")?.value||novoActorId(),nome,papel,praca:$("#pr")?.value||"—",carteiras:1,evid:existing?.evid||0,desde:existing?.desde||new Date().toLocaleDateString("en-US")};
     if(!existing&&ATORES.some(a=>a.id===novo.id)){toast("Identificador já usado. Gere outro antes de cadastrar.");return;}
     const actorIdField=$("#actorId");if(actorIdField)actorIdField.value=novo.id;
@@ -5014,6 +5065,8 @@ function render(){
     const actorType="OTHER",countryCode=($("#pa")?.value||"BR").slice(0,2).toUpperCase();
     try{
       if(!window.ethers) throw new Error("Biblioteca Web3 não carregou");
+      if(!ethers.isAddress(publicWalletRaw)) throw new Error("A carteira pública do ator não é um endereço Ethereum válido.");
+      const publicWalletAddress=ethers.getAddress(publicWalletRaw);
       const provider=new ethers.BrowserProvider(getWalletProvider());
       const signer=await provider.getSigner();
       const abi=[
@@ -5041,10 +5094,10 @@ function render(){
       if(status!==2)throw new Error(status===3?"A empresa está suspensa no contrato novo.":"A empresa não pode ser ativada no estado on-chain atual.");
       if(!await contract.isWalletAuthorized(novo.id,walletAddress))throw new Error("A empresa está ativa, mas esta carteira não está autorizada a enviar evidências por ela.");
       salvarAtor.textContent="Salvando empresa…";
-      const chainFields={active:true,onchain_registered_at:new Date().toISOString()};if(approvalReceipt?.hash)chainFields.onchain_registration_tx=approvalReceipt.hash;
+      const chainFields={active:true,onchain_registered_at:new Date().toISOString(),public_wallet_address:publicWalletAddress};if(approvalReceipt?.hash)chainFields.onchain_registration_tx=approvalReceipt.hash;
       const response=existing?.dbId
-        ? await supabaseClient.from("explorerchem_actors").update({...chainFields,display_name:nome,actor_type:actorType,country_code:countryCode}).eq("id",existing.dbId).select("id,actor_id,display_name,actor_type").single()
-        : await supabaseClient.from("explorerchem_actors").insert({actor_id:novo.id,display_name:nome,actor_type:actorType,country_code:countryCode,...chainFields}).select("id,actor_id,display_name,actor_type").single();
+        ? await supabaseClient.from("explorerchem_actors").update({...chainFields,display_name:nome,actor_type:actorType,country_code:countryCode}).eq("id",existing.dbId).select("id,actor_id,display_name,actor_type,public_wallet_address").single()
+        : await supabaseClient.from("explorerchem_actors").insert({actor_id:novo.id,display_name:nome,actor_type:actorType,country_code:countryCode,...chainFields}).select("id,actor_id,display_name,actor_type,public_wallet_address").single();
       const {data:row,error}=response;
       if(error) throw new Error("Blockchain confirmada, mas o Supabase recusou o cadastro: "+error.message);
       novo.dbId=row.id;
