@@ -2631,12 +2631,13 @@ function adminRequestRows(){
 }
 function tokenizationAdminRows(){
   if(!TOKENIZATION_ADMIN_REQUESTS.length)return '<tr><td colspan="7"><div class="pad" style="text-align:center">'+escaparHtml(TOKENIZATION_ADMIN_MESSAGE)+'</div></td></tr>';
-  const labels={REQUESTED:'SOLICITADO',PENDING:'AGUARDANDO MINT',SUBMITTED:'ENVIADO',MINTED:'TOKENIZADO',REJECTED:'REJEITADO',FAILED:'FALHA'};
+  const labels={REQUESTED:'SOLICITADO',PENDING:'AGUARDANDO WORKFLOW',PROCESSING:'VERIFICANDO PROVAS',SUBMITTED:'ENVIADO',MINTED:'TOKENIZADO',REJECTED:'REJEITADO',FAILED:'FALHA'};
   return TOKENIZATION_ADMIN_REQUESTS.map(r=>{
     const tx=r.mint_tx_hash?'<a target="_blank" rel="noopener noreferrer" href="https://sepolia.etherscan.io/tx/'+escaparHtml(r.mint_tx_hash)+'">Etherscan</a>':'—';
     let actions='—';
     if(r.status==='REQUESTED')actions='<div class="actions" style="margin:0;white-space:nowrap"><button type="button" class="btn sm" data-token-review="'+escaparHtml(r.id)+'" data-token-approve="1">Aprovar</button><button type="button" class="btn ghost sm" data-token-review="'+escaparHtml(r.id)+'" data-token-approve="0">Rejeitar</button></div>';
-    if(r.status==='PENDING')actions='<button type="button" class="btn sm" data-token-mint="'+escaparHtml(r.id)+'">Conferir provas e mintar</button>';
+    if(r.status==='PENDING')actions='<span class="sm">Aguardando execução automática</span>';
+    if(r.status==='PROCESSING')actions='<span class="sm">Workflow conferindo JSON e provas</span>';
     return '<tr><td><b>'+escaparHtml(r.companyName||'Empresa')+'</b><div class="sm mono">'+escaparHtml(r.publicWallet||'Carteira não cadastrada')+'</div></td><td>'+escaparHtml(r.lotReference||'—')+'<div class="sm mono">'+escaparHtml(clientBalanceShort(r.evidenceId||''))+'</div></td><td>'+escaparHtml(new Date(r.requested_at).toLocaleString('pt-BR'))+'</td><td><span class="tag '+(r.status==='MINTED'?'t-ok':r.status==='REJECTED'||r.status==='FAILED'?'t-div':'t-pend')+'">'+escaparHtml(labels[r.status]||r.status)+'</span></td><td>'+escaparHtml(r.request_note||'—')+'</td><td>'+tx+'</td><td>'+actions+'</td></tr>';
   }).join('');
 }
