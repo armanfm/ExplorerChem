@@ -2595,10 +2595,10 @@ async function salvarCarteiraPublicaAtor(actorDbId,addressInput,button){
     const {data,error}=await supabaseClient.from("explorerchem_actors")
       .update({public_wallet_address:address})
       .eq("id",actor.dbId)
-      .select("id,public_wallet_address")
-      .single();
+      .select("id,public_wallet_address");
     if(error)throw new Error(error.message);
-    actor.publicWalletAddress=data.public_wallet_address;
+    if(!Array.isArray(data)||data.length!==1)throw new Error("Seu usuário do Supabase não está vinculado a esta empresa.");
+    actor.publicWalletAddress=data[0].public_wallet_address;
     actor.carteiras=1;
     toast("Carteira pública de "+actor.nome+" atualizada.");
     await carregarAtores();
@@ -5238,4 +5238,3 @@ if(walletProvider&&typeof walletProvider.on==="function"){
 </script>
 </body>
 </html>
-
