@@ -2169,8 +2169,8 @@ async function concluirEnvioPendente(provider,key,button){
   button.textContent="Concluindo envio anterior…";
   const receipt=await provider.getTransactionReceipt(pending.txHash);
   if(!receipt)throw new Error("A transação "+pending.txHash+" ainda não foi confirmada. Clique novamente após a confirmação; não será enviada outra transação.");
-  if(!receipt.to||receipt.to.toLowerCase()!==EXPLORERCHEM_CONTRACT_ADDRESS.toLowerCase())
-    throw new Error("A transação pendente pertence a outro contrato.");
+  if(Number((await provider.getNetwork()).chainId)!==SEPOLIA_CHAIN_ID_DECIMAL)
+    throw new Error("Selecione Sepolia para concluir o envio pendente.");
   if(Number(receipt.status)!==1){
     const {error}=await supabaseClient.from("explorerchem_evidences")
       .update({state:"ANCHOR_FAILED"}).eq("evidence_id",pending.evidenceId).eq("state","AWAITING_ANCHOR");
@@ -2192,6 +2192,30 @@ async function concluirEnvioPendente(provider,key,button){
      evidence.evidenceHash.toLowerCase()!==row.evidence_hash.toLowerCase()||
      evidence.submittedBy.toLowerCase()!==walletAddress.toLowerCase())
     throw new Error("Os dados da evidência no contrato não correspondem ao cadastro pendente.");
+  // A wallet may route the transaction through another address. Bind the
+  // receipt to this Registry's event, rather than assuming receipt.to is it.
+  const eventAbi=new ethers.Interface([
+    "event EvidenceSubmitted(bytes32 indexed evidenceId,bytes32 indexed actorId,address indexed submittedBy,bytes32 evidenceHash,uint64 createdAt)"
+  ]);
+  const matchedEvent=(receipt.logs||[]).some(log=>{
+    if(log.address?.toLowerCase()!==EXPLORERCHEM_CONTRACT_ADDRESS.toLowerCase())return false;
+    try{
+      const parsed=eventAbi.parseLog(log);
+      return parsed?.name==="EvidenceSubmitted"&&
+        parsed.args.evidenceId.toLowerCase()===evidence.evidenceId.toLowerCase()&&
+        parsed.args.actorId.toLowerCase()===evidence.actorId.toLowerCase()&&
+        parsed.args.submittedBy.toLowerCase()===evidence.submittedBy.toLowerCase()&&
+        parsed.args.evidenceHash.toLowerCase()===evidence.evidenceHash.toLowerCase()&&
+        BigInt(parsed.args.createdAt)===BigInt(evidence.createdAt);
+    }catch(_){return false;}
+  });
+  if(!matchedEvent){
+    const details={evidenceId:pending.evidenceId,txHash:pending.txHash,
+      registry:EXPLORERCHEM_CONTRACT_ADDRESS,to:receipt.to,
+      logAddresses:(receipt.logs||[]).map(log=>log.address)};
+    console.error("Recibo sem o evento esperado da evidência",details);
+    throw new Error("A transação "+pending.txHash+" não contém o evento desta evidência no contrato "+EXPLORERCHEM_CONTRACT_ADDRESS+". O envio foi preservado para verificação.");
+  }
   if(row.state==="AWAITING_ANCHOR"){
     const {data:updated,error}=await supabaseClient.from("explorerchem_evidences").update({
       state:"PENDING",submission_tx_hash:pending.txHash,
