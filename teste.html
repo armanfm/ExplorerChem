@@ -2154,11 +2154,79 @@ function configDoJson(data){
   return {documentType,calculationRole,label:"pedido JSON"};
 }
 
+// Keep only transaction references locally; private documents remain in Storage.
+let envioEvidenciaEmCurso=false;
+function chaveEnvioPendente(){
+  return "explorechem:pending-anchor:v1:"+SEPOLIA_CHAIN_ID_DECIMAL+":"+
+    EXPLORERCHEM_CONTRACT_ADDRESS.toLowerCase()+":"+walletAddress.toLowerCase();
+}
+async function concluirEnvioPendente(provider,key,button){
+  const raw=localStorage.getItem(key);
+  if(!raw)return false;
+  const pending=JSON.parse(raw);
+  if(!/^0x[0-9a-f]{64}$/i.test(pending.txHash)||!/^0x[0-9a-f]{64}$/i.test(pending.evidenceId))
+    throw new Error("Referência local de envio inválida. Verifique a transação antes de reenviar.");
+  button.textContent="Concluindo envio anterior…";
+  const receipt=await provider.getTransactionReceipt(pending.txHash);
+  if(!receipt)throw new Error("A transação "+pending.txHash+" ainda não foi confirmada. Clique novamente após a confirmação; não será enviada outra transação.");
+  if(!receipt.to||receipt.to.toLowerCase()!==EXPLORERCHEM_CONTRACT_ADDRESS.toLowerCase())
+    throw new Error("A transação pendente pertence a outro contrato.");
+  if(Number(receipt.status)!==1){
+    const {error}=await supabaseClient.from("explorerchem_evidences")
+      .update({state:"ANCHOR_FAILED"}).eq("evidence_id",pending.evidenceId).eq("state","AWAITING_ANCHOR");
+    if(error)throw new Error("A transação falhou e o banco não registrou a falha: "+error.message);
+    localStorage.removeItem(key);
+    throw new Error("A transação anterior reverteu. O cadastro ficou como ANCHOR_FAILED. Você pode iniciar um novo envio.");
+  }
+  const {data:row,error:readError}=await supabaseClient.from("explorerchem_evidences")
+    .select("evidence_id,evidence_hash,submitted_by_user_id,state,submission_tx_hash")
+    .eq("evidence_id",pending.evidenceId).single();
+  if(readError||!row)throw new Error("Não foi possível recuperar o cadastro do envio: "+(readError?.message||"linha ausente"));
+  const userId=await usuarioSupabaseAtual();
+  if(row.submitted_by_user_id!==userId)throw new Error("Entre na sessão que iniciou este envio para concluir o cadastro.");
+  const registry=new ethers.Contract(EXPLORERCHEM_CONTRACT_ADDRESS,[
+    "function getEvidence(bytes32 evidenceId) view returns (tuple(bytes32 evidenceId,bytes32 actorId,address submittedBy,bytes32 evidenceHash,uint64 createdAt))"
+  ],provider);
+  const evidence=await registry.getEvidence(pending.evidenceId);
+  if(evidence.evidenceId.toLowerCase()!==pending.evidenceId.toLowerCase()||
+     evidence.evidenceHash.toLowerCase()!==row.evidence_hash.toLowerCase()||
+     evidence.submittedBy.toLowerCase()!==walletAddress.toLowerCase())
+    throw new Error("Os dados da evidência no contrato não correspondem ao cadastro pendente.");
+  if(row.state==="AWAITING_ANCHOR"){
+    const {data:updated,error}=await supabaseClient.from("explorerchem_evidences").update({
+      state:"PENDING",submission_tx_hash:pending.txHash,
+      chain_id:SEPOLIA_CHAIN_ID_DECIMAL,
+      chain_created_at:new Date(Number(evidence.createdAt)*1000).toISOString()
+    }).eq("evidence_id",pending.evidenceId).eq("state","AWAITING_ANCHOR").select("evidence_id").single();
+    if(error||!updated)throw new Error("Transação confirmada: "+pending.txHash+". Falta concluir o banco: "+(error?.message||"cadastro não atualizado")+". Clique novamente para tentar somente essa etapa.");
+  }else if(!row.submission_tx_hash||row.submission_tx_hash.toLowerCase()!==pending.txHash.toLowerCase()){
+    throw new Error("O cadastro mudou de estado e precisa ser reconciliado com a transação "+pending.txHash);
+  }
+  localStorage.removeItem(key);
+  toast("Envio concluído. Evidência e transação registradas no banco.");
+  try{await carregarDocumentosRemotos();}catch(error){console.error("Envio concluído; falha ao atualizar a lista:",error);}
+  return true;
+}
 async function enviarEvidenciaReal(button){
+  if(envioEvidenciaEmCurso||!button)return;
+  envioEvidenciaEmCurso=true;
+  const label=button.textContent;
+  button.disabled=true;
+  try{await executarEnvioEvidencia(button);}
+  catch(error){console.error(error);toast(error.message||"Não foi possível concluir o envio.");}
+  finally{envioEvidenciaEmCurso=false;button.disabled=false;button.textContent=label;}
+}
+async function executarEnvioEvidencia(button){
   if(role!=="op"){toast("Somente um administrador pode criar pedidos.");return;}
   if(!walletAddress){toast("Conecte a carteira administradora antes de continuar.");return;}
   const chainAtual=await refreshWalletChain();
   if(chainAtual!=="0xaa36a7"){toast("Troque a carteira para a rede Sepolia antes de assinar.");return;}
+  const pendingKey=chaveEnvioPendente();
+  // Fail before spending gas if this browser cannot preserve recovery references.
+  const probe=pendingKey+":probe";
+  localStorage.setItem(probe,"ok");localStorage.removeItem(probe);
+  const recoveryProvider=new ethers.BrowserProvider(getWalletProvider());
+  if(await concluirEnvioPendente(recoveryProvider,pendingKey,button))return;
   const evidenceId=novoBytes32();
   let file=null,jsonData=null,originActor=null,destinationActor=null,responsibleActor=null;
   const isImported=!!(importedOrderJson&&importedOrderFile);
@@ -2204,12 +2272,7 @@ async function enviarEvidenciaReal(button){
     });
     if(upload.error) throw new Error("Storage recusou o arquivo: "+upload.error.message);
 
-    button.textContent="Signing on-chain…";
-    const tx=await contract.submitEvidence(evidenceId,actorId,evidenceHash);
-    const receipt=await tx.wait();
-    const txHash=tx.hash||receipt?.hash||"";
-
-    button.textContent="Registering metadata…";
+    button.textContent="Validando cadastro no banco…";
     const payload={
       evidence_id:evidenceId,display_code:"EV-"+Date.now()+"-"+evidenceId.slice(2,10).toUpperCase(),
       actor_db_id:responsibleActor.dbId,
@@ -2217,19 +2280,29 @@ async function enviarEvidenciaReal(button){
       destination_actor_db_id:destinationActorDbId,
       lot_reference:String(jsonData?.lotId||"").trim()||null,
       submitted_by_user_id:userId,submitted_wallet:walletAddress,
-      document_type:config.documentType,calculation_role:config.calculationRole,state:"PENDING",
+      document_type:config.documentType,calculation_role:config.calculationRole,state:"AWAITING_ANCHOR",
       evidence_hash:evidenceHash,hash_algorithm:"SHA-256",storage_bucket:EVIDENCE_BUCKET,
       storage_path:storagePath,original_filename:file.name,mime_type:mimeType,size_bytes:file.size,
       extractor_version:"frontend-raw-file-v1",chain_id:SEPOLIA_CHAIN_ID_DECIMAL,
-      submission_tx_hash:txHash,chain_created_at:new Date().toISOString()
+      submission_tx_hash:null,chain_created_at:null
     };
     const {error:metadataError}=await supabaseClient.from("explorerchem_evidences").insert(payload);
     if(metadataError){
-      console.error("Blockchain/Storage concluídos, mas os metadados falharam:",metadataError);
-      throw new Error("PDF e blockchain concluídos, mas o Supabase recusou os metadados: "+metadataError.message);
+      throw new Error("Cadastro recusado pelo banco antes da assinatura: "+metadataError.message+". Nenhuma transação foi enviada.");
     }
-    await carregarDocumentosRemotos();
-    toast("Pedido enviado como PENDING. Hash e transação registrados.");
+    button.textContent="Assinando envio…";
+    const tx=await contract.submitEvidence(evidenceId,actorId,evidenceHash);
+    if(!/^0x[0-9a-f]{64}$/i.test(tx.hash||""))throw new Error("A carteira não retornou um hash de transação válido.");
+    localStorage.setItem(pendingKey,JSON.stringify({evidenceId,txHash:tx.hash}));
+    button.textContent="Aguardando confirmação…";
+    try{await tx.wait();}
+    catch(error){
+      // ethers supplies the mined replacement when a transaction is sped up.
+      if(error.code==="TRANSACTION_REPLACED"&&!error.cancelled&&error.replacement?.hash){
+        localStorage.setItem(pendingKey,JSON.stringify({evidenceId,txHash:error.replacement.hash}));
+      }else{throw new Error("Envio preservado: "+tx.hash+". "+(error.shortMessage||error.message||"Confirmação indisponível")+". Clique novamente para verificar sem reenviar.");}
+    }
+    await concluirEnvioPendente(provider,pendingKey,button);
   }catch(error){
     console.error(error);
     toast(error.message||"Não foi possível enviar a evidência.");
