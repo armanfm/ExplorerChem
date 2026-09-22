@@ -2576,46 +2576,43 @@ T.lote=()=>{
   'desses dados privados é publicado na transação.</p></div></div></details>';
 };
 
-T.evidencias=()=>{
-  const g=(LOTE&&LOTE.correlationGroup)||{};
-  const q=(LOTE&&LOTE.queue)||{};
-  const filas=evidenciasExibidas();
-  return '<div class="crumb">Lote <span class="mono">'+(LOTE?val(LOTE.lotId):semDado)+'</span></div>'+
-  '<h1>Fila e correlação privada</h1><p class="sub">Cada documento entra como PENDING. O CRE/TEE '+
-  'confirma o hash, extrai novamente os dados do documento e valida as relações antes de marcar MATCHED.</p>'+
-  '<div class="actions" style="margin-bottom:14px"><button class="btn ghost" data-print-cre-proof>Consultar artefato CRE/TEE</button></div>'+
-  '<div class="stats" aria-label="Fila determinística">'+
-  '<div><span class="n mono">EvidenceSubmitted</span><span class="l">Gatilho principal</span></div>'+
-  '<div><span class="n">'+val(q.pendingCount,0)+'</span><span class="l">PENDING na fila</span></div>'+
-  '<div><span class="n">'+val(q.retryCount,0)+'</span><span class="l">Retries programados</span></div>'+
-  '<div><span class="n">'+val(q.lastRecoveryScan)+'</span><span class="l">Última varredura de recuperação</span></div></div>'+
-  '<p class="note">Processamento orientado por evento, fila determinística e varredura programada como fallback. '+
-  'Nenhuma evidência depende de escolha aleatória.</p>'+
-  (g.correlationGroupId?'<div class="correlation-banner"><div><span>correlationGroupId CANDIDATO</span><b class="mono">'+g.correlationGroupId+'</b></div>'+
-   '<p><strong>Descoberta acelerada, confiança recalculada.</strong> O grupo orienta a varredura; '+
-   'origem, destino, datas, referências e relações são conferidos novamente pelo CRE/TEE.</p>'+
-   '<div class="banner-stat"><b>'+val(g.edgeCount,0)+'</b><span>arestas revalidadas<br>nesta execução</span></div></div>':'')+
-  (filas.length
-    ? '<div class="panel scrollx"><table class="evidence-grid-table"><thead><tr><th>Evidência</th><th>Participante</th>'+
-      '<th>Documento</th><th>Função no cálculo</th><th>transferId</th><th>correlationGroupId</th><th>Estado</th></tr></thead><tbody>'+
-      filas.map(e=>'<tr><td class="mono" style="font-size:12.5px">'+val(e.id)+'<div class="sm">'+val(e.enviada)+'</div></td>'+
-        '<td>'+val(e.ator)+'<div class="sm">'+val(e.papel)+'</div></td>'+
-        '<td>'+val(e.doc)+'<div class="sm mono">'+val(e.ref)+'</div></td><td>'+val(e.calculationRole)+'</td>'+
-        '<td class="mono" style="font-size:12px">'+val(e.transferId)+'</td>'+
-        '<td class="mono" style="font-size:12px">'+val(e.correlationGroupId)+'</td><td>'+vtag(val(e.status,"PENDING"))+'</td></tr>').join("")+
-      '</tbody></table></div>'
-    : vazio("Nenhuma evidência registrada",
-        "Quando um participante enviar um documento, ele aparece aqui como pendente até a correlação ser validada."))+
-  (g.edges&&g.edges.length
-    ? '<h2>Arestas verificadas</h2><div class="panel scrollx"><table><thead><tr><th>relationId</th><th>Evidência A</th><th>Evidência B</th><th>Relação</th><th>transferId</th><th>Política</th><th>Verificada em</th></tr></thead><tbody>'+
-      g.edges.map(e=>'<tr><td class="mono">'+val(e.relationId)+'</td><td class="mono">'+val(e.fromEvidenceId)+'</td><td class="mono">'+val(e.toEvidenceId)+'</td><td>'+val(e.relationType)+'</td><td class="mono">'+val(e.transferId)+'</td><td class="mono">'+val(g.correlationPolicyVersion)+'</td><td>'+val(e.verifiedAt)+'</td></tr>').join('')+
-      '</tbody></table></div>'
-    : '')+
-  '<p class="note">Evidência pendente há mais de 365 dias deixa de ser correlacionável. Não é '+
-  'reprovação do material: é encerramento por prazo. Grupo, transferências e arestas permanecem '+
-  'no Supabase/TEE e não concedem acesso nem são publicados on-chain. O contrato recebe um '+
-  'evidenceId por relatório de correlação, evitando revelar um conjunto no mesmo calldata.</p>';
-};
+T.evidencias=()=>`<div class="crumb">Operador · Evidências</div><h1>Evidências dos tokens</h1><p class="sub">Documentos vinculados aos lotes emitidos no contrato atual.</p><button class="btn" id="tokenEvidenceRefresh">Atualizar evidências</button><p id="tokenEvidenceStatus" role="status"></p><div id="tokenEvidenceRows" class="panel scrollx"></div>`;
+async function tokenEvidenceRefresh(){
+ const host=document.getElementById('tokenEvidenceRows'),status=document.getElementById('tokenEvidenceStatus'),button=document.getElementById('tokenEvidenceRefresh');
+ if(!host)return;
+ const address=EXPLORERCHEM_CONTRACT_ADDRESS,request=(host.request||0)+1;host.request=request;
+ const active=()=>host.isConnected&&host.request===request&&address===EXPLORERCHEM_CONTRACT_ADDRESS;
+ button.disabled=true;host.replaceChildren();status.textContent='Consultando os lotes emitidos na blockchain…';
+ try{
+  const c=await newLotsContext(false),blockTag=await c.provider.getBlockNumber();
+  if(c.linked===ethers.ZeroAddress)throw Error('O Registry ainda não está vinculado ao contrato de lotes.');
+  const count=await c.lots.lotCount({blockTag}),groups=new Map();
+  for(let id=1n;id<=count;id++){
+   if(!active())return;
+   const lot=await c.lots.getLot(id,{blockTag});
+   checkedHash(lot.evidenceId);
+   const key=lot.evidenceId.toLowerCase();
+   if(!groups.has(key))groups.set(key,{id:lot.evidenceId,lots:[]});
+   groups.get(key).lots.push(id.toString());
+   status.textContent='Consultando lote '+id+' de '+count+'…';
+  }
+  const indexed=new Map(evidenciasExibidas().map(e=>[String(e.id).toLowerCase(),e]));
+  const rows=[];const labels=['NÃO REGISTRADO','PENDING','COMPLIANT','DIVERGENT','NOT_ATTESTED'];
+  for(const g of groups.values()){
+   if(!active())return;
+   const [evidence,state]=await Promise.all([c.registry.getEvidence(g.id,{blockTag}),c.registry.getCurrentProofState(g.id,{blockTag})]);
+   if(!igualHex(evidence.evidenceId,g.id))throw Error('Vínculo de evidência inconsistente no Registry.');
+   const local=indexed.get(g.id.toLowerCase()),esc=escaparHtml;
+   const proofStatus=n=>esc(labels[Number(n)]||('ESTADO '+n));
+   rows.push('<tr><td class="mono" style="overflow-wrap:anywhere;max-width:240px">'+esc(g.id)+'</td><td>'+esc(local?.ator||evidence.actorId)+'</td><td>'+esc(local?.doc||'Documento privado não disponível nesta sessão')+'</td><td>'+g.lots.map(id=>'#'+id).join(', ')+'</td><td>'+proofStatus(state.mufStatus)+'</td><td>'+proofStatus(state.elementalStatus)+'</td><td>Emissão registrada</td></tr>');
+  }
+  if(!active())return;
+  host.innerHTML=rows.length?'<table><thead><tr><th>Evidência</th><th>Empresa de origem</th><th>Documento</th><th>Tokens / lotes</th><th>MUF atual</th><th>ELEMENTAL atual</th><th>Tokenização</th></tr></thead><tbody>'+rows.join('')+'</tbody></table>':'<div class="pad">Nenhuma evidência vinculada a tokens emitidos neste contrato.</div>';
+  status.textContent=groups.size+' evidência(s) · '+count+' lote(s) · Sepolia · bloco '+blockTag;
+ }catch(e){if(active()){host.replaceChildren();status.textContent='Não foi possível consultar as evidências dos tokens: '+(e.message||String(e));}}
+ finally{if(active())button.disabled=false;}
+}
+
 
 T.documento=()=>{
   if(!DOCUMENTO) return '<h1>Documento e verificação</h1>'+
@@ -5257,6 +5254,7 @@ function render(){
     b.onclick=function(){page=b.dataset.page;window.scrollTo(0,0);render();if(role==='op'&&page==='admin'&&walletAddress&&walletChainId==='0xaa36a7'){adminLoadPending();}});
   if(page==="enviar"){importedOrderJson=null;importedOrderFile=null;}
   $("#view").innerHTML=T[page]?T[page]():"";
+  if(page==="evidencias"){document.getElementById("tokenEvidenceRefresh").onclick=tokenEvidenceRefresh;tokenEvidenceRefresh();}
   window.scrollTo(0,0);
   requestAnimationFrame(()=>window.scrollTo(0,0));
   renderCharts();
