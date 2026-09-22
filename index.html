@@ -5021,7 +5021,10 @@ async function actorLotIdentity(c,lot,blockTag){
  const signed=await supabaseClient.storage.from(EVIDENCE_BUCKET).createSignedUrl(path,900);if(signed.error)throw signed.error;
  const response=await fetch(signed.data.signedUrl,{cache:'no-store'});if(!response.ok)throw Error('Resultado privado indisponível');
  const bytes=new Uint8Array(await response.arrayBuffer());if(!igualHex(ethers.keccak256(bytes),p.committedHash))throw Error('Hash privado divergente');
- const doc=JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(bytes)),r=doc.result,calc=r?.calculation;
+ const doc=JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(bytes)),r=doc.result;
+ const calculations=Array.isArray(r?.elements)?r.elements.filter(e=>e.status==='COMPLIANT'&&e.calculation).map(e=>e.calculation):[r?.calculation].filter(Boolean);
+ const matching=calculations.filter(calc=>igualHex(clientBalanceHashStable({domain:'ExploreChem/ElementMassBasis/v1',element:calc.element,unit:'mg'}),lot.basisHash));
+ const calc=matching.length===1?matching[0]:null;
  if(doc.schema!=='ExploreChem/PrivateElementalResult/v1'||!calc||!igualHex(r.evidenceId,lot.evidenceId)||!igualHex(r.expectedEvidenceHash,p.evidenceHash)||!igualHex(r.mufProofId,lot.mufProofId))throw Error('Identidade privada incompatível');
  const element=calc.element;if(typeof element!=='string'||!element.length)throw Error('Elemento ausente');
  const hash=clientBalanceHashStable;
