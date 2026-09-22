@@ -5031,7 +5031,7 @@ async function actorLotIdentity(c,lot,blockTag){
  if(!igualHex(hash({domain:'ExploreChem/ElementMassBasis/v1',element,unit:'mg'}),lot.basisHash))throw Error('Base de unidade incompatível');
  const stream=calc.streams?.find(stream=>igualHex(hash({domain:'ExploreChem/TokenStream/v1',evidenceId:r.evidenceId,streamId:stream.streamId,element}),lot.streamId)&&igualHex(hash({domain:'ExploreChem/TokenMetadata/v1',evidenceId:r.evidenceId,evidenceHash:r.expectedEvidenceHash,element,unit:'mg',stream}),lot.metadataHash));
  if(!stream)throw Error('Corrente e metadados não correspondem ao lote');
- return {element,unit:'mg',stream:stream.streamId,proof:p,path};
+ return {element,unit:'mg',stream:stream.streamId,proof:p,path,bytes,result:r};
 }
 function actorBars(groups){const max=groups.reduce((n,g)=>g.quantity>n?g.quantity:n,0n);return groups.length?groups.map(g=>'<div style="margin:18px 0"><div style="display:flex;justify-content:space-between"><b>'+escaparHtml(g.element)+'</b><span>'+actorKg(g.quantity)+'</span></div><div style="background:var(--line,#164540);height:12px;border-radius:6px;margin-top:8px"><div style="height:100%;border-radius:6px;background:#2dd4bf;width:'+(max?Number(g.quantity*10000n/max)/100:0)+'%"></div></div></div>').join(''):'<p>Nenhum saldo com elemento e unidade verificados.</p>';}
 // Probe only known balance interfaces; never turn transport errors into zero balances.
@@ -5041,6 +5041,37 @@ async function actorLedgerKind(c,actorId,blockTag){
   const legacy=new ethers.Contract(await c.lots.getAddress(),['function balanceOf(address,uint256) view returns(uint256)'],c.provider);
   try{await legacy.balanceOf('0x0000000000000000000000000000000000000001',1n,{blockTag});return 'wallet';}
   catch(other){throw Error('Interface de saldo incompatível no Lots '+await c.lots.getAddress()+': '+(other.shortMessage||other.message));}
+ }
+}
+function stockDownload(bytes,name){const url=URL.createObjectURL(new Blob([bytes],{type:'application/json'}));const a=document.createElement('a');a.href=url;a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);}
+function renderStockProofs(c,rows,blockTag,active){
+ const host=document.getElementById('productProofContent');if(!host)return;host.replaceChildren();
+ const unique=new Map();for(const r of rows){const key=r.lot.evidenceId+':'+r.lot.mufProofId+':'+r.lot.elementalProofId;if(!unique.has(key))unique.set(key,r);}
+ if(!unique.size){host.textContent='Nenhum lote encontrado nesta consulta.';return;}
+ for(const r of unique.values()){
+  const card=document.createElement('section');card.className='panel pad';
+  const h=document.createElement('h3');h.textContent='Evidência '+r.lot.evidenceId;h.style.overflowWrap='anywhere';card.append(h);
+  const fields=document.createElement('dl');fields.className='kv';
+  for(const [label,value]of [['Registry',EXPLORERCHEM_CONTRACT_ADDRESS],['Evidência',r.lot.evidenceId],['Prova MUF',r.lot.mufProofId],['Prova ELEMENTAL',r.lot.elementalProofId],['Integridade dos metadados',r.error||'Hash conferido com a prova ELEMENTAL']]){const dt=document.createElement('dt'),dd=document.createElement('dd');dt.textContent=label;dd.textContent=value;dd.style.overflowWrap='anywhere';fields.append(dt,dd);}card.append(fields);
+  const status=document.createElement('p'),details=document.createElement('div');card.append(status,details);
+  const action=(label,fn)=>{const b=document.createElement('button');b.className='btn ghost';b.textContent=label;b.onclick=async()=>{b.disabled=true;status.textContent='Consultando…';try{await fn();if(active())status.textContent='Consulta concluída.';}catch(e){if(active())status.textContent=e.shortMessage||e.message;}finally{b.disabled=false;}};card.append(b);};
+  action('Consultar provas e transações',async()=>{
+   const items=[['Evidência','EvidenceSubmitted',await c.registry.getEvidence(r.lot.evidenceId,{blockTag})],['MUF','ProofAnchored',await c.registry.getProof(r.lot.mufProofId,{blockTag})],['ELEMENTAL','ProofAnchored',await c.registry.getProof(r.lot.elementalProofId,{blockTag})]];
+   if(!active())return;details.replaceChildren();
+   for(const [label,kind,record]of items){if(!active())return;const box=document.createElement('section');const title=document.createElement('h4');title.textContent=label;box.append(title);for(const name of ['evidenceHash','committedHash','inputCommitmentHash','methodologyHash','status','createdAt']){if(record[name]===undefined)continue;const line=document.createElement('p');line.textContent=name+': '+record[name];line.style.overflowWrap='anywhere';box.append(line);}details.append(box);try{const tx=await productFindProofTransaction(c.provider,EXPLORERCHEM_CONTRACT_ADDRESS,kind,record,active);if(active())box.append(productExplorerAnchor('Abrir transação '+tx,tx));}catch(e){if(active()){const line=document.createElement('p');line.textContent='Link indisponível: '+(e.shortMessage||e.message);box.append(line);}}}
+  });
+  if(r.identity?.bytes)action('Baixar JSON ELEMENTAL verificado',async()=>stockDownload(r.identity.bytes,'elemental-'+r.lot.elementalProofId+'.json'));
+  action('Consultar / baixar JSON MUF',async()=>{
+   const proof=await c.registry.getProof(r.lot.mufProofId,{blockTag});
+   if(!igualHex(proof.proofId,r.lot.mufProofId)||!igualHex(proof.evidenceId,r.lot.evidenceId)||Number(proof.proofType)!==1)throw Error('Prova MUF incompatível.');
+   const path='muf-results/'+r.lot.evidenceId.slice(2).toLowerCase()+'/'+r.lot.mufProofId.slice(2).toLowerCase()+'.json';
+   const signed=await supabaseClient.storage.from(EVIDENCE_BUCKET).createSignedUrl(path,900);if(signed.error)throw signed.error;
+   const response=await fetch(signed.data.signedUrl,{cache:'no-store'});if(!response.ok)throw Error('JSON MUF indisponível.');
+   const bytes=new Uint8Array(await response.arrayBuffer());if(!igualHex(ethers.keccak256(bytes),proof.committedHash))throw Error('Hash do JSON MUF divergente.');
+   if(!active())return;const pre=document.createElement('pre');pre.style.whiteSpace='pre-wrap';pre.style.overflowWrap='anywhere';pre.textContent=JSON.stringify(JSON.parse(new TextDecoder().decode(bytes)),null,2);details.replaceChildren(pre);stockDownload(bytes,'muf-'+r.lot.mufProofId+'.json');
+  });
+  action('Imprimir / salvar comprovação em PDF',async()=>{const w=window.open('','_blank');if(!w)throw Error('Permita a janela de impressão.');w.document.write('<!doctype html><title>ExploreChem — Comprovação</title>');const copy=card.cloneNode(true);copy.querySelectorAll('button').forEach(b=>b.remove());w.document.body.append(copy);w.document.close();w.focus();w.print();});
+  host.append(card);
  }
 }
 async function renderWalletLedgerNotice(c,actorId,count,blockTag,active,panels){
@@ -5057,7 +5088,13 @@ async function renderWalletLedgerNotice(c,actorId,count,blockTag,active,panels){
  const esc=escaparHtml;
  const notice='<section class="panel pad"><h2>Lots publicado: saldo por carteira</h2><p>Este contrato registra saldos por carteira, não por empresa. A consulta abaixo mostra os lotes originados em evidências desta empresa e o saldo atual na carteira que registrou cada evidência.</p><p><strong>Isso não é o saldo consolidado da empresa:</strong> transferências para outras carteiras não entram nesta consulta. Empresas que usam a mesma carteira não têm saldos independentes neste contrato.</p><p>Registry: '+esc(EXPLORERCHEM_CONTRACT_ADDRESS)+'<br>Lots: '+esc(await c.lots.getAddress())+'<br>Bloco: '+blockTag+'</p><p>Para operar por empresa, é necessário publicar e vincular a versão do Lots com saldo por actorId. Os lotes existentes continuam neste contrato; uma nova publicação não os migra automaticamente.</p></section>';
  const table='<section class="panel pad"><h2>Lotes da evidência · saldo na carteira emissora</h2><div class="scrollx"><table><thead><tr><th>Lote</th><th>Elemento</th><th>Saldo nesta carteira</th><th>Carteira consultada</th><th>Identificação</th></tr></thead><tbody>'+rows.map(r=>'<tr><td>'+r.id+'</td><td>'+esc(r.identity?.element||'Não identificado')+'</td><td>'+(r.identity?actorKg(r.balance):r.balance+' unidades; base não validada')+'</td><td>'+esc(r.wallet)+'</td><td>'+esc(r.error||'Metadados verificados pela prova ELEMENTAL')+'</td></tr>').join('')+'</tbody></table></div></section>';
- for(const id of panels){const node=document.getElementById(id);if(node)node.innerHTML=notice+table;}
+ const totals=actorStockAggregate(rows),metrics='<section class="panel pad"><h2>Saldo identificado nas carteiras consultadas</h2><strong>'+actorKg(totals.total)+'</strong><p>'+totals.groups.length+' bases elementais · '+rows.length+' lotes · '+totals.unidentified+' sem identificação validada. Valores não identificados não entram no total.</p>'+actorBars(totals.groups)+'</section>';
+ document.getElementById('productOverview').innerHTML=metrics+notice;
+ document.getElementById('clientLiveDashboard').innerHTML=table+'<section class="panel pad"><h2>Provas do balanço de massa</h2><p>O saldo atual vem dos tokens. Os resultados MUF originais podem ser consultados e baixados na aba Comprovação; não são somados novamente ao estoque.</p></section>';
+ document.getElementById('productElement').innerHTML='<section class="panel pad"><h2>Distribuição por elemento</h2>'+actorBars(totals.groups)+'</section>'+table;
+ document.getElementById('productProduction').innerHTML='<section class="panel pad"><h2>Correntes e emissão por lote</h2><p>Emissão e oferta ativa são dados do contrato; não representam rendimento de produção.</p><div class="scrollx"><table><thead><tr><th>Lote</th><th>Elemento</th><th>Corrente</th><th>Emitido</th><th>Oferta ativa</th><th>Saldo na carteira emissora</th></tr></thead><tbody>'+rows.map(r=>'<tr><td>'+r.id+'</td><td>'+esc(r.identity?.element||'Não identificado')+'</td><td>'+esc(r.identity?.stream||r.lot.streamId)+'</td><td>'+(r.identity?actorKg(r.lot.issued):r.lot.issued+' unidades')+'</td><td>'+(r.identity?actorKg(r.lot.supply):r.lot.supply+' unidades')+'</td><td>'+(r.identity?actorKg(r.balance):r.balance+' unidades')+'</td></tr>').join('')+'</tbody></table></div></section>';
+ renderStockProofs(c,rows,blockTag,active);
+
  const ops=document.getElementById('productTokenization');if(ops){ops.hidden=true;ops.tokenCleanup?.();}
  const note=document.getElementById('productPeriodNote');if(note)note.textContent='Consulta por carteira no bloco '+blockTag+'; consolidação por empresa indisponível nesta versão do contrato.';
 }
@@ -5087,7 +5124,7 @@ async function actorStockRefresh(){
   const operations=document.getElementById('productTokenization');operations.hidden=false;document.getElementById('clientLiveDashboard').append(operations);
   document.getElementById('productElement').innerHTML='<section class="panel pad"><h2>Distribuição elemental do saldo</h2>'+actorBars(result.groups)+table+'</section>';
   document.getElementById('productProduction').innerHTML='<section class="panel pad"><h2>Saldos por corrente</h2><p>Estoque atual dos lotes. Saldo, isoladamente, não permite calcular rendimento histórico de produção.</p>'+rows.filter(r=>r.identity).map(r=>'<p>Lote '+r.id+' · '+esc(r.identity.stream)+' · '+esc(r.identity.element)+' · '+actorKg(r.balance)+'</p>').join('')+'</section>';
-  document.getElementById('productProofContent').innerHTML='<p>'+esc(stamp)+'</p>'+rows.map(r=>'<details class="product-details"><summary>Lote '+r.id+' · '+esc(r.identity?.element||'Identificação indisponível')+'</summary><p>Evidência: '+esc(r.lot.evidenceId)+'</p><p>Prova MUF: '+esc(r.lot.mufProofId)+'</p><p>Prova ELEMENTAL: '+esc(r.lot.elementalProofId)+'</p><p>Base: '+esc(r.lot.basisHash)+'</p><p>'+esc(r.error||'Documento privado confere com o compromisso da prova ELEMENTAL.')+'</p></details>').join('');
+  renderStockProofs(c,rows,blockTag,active);
   document.getElementById('productPeriodNote').textContent=stamp+' · saldo atual; sem soma histórica de emissões';
  }catch(e){if(!active())return;console.error('ExploreChem: falha na consulta de saldo', {registry:address,actorId,error:e});const message='Não foi possível carregar o balanço no Registry '+address+': '+(e.shortMessage||e.message||e)+'. Nenhum saldo foi presumido. O Console contém os detalhes da chamada.';for(const id of panels){const n=document.getElementById(id);if(n)n.textContent=message;}}
 }
