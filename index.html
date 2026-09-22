@@ -1143,7 +1143,11 @@ main{
 #productTokenization #lotAttestation{width:20px;height:20px;flex:0 0 20px;margin:3px 0 0;accent-color:#27cfbe}
 #productTokenization #lotCustodyError{color:#ffb4a9}
 </style>
-</head>
+
+<style>
+.product-dashboard [hidden]{display:none!important}.ec-unified .client-live-toolbar{grid-template-columns:minmax(0,1fr) auto}.ec-section-heading{display:flex;align-items:center;justify-content:space-between;gap:20px;margin:26px 0 18px}.ec-section-heading h2{margin:8px 0 0;font-size:24px}.ec-stats{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:14px;margin:18px 0}.ec-stat{position:relative;padding:24px 22px;border:1px solid #24453d;border-radius:18px;background:linear-gradient(135deg,#13372f,#102b26);overflow:hidden}.ec-stat:before{content:'';position:absolute;top:0;left:0;width:48px;height:2px;background:#2bd3bf}.ec-stat strong{display:block;font-size:30px;letter-spacing:-1px;color:#e4f5ef;font-variant-numeric:tabular-nums}.ec-stat span{display:block;color:#b2cdc3;font-size:12px;margin-top:12px}.ec-stat small{display:block;color:#7faaa0;font-size:11px;margin-top:7px}.ec-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:22px}.ec-grid>.panel{min-width:0;margin:0}.ec-chip{display:inline-block;border:1px solid #25564a;border-radius:24px;padding:7px 12px;font-size:11px;color:#87d6bd;background:#12362d}.ec-note,.ec-scope{font-size:12px;color:#98b9ae;line-height:1.7}.ec-scope{margin:12px 0 24px}.ec-composition{display:flex;align-items:center;gap:34px;margin:26px 0}.ec-ring{width:190px;height:190px;flex-shrink:0;border-radius:50%;display:grid;place-items:center}.ec-ring>div{width:150px;height:150px;background:#0b2823;border-radius:50%;display:flex;align-items:center;justify-content:center;flex-direction:column}.ec-ring strong{font-size:25px;color:#e0f3eb}.ec-ring span{font-size:11px;color:#9ab8af;margin-top:7px}.ec-legend{flex:1}.ec-legend>div{display:flex;align-items:center;gap:10px;margin:16px 0;font-size:13px}.ec-legend i{height:9px;width:9px;border-radius:50%;flex-shrink:0}.ec-legend span{margin-left:auto;color:#b6cfc5}.ec-lots{margin-top:24px}.ec-cell-sub{display:block;color:#7fa499;font-size:11px;margin-top:6px}.ec-muf-picker{display:grid;gap:6px;font-size:11px;color:#9ab8ad}.ec-muf-picker select{background:#0c2923;color:#dcefe6;border:1px solid #2c5145;padding:10px;border-radius:10px;max-width:300px}.ec-muf-section{margin:30px 0}.product-filters[hidden]{display:none!important}#productOverview[hidden],#productProof[hidden]{display:none!important}
+@media(max-width:1100px){.ec-grid{grid-template-columns:1fr}.ec-stats{grid-template-columns:repeat(2,minmax(0,1fr))}}@media(max-width:560px){.ec-section-heading{align-items:flex-start;flex-direction:column}.ec-composition{flex-direction:column}.ec-legend{width:100%}.ec-stat{padding:18px 14px}.ec-stat strong{font-size:25px}}
+</style></head>
 <body>
 
 <header class="top">
@@ -4703,7 +4707,7 @@ function clientBalanceBindUi(){
 T.dashboard=()=>{
   return '<div class="product-dashboard" data-active-tab="overview"><div class="crumb">Client · verified mass balance</div>'+
     '<div class="headrow"><div class="grow"><h1>Material Intelligence</h1>'+
-    '<p class="sub">Saldo por elemento, balanço por lote e movimentações da empresa, consultados na blockchain.</p></div></div>'+ 
+    '<p class="sub">Saldos tokenizados, composição elemental e balanços de massa verificados.</p></div></div>'+ 
 
     '<div class="client-live-toolbar">'+
       '<div class="field"><label for="clientLiveActorSelect">Company</label>'+ 
@@ -5006,7 +5010,7 @@ T.tokens=()=>T.dashboard()
  .replace('class="product-dashboard"','class="product-dashboard client-tokens-page"')
  .replace('Client · verified mass balance','Client · My tokens')
  .replace('<h1>Material Intelligence</h1>','<h1>My tokens</h1>')
- .replace('Saldo por elemento, balanço por lote e movimentações da empresa, consultados na blockchain.','Consulte seus lotes, transfira saldos e prepare operações com as provas da empresa selecionada.')
+ .replace('Saldos tokenizados, composição elemental e balanços de massa verificados.','Consulte seus lotes, transfira saldos e prepare operações com as provas da empresa selecionada.')
  .replace('Balance / result','Evidence / result');
 
 /* ===== RENDER ===== */
@@ -5042,6 +5046,90 @@ async function actorLedgerKind(c,actorId,blockTag){
   try{await legacy.balanceOf('0x0000000000000000000000000000000000000001',1n,{blockTag});return 'wallet';}
   catch(other){throw Error('Interface de saldo incompatível no Lots '+await c.lots.getAddress()+': '+(other.shortMessage||other.message));}
  }
+}
+function renderUnifiedStockDashboard(c,rows,blockTag,walletMode,active=()=>true){
+ const host=document.getElementById('productOverview');if(!host)return;
+ const operations=document.getElementById('productTokenization');if(operations)document.querySelector('.product-dashboard')?.append(operations);
+ const result=actorStockAggregate(rows),esc=escaparHtml;
+ const amount=(row,value)=>row.identity?actorKg(value):String(value)+' unidades (base não validada)';
+ const scope=walletMode?'Saldo dos lotes nas carteiras emissoras':'Saldo disponível da empresa';
+ const palette=['#25cbbf','#83cfc7','#beab75','#669dbe','#9a8dbd'];
+ let angle=0;const stops=result.groups.map((g,i)=>{const start=angle;angle+=result.total?Number(g.quantity*1000000n/result.total)/10000:0;return palette[i%palette.length]+' '+start+'% '+angle+'%';});
+ const metric=(value,label,sub)=>'<div class="ec-stat"><strong>'+value+'</strong><span>'+label+'</span><small>'+sub+'</small></div>';
+ const metrics='<div class="ec-stats">'+metric(actorKg(result.total),result.unidentified?'Subtotal elemental identificado':'Saldo elemental identificado','Massa dos elementos rastreados')+metric(result.groups.length,'Bases elementais','Com unidade validada')+metric(rows.length,'Lotes consultados','Saldos lidos na blockchain')+metric(rows.length-result.unidentified,'Lotes com metadados verificados',result.unidentified?result.unidentified+' sem validação':'Identificação conferida por hash')+'</div>';
+ const note=walletMode?'Saldo nas carteiras emissoras dos lotes selecionados. Transferências para outras carteiras não estão incluídas; esta versão não separa empresas que compartilham a mesma carteira.':'Saldo disponível por empresa, consultado na blockchain. Quantidades bloqueadas em pedidos não entram neste saldo.';
+ const distribution='<section class="panel pad"><span class="section-eyebrow">COMPOSIÇÃO DO SALDO</span><h2>Elementos rastreados</h2><div class="ec-composition"><div class="ec-ring" role="img" aria-label="Distribuição do saldo entre os elementos" style="background:'+(result.total?'conic-gradient('+stops.join(',')+')':'#23433c')+'"><div><strong>'+actorKg(result.total)+'</strong><span>saldo identificado</span></div></div><div class="ec-legend">'+result.groups.map((g,i)=>'<div><i style="background:'+palette[i%palette.length]+'"></i><b>'+esc(g.element)+'</b><span>'+actorKg(g.quantity)+'</span></div>').join('')+'</div></div><p class="ec-note">O total elemental está contido na massa do material. Não representa todo o estoque físico.</p></section>';
+ const bars='<section class="panel pad"><span class="section-eyebrow">QUANTIDADES POR ELEMENTO</span><h2>Distribuição em massa</h2>'+actorBars(result.groups)+'<p class="ec-note">'+(result.unidentified?result.unidentified+' lote(s) excluído(s) do total por falta de identificação validada.':'Elementos e unidades conferidos com as provas ELEMENTAL.')+'</p></section>';
+ host.innerHTML='<div class="ec-section-heading"><div><span class="section-eyebrow">POSIÇÃO ATUAL · TOKENS</span><h2>'+scope+'</h2></div><span class="ec-chip">Sepolia · bloco '+blockTag+'</span></div>'+metrics+'<p class="ec-scope">'+note+'</p><div class="ec-distribution">'+distribution+'</div><section id="ecMufSection" class="ec-muf-section"></section><section class="panel pad ec-lots"><span class="section-eyebrow">DETALHAMENTO DO SALDO</span><h2>Lotes e correntes</h2><div class="scrollx"><table><thead><tr><th>Lote / elemento</th><th>Corrente</th><th>Saldo consultado</th><th>Emitido</th><th>Oferta ativa</th><th>Integridade</th></tr></thead><tbody>'+rows.map(r=>'<tr><td><strong>'+esc(r.identity?.element||'Não identificado')+'</strong><small class="ec-cell-sub">Lote '+r.id+'</small></td><td>'+esc(r.identity?.stream||r.lot.streamId)+(walletMode?'<small class="ec-cell-sub" title="'+esc(r.wallet)+'">Carteira '+esc(r.wallet.slice(0,6))+'…'+esc(r.wallet.slice(-4))+'</small>':'')+'</td><td>'+amount(r,r.balance)+'</td><td>'+amount(r,r.lot.issued)+'</td><td>'+amount(r,r.lot.supply)+'</td><td><span class="ec-chip">'+esc(r.error||'Hash verificado')+'</span></td></tr>').join('')+'</tbody></table></div><p class="ec-note">Emissão e oferta ativa não são rendimento de produção. Documentos, provas e transações estão na Comprovação.</p></section>';
+ let detail=document.getElementById('productLots');
+ if(!detail){detail=document.createElement('section');detail.id='productLots';detail.hidden=true;host.after(detail);}
+ detail.replaceChildren();
+ const lotTable=host.querySelector('.ec-lots'),muf=host.querySelector('#ecMufSection');
+ if(lotTable)detail.append(lotTable);if(muf)detail.append(muf);
+ const summary=document.createElement('section');summary.id='ecMufConsolidated';summary.className='ec-muf-section';host.append(summary);
+ renderMufConsolidated(c,rows,blockTag,active);
+ renderMufDashboard(c,rows,blockTag,active);
+ for(const id of ['clientLiveDashboard','productElement','productProduction']){const node=document.getElementById(id);if(node){node.replaceChildren();node.hidden=true;}}
+ if(operations){operations.hidden=walletMode;if(!walletMode)detail.append(operations);}
+}
+function mufComparisonSvg(input,output){
+ const max=input>output?input:output,scale=max||1n,height=n=>Number(n*20000n/scale)/100;
+ let grid='';for(let i=0;i<=4;i++){const y=240-i*50;grid+='<line x1="90" x2="530" y1="'+y+'" y2="'+y+'" stroke="#23463e"/><text x="80" y="'+(y+4)+'" text-anchor="end" fill="#8daea3" font-size="11">'+escaparHtml(actorKg(max*BigInt(i)/4n))+'</text>';}
+ return '<svg viewBox="0 0 560 300" role="img" aria-label="Comparação: referência '+escaparHtml(actorKg(input))+'; massa contabilizada '+escaparHtml(actorKg(output))+'" style="width:100%;max-height:320px">'+grid+'<rect x="145" y="'+(240-height(input))+'" width="125" height="'+height(input)+'" rx="6" fill="#16b7ad"/><rect x="325" y="'+(240-height(output))+'" width="125" height="'+height(output)+'" rx="6" fill="#91d1c9"/><text x="207" y="265" text-anchor="middle" fill="#bad1c8" font-size="12">Referência</text><text x="387" y="265" text-anchor="middle" fill="#bad1c8" font-size="12">Contabilizado</text></svg>';
+}
+const STOCK_MUF_CACHE=new WeakMap();
+function loadStockMuf(c,row,blockTag){
+ let cache=STOCK_MUF_CACHE.get(c);if(!cache){cache=new Map();STOCK_MUF_CACHE.set(c,cache);}
+ const key=blockTag+':'+row.lot.evidenceId+':'+row.lot.mufProofId;
+ if(!cache.has(key))cache.set(key,fetchStockMuf(c,row,blockTag));
+ return cache.get(key);
+}
+async function fetchStockMuf(c,row,blockTag){
+ const proof=await c.registry.getProof(row.lot.mufProofId,{blockTag});if(!igualHex(proof.proofId,row.lot.mufProofId)||!igualHex(proof.evidenceId,row.lot.evidenceId)||Number(proof.proofType)!==1)throw Error('Prova MUF incompatível com o lote.');
+   const path='muf-results/'+row.lot.evidenceId.slice(2).toLowerCase()+'/'+row.lot.mufProofId.slice(2).toLowerCase()+'.json',signed=await supabaseClient.storage.from(EVIDENCE_BUCKET).createSignedUrl(path,900);if(signed.error)throw signed.error;const response=await fetch(signed.data.signedUrl,{cache:'no-store'});if(!response.ok)throw Error('Documento privado MUF indisponível.');const bytes=new Uint8Array(await response.arrayBuffer());if(!igualHex(ethers.keccak256(bytes),proof.committedHash))throw Error('Hash do documento MUF divergente.');const doc=JSON.parse(new TextDecoder().decode(bytes));if(doc.schema!=='ExploreChem/PrivateMUFResult/v1'||!igualHex(doc.result?.evidenceId,row.lot.evidenceId))throw Error('Documento MUF incompatível.');return {proof,result:doc.result,bytes};
+}
+async function renderMufConsolidated(c,rows,blockTag,active){
+ const host=document.getElementById('ecMufConsolidated');if(!host)return;
+ host.innerHTML='<section class="panel pad"><p role="status">Conferindo os balanços MUF para o consolidado…</p></section>';
+ const unique=[...new Map(rows.map(r=>[r.lot.evidenceId.toLowerCase()+':'+r.lot.mufProofId.toLowerCase(),r])).values()];
+ let input=0n,output=0n,delta=0n,verified=0,compliant=0;const failed=[],seen=new Set();
+ for(const row of unique){
+  if(!active()||!host.isConnected)return;
+  try{const data=await loadStockMuf(c,row,blockTag),calc=data.result.calculation||{};
+   const read=k=>{if(!/^[0-9]+$/.test(String(calc[k])))throw Error('Massa MUF inválida: '+k);return BigInt(calc[k]);};
+   const a=read('referenceInputMassMg'),b=read('accountedOutputMassMg'),d=read('absoluteMufMg');
+   const hash=data.proof.committedHash.toLowerCase();if(seen.has(hash))continue;seen.add(hash);
+   input+=a;output+=b;delta+=d;verified++;if(Number(data.proof.status)===2)compliant++;
+  }catch(e){failed.push(row.lot.evidenceId+': '+(e.shortMessage||e.message));}
+ }
+ if(!active()||!host.isConnected)return;
+ if(!verified){host.innerHTML='<section class="panel pad"><h2>Balanços de massa</h2><p>'+ (unique.length?'Não foi possível verificar os balanços MUF. Total de massa indisponível.':'Nenhum balanço MUF vinculado aos lotes consultados.')+'</p></section>';return;}
+ const field=(v,l)=>'<div class="product-metric"><span>'+l+'</span><strong>'+escaparHtml(v)+'</strong></div>';
+ const pct=input?(Number(delta*100000000n/input)/1000000).toLocaleString('pt-BR')+'%':'Não aplicável';
+ host.innerHTML='<div class="ec-section-heading"><div><span class="section-eyebrow">BALANÇOS DO MATERIAL · MUF</span><h2>Resumo dos balanços verificados</h2></div><span class="ec-chip">'+verified+' balanço(s) · '+compliant+' COMPLIANT</span></div><div class="ec-grid"><section class="panel pad"><h2>'+ (failed.length?'Soma parcial dos balanços':'Soma dos balanços')+'</h2><div class="product-metrics">'+field(actorKg(input),'Referência acumulada')+field(actorKg(output),'Massa contabilizada acumulada')+field(actorKg(delta),'Soma das diferenças absolutas · MUF')+field(pct,'Diferença ponderada pela referência')+'</div><p class="ec-note">Cada prova é contada uma vez, mesmo quando gera vários tokens elementais. Diferenças absolutas não se anulam entre balanços.</p></section><section class="panel pad"><h2>Referência e massa contabilizada</h2>'+mufComparisonSvg(input,output)+'</section></div><p class="ec-note">Este resumo soma análises vinculadas aos lotes consultados; não representa estoque físico atual. Evidências de períodos ou etapas diferentes podem analisar o mesmo material. Os saldos elementais já estão contidos no material e não são adicionados à massa MUF.</p>';
+
+ if(failed.length){const note=document.createElement('p');note.className='ec-note';note.textContent=failed.length+' balanço(s) não incluído(s): '+failed.join('; ');host.append(note);}
+}
+
+function renderMufDashboard(c,rows,blockTag,active){
+ const host=document.getElementById('ecMufSection');if(!host)return;
+ const unique=[...new Map(rows.map(r=>[r.lot.mufProofId,r])).values()];
+ host.innerHTML='<div class="ec-section-heading"><div><span class="section-eyebrow">BALANÇO DO MATERIAL · MUF</span><h2>Massa total e conservação</h2></div><label class="ec-muf-picker">Evidência<select aria-label="Selecionar prova MUF"></select></label></div><div class="ec-muf-content" aria-live="polite"></div>';
+ const select=host.querySelector('select'),content=host.querySelector('.ec-muf-content');
+ for(const row of unique){const o=document.createElement('option');o.value=row.lot.mufProofId;o.textContent='Evidência '+row.lot.evidenceId.slice(0,12)+'…'+row.lot.evidenceId.slice(-6);select.append(o);}
+ let request=0;const cache=new Map();
+ const load=async()=>{const token=++request,row=unique.find(r=>r.lot.mufProofId===select.value);if(!row){content.textContent='Nenhuma prova MUF vinculada aos lotes desta consulta.';return;}content.innerHTML='<section class="panel pad"><p>Conferindo a prova MUF e o documento privado…</p></section>';
+ try{
+  let data=cache.get(select.value);
+  if(!data){data=await loadStockMuf(c,row,blockTag);cache.set(row.lot.mufProofId,data);}
+  if(!active()||!host.isConnected||token!==request)return;
+  const r=data.result,calc=r.calculation||{},read=k=>{if(!/^-?[0-9]+$/.test(String(calc[k])))throw Error('Campo MUF ausente: '+k);return BigInt(calc[k]);},input=read('referenceInputMassMg'),output=read('accountedOutputMassMg'),delta=read('absoluteMufMg');
+  if(input<0n||output<0n||delta<0n)throw Error('Massas MUF inválidas.');
+  const field=(v,l)=>'<div class="product-metric"><span>'+l+'</span><strong>'+escaparHtml(v)+'</strong></div>';
+  content.innerHTML='<div class="ec-grid"><section class="panel pad"><span class="section-eyebrow">RESULTADO VERIFICADO</span><h2>'+escaparHtml(r.lotReference||'Balanço da evidência')+'</h2><span class="ec-chip">Hash verificado · '+escaparHtml(r.status||String(data.proof.status))+'</span><div class="product-metrics">'+field(actorKg(input),'Massa de referência')+field(actorKg(output),'Massa contabilizada')+field(actorKg(delta),'Diferença absoluta · MUF')+field(calc.absoluteMufPercentScaled6==null?'Não disponível':(Number(calc.absoluteMufPercentScaled6)/1000000).toLocaleString('pt-BR')+'%','Diferença percentual')+'</div><p class="ec-note">Resultado da evidência selecionada, não saldo atual de tokens. Estoque inicial e final não são somados como materiais distintos.</p><button class="btn ghost" data-muf-download>Baixar JSON MUF verificado</button></section><section class="panel pad"><span class="section-eyebrow">COMPARAÇÃO DE MASSAS</span><h2>Referência e massa contabilizada</h2>'+mufComparisonSvg(input,output)+'<p class="ec-note">Referência = entradas + estoque inicial. Contabilizado = produtos + sucata + outras saídas + estoque final.</p></section></div><details class="product-details"><summary>Detalhes do balanço e evidência</summary><dl class="kv">'+['inputMassMg','openingInventoryMassMg','productMassMg','scrapMassMg','otherOutputMassMg','closingInventoryMassMg'].map((key,i)=>'<dt>'+['Entradas','Estoque inicial','Produtos','Sucata','Outras saídas','Estoque final'][i]+'</dt><dd>'+actorKg(read(key))+'</dd>').join('')+'<dt>Evidência</dt><dd style="overflow-wrap:anywhere">'+escaparHtml(row.lot.evidenceId)+'</dd></dl></details>';
+  content.querySelector('[data-muf-download]').onclick=()=>stockDownload(data.bytes,'muf-'+row.lot.mufProofId+'.json');
+ }catch(e){if(active()&&host.isConnected&&token===request){content.replaceChildren();const panel=document.createElement('div');panel.className='panel pad';panel.textContent='Balanço MUF indisponível: '+(e.shortMessage||e.message)+'. Os saldos dos tokens acima continuam independentes desta consulta.';content.append(panel);}}
+ };select.onchange=load;load();
 }
 function stockDownload(bytes,name){const url=URL.createObjectURL(new Blob([bytes],{type:'application/json'}));const a=document.createElement('a');a.href=url;a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);}
 function renderStockProofs(c,rows,blockTag,active){
@@ -5085,14 +5173,7 @@ async function renderWalletLedgerNotice(c,actorId,count,blockTag,active,panels){
   rows.push({id,lot,balance,wallet:evidence.submittedBy,identity,error});
  }
  if(!active())return;
- const esc=escaparHtml;
- const notice='<section class="panel pad"><h2>Lots publicado: saldo por carteira</h2><p>Este contrato registra saldos por carteira, não por empresa. A consulta abaixo mostra os lotes originados em evidências desta empresa e o saldo atual na carteira que registrou cada evidência.</p><p><strong>Isso não é o saldo consolidado da empresa:</strong> transferências para outras carteiras não entram nesta consulta. Empresas que usam a mesma carteira não têm saldos independentes neste contrato.</p><p>Registry: '+esc(EXPLORERCHEM_CONTRACT_ADDRESS)+'<br>Lots: '+esc(await c.lots.getAddress())+'<br>Bloco: '+blockTag+'</p><p>Para operar por empresa, é necessário publicar e vincular a versão do Lots com saldo por actorId. Os lotes existentes continuam neste contrato; uma nova publicação não os migra automaticamente.</p></section>';
- const table='<section class="panel pad"><h2>Lotes da evidência · saldo na carteira emissora</h2><div class="scrollx"><table><thead><tr><th>Lote</th><th>Elemento</th><th>Saldo nesta carteira</th><th>Carteira consultada</th><th>Identificação</th></tr></thead><tbody>'+rows.map(r=>'<tr><td>'+r.id+'</td><td>'+esc(r.identity?.element||'Não identificado')+'</td><td>'+(r.identity?actorKg(r.balance):r.balance+' unidades; base não validada')+'</td><td>'+esc(r.wallet)+'</td><td>'+esc(r.error||'Metadados verificados pela prova ELEMENTAL')+'</td></tr>').join('')+'</tbody></table></div></section>';
- const totals=actorStockAggregate(rows),metrics='<section class="panel pad"><h2>Saldo identificado nas carteiras consultadas</h2><strong>'+actorKg(totals.total)+'</strong><p>'+totals.groups.length+' bases elementais · '+rows.length+' lotes · '+totals.unidentified+' sem identificação validada. Valores não identificados não entram no total.</p>'+actorBars(totals.groups)+'</section>';
- document.getElementById('productOverview').innerHTML=metrics+notice;
- document.getElementById('clientLiveDashboard').innerHTML=table+'<section class="panel pad"><h2>Provas do balanço de massa</h2><p>O saldo atual vem dos tokens. Os resultados MUF originais podem ser consultados e baixados na aba Comprovação; não são somados novamente ao estoque.</p></section>';
- document.getElementById('productElement').innerHTML='<section class="panel pad"><h2>Distribuição por elemento</h2>'+actorBars(totals.groups)+'</section>'+table;
- document.getElementById('productProduction').innerHTML='<section class="panel pad"><h2>Correntes e emissão por lote</h2><p>Emissão e oferta ativa são dados do contrato; não representam rendimento de produção.</p><div class="scrollx"><table><thead><tr><th>Lote</th><th>Elemento</th><th>Corrente</th><th>Emitido</th><th>Oferta ativa</th><th>Saldo na carteira emissora</th></tr></thead><tbody>'+rows.map(r=>'<tr><td>'+r.id+'</td><td>'+esc(r.identity?.element||'Não identificado')+'</td><td>'+esc(r.identity?.stream||r.lot.streamId)+'</td><td>'+(r.identity?actorKg(r.lot.issued):r.lot.issued+' unidades')+'</td><td>'+(r.identity?actorKg(r.lot.supply):r.lot.supply+' unidades')+'</td><td>'+(r.identity?actorKg(r.balance):r.balance+' unidades')+'</td></tr>').join('')+'</tbody></table></div></section>';
+ renderUnifiedStockDashboard(c,rows,blockTag,true,active);
  renderStockProofs(c,rows,blockTag,active);
 
  const ops=document.getElementById('productTokenization');if(ops){ops.hidden=true;ops.tokenCleanup?.();}
@@ -5104,7 +5185,7 @@ async function actorStockRefresh(){
  const request=++ACTOR_STOCK_REQUEST,address=EXPLORERCHEM_CONTRACT_ADDRESS,actorId=document.getElementById('clientLiveActorSelect')?.value;
  const active=()=>root.isConnected&&request===ACTOR_STOCK_REQUEST&&address===EXPLORERCHEM_CONTRACT_ADDRESS;
  const operationsHost=document.getElementById('productTokenization');if(operationsHost){operationsHost.hidden=true;root.append(operationsHost);}
- const panels=['productOverview','clientLiveDashboard','productElement','productProduction','productProofContent'];
+ const panels=['productOverview','productLots','clientLiveDashboard','productElement','productProduction','productProofContent'];
  for(const id of panels){const node=document.getElementById(id);if(node)node.innerHTML='<section class="panel pad"><p role="status">Consultando saldos da empresa na blockchain…</p></section>';}
  if(!actorId){document.getElementById('productOverview').textContent='Selecione uma empresa cadastrada.';return;}
  try{
@@ -5124,16 +5205,25 @@ async function actorStockRefresh(){
   const operations=document.getElementById('productTokenization');operations.hidden=false;document.getElementById('clientLiveDashboard').append(operations);
   document.getElementById('productElement').innerHTML='<section class="panel pad"><h2>Distribuição elemental do saldo</h2>'+actorBars(result.groups)+table+'</section>';
   document.getElementById('productProduction').innerHTML='<section class="panel pad"><h2>Saldos por corrente</h2><p>Estoque atual dos lotes. Saldo, isoladamente, não permite calcular rendimento histórico de produção.</p>'+rows.filter(r=>r.identity).map(r=>'<p>Lote '+r.id+' · '+esc(r.identity.stream)+' · '+esc(r.identity.element)+' · '+actorKg(r.balance)+'</p>').join('')+'</section>';
+  renderUnifiedStockDashboard(c,rows,blockTag,false,active);
   renderStockProofs(c,rows,blockTag,active);
   document.getElementById('productPeriodNote').textContent=stamp+' · saldo atual; sem soma histórica de emissões';
  }catch(e){if(!active())return;console.error('ExploreChem: falha na consulta de saldo', {registry:address,actorId,error:e});const message='Não foi possível carregar o balanço no Registry '+address+': '+(e.shortMessage||e.message||e)+'. Nenhum saldo foi presumido. O Console contém os detalhes da chamada.';for(const id of panels){const n=document.getElementById(id);if(n)n.textContent=message;}}
 }
 clientBalanceBindUi=function(){
  const root=document.querySelector('.product-dashboard');if(!root)return;
+ root.classList.add('ec-unified');
  clientBalancePrefillActorsFromMainApp();
- const select=document.getElementById('clientLiveResultSelect');if(select){select.disabled=true;select.innerHTML='<option>Saldo atual · todos os lotes da empresa</option>';}
+ const select=document.getElementById('clientLiveResultSelect');select?.closest('.field')?.setAttribute('hidden','');if(select){select.disabled=true;select.innerHTML='<option>Saldo atual · todos os lotes da empresa</option>';}
  for(const id of ['productFrom','productTo','productResetDates']){const n=document.getElementById(id);if(n)n.disabled=true;}
- const panelMap={overview:'productOverview',mass:'clientLiveDashboard',element:'productElement',production:'productProduction',proof:'productProof'};
+ const nav=root.querySelector('.product-nav');
+ for(const button of nav?.querySelectorAll('[data-product-tab]')||[]){if(!['overview','lots','proof'].includes(button.dataset.productTab))button.remove();else if(button.dataset.productTab==='overview')button.textContent='Consolidado';}
+ for(const id of ['clientLiveDashboard','productElement','productProduction']){const node=document.getElementById(id);if(node)node.hidden=true;}
+ root.querySelector('.product-filters')?.setAttribute('hidden','');
+ const workflow=document.getElementById('clientWorkflowStates')?.closest('details');if(workflow)workflow.hidden=true;
+ if(!document.getElementById('productLots')){const panel=document.createElement('section');panel.id='productLots';panel.hidden=true;document.getElementById('productOverview').after(panel);}
+ if(nav&&!nav.querySelector('[data-product-tab="lots"]')){const button=document.createElement('button');button.type='button';button.dataset.productTab='lots';button.textContent='Por lote';button.className=nav.querySelector('button')?.className||'';button.setAttribute('role','tab');nav.querySelector('[data-product-tab="proof"]')?.before(button);}
+ const panelMap={overview:'productOverview',lots:'productLots',proof:'productProof'};
  const tabs=[...root.querySelectorAll('[data-product-tab]')];const activate=key=>{for(const [k,id]of Object.entries(panelMap)){const n=document.getElementById(id);if(n){n.hidden=k!==key;n.classList.remove('client-live-hidden');}}for(const t of tabs){t.setAttribute('aria-selected',String(t.dataset.productTab===key));t.tabIndex=t.dataset.productTab===key?0:-1;}};
  for(const t of tabs)t.onclick=()=>activate(t.dataset.productTab);activate('overview');
  const actor=document.getElementById('clientLiveActorSelect');actor.onchange=()=>{document.getElementById('productTokenization')?.tokenCleanup?.();productTokenizationRender();actorStockRefresh();};
