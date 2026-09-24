@@ -2154,7 +2154,7 @@ function criarArquivoPedidoAdmin(evidenceId){
 function arquivoPedidoImportado(){
   if(!importedOrderJson||!importedOrderFile)return null;
   const {originName,destinationName,responsibleName,originActor,destinationActor,responsibleActor}=empresasDoJson(importedOrderJson);
-  if(!responsibleActor?.dbId)throw new Error("Empresa responsável pelo documento não cadastrada: "+(responsibleName||importedOrderJson.actorId||"não identificada"));if(!originName)throw new Error("O JSON não contém originActor.");if(!destinationName)throw new Error("O JSON não contém destinationActor.");if(!originActor?.dbId)throw new Error("Empresa remetente não cadastrada: "+originName);if(!destinationActor?.dbId)throw new Error("Empresa destinatária não cadastrada: "+destinationName);if(originActor.dbId===destinationActor.dbId && importedOrderJson.evidenceType!=="OWN_STOCK")throw new Error("Para origem e destino iguais, use um registro de estoque próprio (OWN_STOCK).");
+  if(!responsibleActor?.dbId)throw new Error("Empresa responsável pelo documento não cadastrada: "+(responsibleName||importedOrderJson.actorId||"não identificada"));if(!originName)throw new Error("O JSON não contém originActor.");if(!destinationName)throw new Error("O JSON não contém destinationActor.");if(!originActor?.dbId)throw new Error("Empresa remetente não cadastrada: "+originName);if(!destinationActor?.dbId)throw new Error("Empresa destinatária não cadastrada: "+destinationName);if(originActor.dbId===destinationActor.dbId && importedOrderJson.evidenceType!=="OWN_STOCK" && !(importedOrderJson.evidenceType==="TRANSFORMATION_RECORD" && importedOrderJson.tokenization?.mode==="TRANSFORM" && responsibleActor.dbId===originActor.dbId && Array.isArray(importedOrderJson.tokenization.inputs) && importedOrderJson.tokenization.inputs.length>0))throw new Error("Para origem e destino iguais, informe estoque próprio ou transformação com lotes de origem pela empresa responsável.");
   return {file:importedOrderFile,jsonData:importedOrderJson,originActor,destinationActor,responsibleActor};
 }
 function configDoJson(data){
@@ -5057,7 +5057,25 @@ T.tokens=()=>T.dashboard()
 /* Company-ledger dashboard: on-chain holdings are the only inventory source. */
 let ACTOR_STOCK_REQUEST=0;
 const actorKg=n=>{n=BigInt(n);return (n/1000000n).toLocaleString('pt-BR')+','+(n%1000000n).toString().padStart(6,'0').replace(/0+$/,'').padEnd(1,'0')+' kg';};
-function actorStockAggregate(rows){const groups=new Map();let total=0n,unidentified=0;for(const row of rows){if(!row.identity){unidentified++;continue;}const key=row.lot.basisHash.toLowerCase();const g=groups.get(key)||{element:row.identity.element,quantity:0n,lots:0};g.quantity+=row.balance;g.lots++;groups.set(key,g);total+=row.balance;}return {groups:[...groups.values()],total,unidentified};}
+function actorStockAggregate(rows){
+ const groups=new Map();let total=0n,materialTotal=0n,unidentified=0;
+ for(const row of rows){
+  if(!row.identity){unidentified++;continue;}
+  if(row.identity.material)materialTotal+=BigInt(row.balance);
+  const components=row.identity.material?row.currentComponents:[{element:row.identity.element,basisHash:row.lot.basisHash,quantity:row.balance}];
+  if(!components){unidentified++;continue;}
+  for(const component of components){const q=BigInt(component.quantity);if(!q)continue;const key=component.basisHash.toLowerCase();const g=groups.get(key)||{element:component.element,quantity:0n,lots:0};g.quantity+=q;g.lots++;groups.set(key,g);total+=q;}
+ }
+ return {groups:[...groups.values()],total,materialTotal,unidentified};
+}
+async function actorReadComposition(c,row,actorId,blockTag){
+ const cs=await c.lots.getActorComposition(actorId,row.id,{blockTag});
+ const names=new Map(row.identity.components.map(x=>[x.basisHash.toLowerCase(),x.element]));
+ const seen=new Set();let total=0n;
+ row.currentComponents=cs.map(x=>{const key=x.basisHash.toLowerCase(),quantity=BigInt(x.quantity);if(seen.has(key)||!names.has(key)||quantity<0n)throw Error('Composição atual incompatível com a prova');seen.add(key);total+=quantity;return {basisHash:x.basisHash,element:names.get(key),quantity};});
+ if(total>BigInt(row.balance))throw Error('Composição atual excede o saldo material');
+}
+
 async function actorLotIdentity(c,lot,blockTag){
  const p=await c.registry.getProof(lot.elementalProofId,{blockTag});
  if(!igualHex(p.proofId,lot.elementalProofId)||!igualHex(p.evidenceId,lot.evidenceId)||Number(p.proofType)!==3||Number(p.status)!==2)throw Error('Prova ELEMENTAL incompatível com o lote');
@@ -5067,6 +5085,20 @@ async function actorLotIdentity(c,lot,blockTag){
  const bytes=new Uint8Array(await response.arrayBuffer());if(!igualHex(ethers.keccak256(bytes),p.committedHash))throw Error('Hash privado divergente');
  const doc=JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(bytes)),r=doc.result;
  const calculations=Array.isArray(r?.elements)?r.elements.filter(e=>e.status==='COMPLIANT'&&e.calculation).map(e=>e.calculation):[r?.calculation].filter(Boolean);
+ const materialBasis=ethers.keccak256(ethers.toUtf8Bytes('ExploreChem/MaterialMass/dry/mg/v1'));
+ if(igualHex(lot.basisHash,materialBasis)){
+  if(doc.schema!=='ExploreChem/PrivateElementalResult/v1'||r?.status!=='COMPLIANT'||!igualHex(r.evidenceId,lot.evidenceId)||!igualHex(r.expectedEvidenceHash,p.evidenceHash)||!igualHex(r.mufProofId,lot.mufProofId))throw Error('Identidade material incompatível');
+  const matches=(doc.action?.outputs||[]).filter(o=>igualHex(o.streamId,lot.streamId)&&igualHex(o.metadataHash,lot.metadataHash)&&igualHex(o.basisHash,lot.basisHash));
+  if(matches.length!==1||BigInt(matches[0].quantity)!==BigInt(lot.issued)||!igualHex(doc.action.operationId,lot.operationId))throw Error('Emissão material não corresponde à prova');
+  const output=matches[0],hash=clientBalanceHashStable;
+  const stream=calculations[0]?.streams?.find(x=>igualHex(hash({domain:'ExploreChem/MaterialStream/v1',evidenceId:r.evidenceId,streamId:x.streamId}),lot.streamId));
+  if(!stream)throw Error('Corrente material ausente');
+  const assays=calculations.map(calc=>{const found=calc.streams.filter(x=>x.streamId===stream.streamId);if(found.length!==1||BigInt(found[0].dryMassMg)!==BigInt(output.quantity))throw Error('Massa da corrente incompatível');return {element:calc.element,stream:found[0]};});
+  if(!igualHex(hash({domain:'ExploreChem/MaterialMetadata/v1',evidenceId:r.evidenceId,evidenceHash:r.expectedEvidenceHash,unit:'mg',massBasis:'DRY',streamId:stream.streamId,assays}),lot.metadataHash))throw Error('Metadados materiais divergentes');
+  const components=assays.filter(a=>BigInt(a.stream.containedElementMassMg)>0n).map(a=>({element:a.element,basisHash:hash({domain:'ExploreChem/ElementMassBasis/v1',element:a.element,unit:'mg'}),quantity:BigInt(a.stream.containedElementMassMg)}));
+  if(components.length!==output.components?.length||components.some((x,i)=>!igualHex(x.basisHash,output.components[i].basisHash)||x.quantity!==BigInt(output.components[i].quantity)))throw Error('Composição emitida divergente');
+  return {material:true,element:'Material · '+components.map(x=>x.element).join(' / '),components,unit:'mg',stream:stream.streamId,proof:p,path,bytes,result:r};
+ }
  const matching=calculations.filter(calc=>igualHex(clientBalanceHashStable({domain:'ExploreChem/ElementMassBasis/v1',element:calc.element,unit:'mg'}),lot.basisHash));
  const calc=matching.length===1?matching[0]:null;
  if(doc.schema!=='ExploreChem/PrivateElementalResult/v1'||!calc||!igualHex(r.evidenceId,lot.evidenceId)||!igualHex(r.expectedEvidenceHash,p.evidenceHash)||!igualHex(r.mufProofId,lot.mufProofId))throw Error('Identidade privada incompatível');
@@ -5096,11 +5128,11 @@ function renderUnifiedStockDashboard(c,rows,blockTag,walletMode,active=()=>true)
  const palette=['#25cbbf','#83cfc7','#beab75','#669dbe','#9a8dbd'];
  let angle=0;const stops=result.groups.map((g,i)=>{const start=angle;angle+=result.total?Number(g.quantity*1000000n/result.total)/10000:0;return palette[i%palette.length]+' '+start+'% '+angle+'%';});
  const metric=(value,label,sub)=>'<div class="ec-stat"><strong>'+value+'</strong><span>'+label+'</span><small>'+sub+'</small></div>';
- const metrics='<div class="ec-stats">'+metric(actorKg(result.total),result.unidentified?'Subtotal elemental identificado':'Saldo elemental identificado','Massa dos elementos rastreados')+metric(result.groups.length,'Bases elementais','Com unidade validada')+metric(rows.length,'Lotes consultados','Saldos lidos na blockchain')+metric(rows.length-result.unidentified,'Lotes com metadados verificados',result.unidentified?result.unidentified+' sem validação':'Identificação conferida por hash')+'</div>';
+ const metrics='<div class="ec-stats">'+metric(actorKg(result.materialTotal),'Saldo material identificado','Massa seca disponível nos lotes')+metric(actorKg(result.total),result.unidentified?'Subtotal elemental identificado':'Saldo elemental identificado','Massa dos elementos rastreados')+metric(result.groups.length,'Bases elementais','Com unidade validada')+metric(rows.length,'Lotes consultados','Saldos lidos na blockchain')+metric(rows.length-result.unidentified,'Lotes com metadados verificados',result.unidentified?result.unidentified+' sem validação':'Identificação conferida por hash')+'</div>';
  const note=walletMode?'Saldo nas carteiras emissoras dos lotes selecionados. Transferências para outras carteiras não estão incluídas; esta versão não separa empresas que compartilham a mesma carteira.':'Saldo disponível por empresa, consultado na blockchain. Quantidades bloqueadas em pedidos não entram neste saldo.';
  const distribution='<section class="panel pad"><span class="section-eyebrow">COMPOSIÇÃO DO SALDO</span><h2>Elementos rastreados</h2><div class="ec-composition"><div class="ec-ring" role="img" aria-label="Distribuição do saldo entre os elementos" style="background:'+(result.total?'conic-gradient('+stops.join(',')+')':'#23433c')+'"><div><strong>'+actorKg(result.total)+'</strong><span>saldo identificado</span></div></div><div class="ec-legend">'+result.groups.map((g,i)=>'<div><i style="background:'+palette[i%palette.length]+'"></i><b>'+esc(g.element)+'</b><span>'+actorKg(g.quantity)+'</span></div>').join('')+'</div></div><p class="ec-note">O total elemental está contido na massa do material. Não representa todo o estoque físico.</p></section>';
  const bars='<section class="panel pad"><span class="section-eyebrow">QUANTIDADES POR ELEMENTO</span><h2>Distribuição em massa</h2>'+actorBars(result.groups)+'<p class="ec-note">'+(result.unidentified?result.unidentified+' lote(s) excluído(s) do total por falta de identificação validada.':'Elementos e unidades conferidos com as provas ELEMENTAL.')+'</p></section>';
- host.innerHTML='<div class="ec-section-heading"><div><span class="section-eyebrow">POSIÇÃO ATUAL · TOKENS</span><h2>'+scope+'</h2></div><span class="ec-chip">Sepolia · bloco '+blockTag+'</span></div>'+metrics+'<p class="ec-scope">'+note+'</p><div class="ec-distribution">'+distribution+'</div><section id="ecMufSection" class="ec-muf-section"></section><section class="panel pad ec-lots"><span class="section-eyebrow">DETALHAMENTO DO SALDO</span><h2>Lotes e correntes</h2><div class="scrollx"><table><thead><tr><th>Lote / elemento</th><th>Corrente</th><th>Saldo consultado</th><th>Emitido</th><th>Oferta ativa</th><th>Integridade</th></tr></thead><tbody>'+rows.map(r=>'<tr><td><strong>'+esc(r.identity?.element||'Não identificado')+'</strong><small class="ec-cell-sub">Lote '+r.id+'</small></td><td>'+esc(r.identity?.stream||r.lot.streamId)+(walletMode?'<small class="ec-cell-sub" title="'+esc(r.wallet)+'">Carteira '+esc(r.wallet.slice(0,6))+'…'+esc(r.wallet.slice(-4))+'</small>':'')+'</td><td>'+amount(r,r.balance)+'</td><td>'+amount(r,r.lot.issued)+'</td><td>'+amount(r,r.lot.supply)+'</td><td><span class="ec-chip">'+esc(r.error||'Hash verificado')+'</span></td></tr>').join('')+'</tbody></table></div><p class="ec-note">Emissão e oferta ativa não são rendimento de produção. Documentos, provas e transações estão na Comprovação.</p></section>';
+ host.innerHTML='<div class="ec-section-heading"><div><span class="section-eyebrow">POSIÇÃO ATUAL · TOKENS</span><h2>'+scope+'</h2></div><span class="ec-chip">Sepolia · bloco '+blockTag+'</span></div>'+metrics+'<p class="ec-scope">'+note+'</p><div class="ec-distribution">'+distribution+'</div><section id="ecMufSection" class="ec-muf-section"></section><section class="panel pad ec-lots"><span class="section-eyebrow">DETALHAMENTO DO SALDO</span><h2>Lotes e correntes</h2><div class="scrollx"><table><thead><tr><th>Lote / elemento</th><th>Corrente</th><th>Saldo consultado</th><th>Emitido</th><th>Oferta ativa</th><th>Integridade</th></tr></thead><tbody>'+rows.map(r=>'<tr><td><strong>'+esc(r.identity?.element||'Não identificado')+'</strong><small class="ec-cell-sub">Lote '+r.id+'</small>'+(r.currentComponents?'<small class="ec-cell-sub">'+r.currentComponents.map(x=>esc(x.element)+': '+actorKg(x.quantity)).join(' · ')+'</small>':'')+'</td><td>'+esc(r.identity?.stream||r.lot.streamId)+(walletMode?'<small class="ec-cell-sub" title="'+esc(r.wallet)+'">Carteira '+esc(r.wallet.slice(0,6))+'…'+esc(r.wallet.slice(-4))+'</small>':'')+'</td><td>'+amount(r,r.balance)+'</td><td>'+amount(r,r.lot.issued)+'</td><td>'+amount(r,r.lot.supply)+'</td><td><span class="ec-chip">'+esc(r.error||'Hash verificado')+'</span></td></tr>').join('')+'</tbody></table></div><p class="ec-note">Emissão e oferta ativa não são rendimento de produção. Documentos, provas e transações estão na Comprovação.</p></section>';
  let detail=document.getElementById('productLots');
  if(!detail){detail=document.createElement('section');detail.id='productLots';detail.hidden=true;host.after(detail);}
  detail.replaceChildren();
@@ -5219,9 +5251,77 @@ async function renderWalletLedgerNotice(c,actorId,count,blockTag,active,panels){
  const ops=document.getElementById('productTokenization');if(ops){ops.hidden=true;ops.tokenCleanup?.();}
  const note=document.getElementById('productPeriodNote');if(note)note.textContent='Consulta por carteira no bloco '+blockTag+'; consolidação por empresa indisponível nesta versão do contrato.';
 }
+
+function historyGroups(logs,actorId){
+ const groups=new Map(),seen=new Set();
+ for(const log of [...logs].sort((a,b)=>a.blockNumber-b.blockNumber||a.index-b.index)){
+  const key=log.transactionHash+':'+log.index;if(seen.has(key))continue;seen.add(key);
+  const a=log.args,inc=igualHex(a.to,actorId)?BigInt(a.value):0n,out=igualHex(a.from,actorId)?BigInt(a.value):0n;
+  if(!inc&&!out)continue;
+  let g=groups.get(log.transactionHash);if(!g){g={tx:log.transactionHash,block:log.blockNumber,incoming:0n,outgoing:0n,items:[]};groups.set(g.tx,g);}
+  g.incoming+=inc;g.outgoing+=out;g.items.push({id:String(a.id),inc,out});
+ }
+ let balance=0n;return [...groups.values()].map(g=>{balance+=g.incoming-g.outgoing;return {...g,balance};});
+}
+function historySvg(groups){
+ const values=[0,...groups.map(g=>Number(g.balance)/1e6)],max=Math.max(1,...values),min=Math.min(0,...values),range=max-min;
+ const x=i=>85+i*650/Math.max(1,values.length-1),y=v=>220-(v-min)/range*175;
+ let grid='';for(let i=0;i<=4;i++){const v=min+range*i/4;grid+=`<line x1="85" x2="735" y1="${y(v)}" y2="${y(v)}" stroke="#234c46"/><text x="75" y="${y(v)+4}" text-anchor="end" fill="#aac8c0" font-size="12">${v.toLocaleString('pt-BR',{maximumFractionDigits:2})} kg</text>`;}
+ let path=`M ${x(0)} ${y(values[0])}`;for(let i=1;i<values.length;i++)path+=` H ${x(i)} V ${y(values[i])}`;
+ return `<svg viewBox="0 0 780 270" role="img" aria-label="Evolução do saldo material após cada transação; valores detalhados na tabela abaixo" style="width:100%;max-height:360px">${grid}<path d="${path}" fill="none" stroke="#24d0bf" stroke-width="3"/>${values.map((v,i)=>`<circle cx="${x(i)}" cy="${y(v)}" r="4" fill="#91d1c9"><title>${i===0?'Antes da primeira movimentação':escaparHtml(groups[i-1].date)}: ${v.toLocaleString('pt-BR')} kg</title></circle>`).join('')}<text x="85" y="252" fill="#aac8c0" font-size="12">Início</text><text x="735" y="252" text-anchor="end" fill="#aac8c0" font-size="12">${groups.length} transações · ordem cronológica</text></svg>`;
+}
+function bindStockHistory(c,actorId,currentRows,blockTag,active){
+ const host=document.getElementById('productHistory');if(!host)return;
+ host.innerHTML='<section class="panel pad"><span class="section-eyebrow">MOVIMENTAÇÕES DA EMPRESA</span><h2>Histórico do saldo</h2><p>Emissões, consumos e transferências confirmados na blockchain, incluindo lotes já consumidos.</p><button class="btn" data-history-load>Carregar histórico</button><p role="status" data-history-status></p></section><div data-history-result></div>';
+ let running=false,done=false;
+ host.historyLoad=async()=>{
+  if(running||done||!active())return;running=true;
+  const button=host.querySelector('[data-history-load]'),status=host.querySelector('[data-history-status]'),result=host.querySelector('[data-history-result]');button.disabled=true;
+  try{
+   const address=await c.lots.getAddress(),ledger=new ethers.Contract(address,['event ActorBalanceChanged(address indexed operator,bytes32 indexed from,bytes32 indexed to,uint256 id,uint256 value)'],c.provider);
+   status.textContent='Localizando a primeira evidência dos lotes…';
+   const count=await c.lots.lotCount({blockTag});
+   let lo=blockTag;
+   if(count>0n){
+    const firstLot=await c.lots.getLot(1n,{blockTag});
+    const firstEvidence=await c.registry.getEvidence(firstLot.evidenceId,{blockTag});
+    const timestamp=Number(firstEvidence.createdAt);
+    if(!Number.isSafeInteger(timestamp)||timestamp<=0)throw Error('Data da primeira evidência indisponível.');
+    let low=0,high=blockTag;
+    while(low<high){if(!active())return;const mid=Math.floor((low+high)/2),b=await c.provider.getBlock(mid);if(!b)throw Error('Cabeçalho de bloco indisponível: '+mid);if(Number(b.timestamp)<timestamp)low=mid+1;else high=mid;}
+    lo=Math.max(0,low-1);
+   }
+   const logs=[];let cursor=lo,step=2000;
+   while(cursor<=blockTag){if(!active())return;const end=Math.min(blockTag,cursor+step-1);status.textContent='Consultando blocos '+cursor+' a '+end+'…';
+    try{const sets=await Promise.all([ledger.queryFilter(ledger.filters.ActorBalanceChanged(null,actorId,null),cursor,end),ledger.queryFilter(ledger.filters.ActorBalanceChanged(null,null,actorId),cursor,end)]);logs.push(...sets.flat());cursor=end+1;}
+    catch(e){if(step<=1)throw e;step=Math.max(1,Math.floor(step/2));}
+   }
+   const basis=ethers.id('ExploreChem/MaterialMass/dry/mg/v1'),lots=new Map();
+   for(const log of logs){if(!active())return;const id=String(log.args.id);if(!lots.has(id))lots.set(id,await c.lots.getLot(id,{blockTag}));}
+   const material=logs.filter(l=>igualHex(lots.get(String(l.args.id)).basisHash,basis)),groups=historyGroups(material,actorId);
+   const expected=currentRows.filter(r=>igualHex(r.lot.basisHash,basis)).reduce((v,r)=>v+BigInt(r.balance),0n),last=groups.length?groups[groups.length-1].balance:0n;
+   if(last!==expected||groups.some(g=>g.balance<0n))throw Error('O histórico retornado pelo RPC não confere com o saldo atual. Nenhum gráfico parcial foi apresentado.');
+   const names=new Map((typeof CLIENT_BALANCE_ACTORS==='undefined'?[]:CLIENT_BALANCE_ACTORS).map(a=>[String(a.actor_id||a.actorId||'').toLowerCase(),a.display_name||a.nome||a.actor_id]));
+   const name=id=>names.get(String(id).toLowerCase())||id;
+   for(const g of groups){if(!active())return;const [block,receipt]=await Promise.all([c.provider.getBlock(g.block),c.provider.getTransactionReceipt(g.tx)]);if(!receipt||Number(receipt.status)!==1)throw Error('Transação não confirmada.');g.date=new Date(Number(block.timestamp)*1000).toLocaleString('pt-BR');
+    const peers=new Set();for(const l of receipt.logs){if(!igualHex(l.address,address))continue;try{const a=ledger.interface.parseLog(l)?.args;if(a)for(const id of [a.from,a.to])if(!igualHex(id,actorId)&&!igualHex(id,ethers.ZeroHash)&&!igualHex(id,ethers.id('ExploreChem/OrderEscrow/v2')))peers.add(name(id));}catch(_){} }
+    g.peers=[...peers].join(' · ');g.label=g.incoming&&g.outgoing?'Transformação / movimentação interna':g.outgoing?'Saída / consumo':g.peers?'Entrada de material':'Emissão de material';
+   }
+   if(!active()||!host.isConnected)return;
+   const esc=escaparHtml;
+   result.innerHTML='<section class="panel pad"><span class="section-eyebrow">EVOLUÇÃO DO SALDO MATERIAL</span><h2>'+actorKg(last)+'</h2><p>Saldo disponível após cada transação. Consumo e emissão na mesma transação são contabilizados juntos.</p>'+historySvg(groups)+'</section><section class="panel pad"><h2>Movimentações confirmadas</h2><div class="scrollx"><table><thead><tr><th>Data</th><th>Movimentação / empresa envolvida</th><th>Lotes</th><th>Entradas</th><th>Saídas</th><th>Saldo após</th><th>Comprovante</th></tr></thead><tbody>'+[...groups].reverse().map(g=>'<tr><td>'+esc(g.date)+'</td><td>'+esc(g.label)+(g.peers?'<br><small style="overflow-wrap:anywhere">'+esc(g.peers)+'</small>':'')+'</td><td>'+g.items.map(i=>'Lote '+esc(i.id)+': '+(i.out?'−'+actorKg(i.out):'')+(i.inc?' +'+actorKg(i.inc):'')).join('<br>')+'</td><td>+'+actorKg(g.incoming)+'</td><td>−'+actorKg(g.outgoing)+'</td><td>'+actorKg(g.balance)+'</td><td><a target="_blank" rel="noopener noreferrer" href="https://sepolia.etherscan.io/tx/'+g.tx+'">Ver transação</a></td></tr>').join('')+'</tbody></table></div>'+(groups.length?'':'<p>Nenhuma movimentação de massa material encontrada.</p>')+'<p class="ec-note">Reservas e liberações alteram o saldo disponível. Saída ou consumo não significa necessariamente venda. Os elementos estão contidos na massa material e não são somados novamente.</p></section>';
+   status.textContent='Histórico completo desde o bloco '+lo+' até '+blockTag+' · saldo conferido com o contrato.';done=true;button.hidden=true;
+  }catch(e){if(active()){result.replaceChildren();console.error('ExploreChem histórico',{stage:status.textContent,error:e});status.textContent='Histórico indisponível ('+status.textContent+'): '+(e.info?.error?.message||e.error?.message||e.shortMessage||e.message||String(e));button.textContent='Tentar novamente';}}
+  finally{running=false;if(active())button.disabled=false;}
+ };
+ host.querySelector('[data-history-load]').onclick=host.historyLoad;
+ if(!host.hidden)host.historyLoad();
+}
+
 async function actorStockRefresh(){
  const root=document.querySelector('.product-dashboard');if(!root)return;
  clientBalanceHideMessage();
+ const historyHost=document.getElementById('productHistory');if(historyHost){historyHost.historyLoad=null;historyHost.textContent='Atualizando empresa…';}
  const request=++ACTOR_STOCK_REQUEST,address=EXPLORERCHEM_CONTRACT_ADDRESS,actorId=document.getElementById('clientLiveActorSelect')?.value;
  const active=()=>root.isConnected&&request===ACTOR_STOCK_REQUEST&&address===EXPLORERCHEM_CONTRACT_ADDRESS;
  const operationsHost=document.getElementById('productTokenization');if(operationsHost){operationsHost.hidden=true;root.append(operationsHost);}
@@ -5235,7 +5335,7 @@ async function actorStockRefresh(){
   const rows=[],cache=new Map();
   for(let start=1;start<=Number(count);start+=24){if(!active())return;const ids=Array.from({length:Math.min(24,Number(count)-start+1)},(_,i)=>BigInt(start+i));const balances=await c.lots.balanceOfBatch(ids.map(()=>actorId),ids,{blockTag});
    const owned=ids.map((id,i)=>({id,balance:balances[i]})).filter(r=>r.balance>0n);
-   for(const r of owned){if(!active())return;r.lot=await c.lots.getLot(r.id,{blockTag});const key=[r.lot.elementalProofId,r.lot.metadataHash,r.lot.streamId,r.lot.basisHash].join(':');if(!cache.has(key))cache.set(key,actorLotIdentity(c,r.lot,blockTag));try{r.identity=await cache.get(key);}catch(e){r.error=e.message||String(e);}rows.push(r);}
+   for(const r of owned){if(!active())return;r.lot=await c.lots.getLot(r.id,{blockTag});const key=[r.lot.elementalProofId,r.lot.metadataHash,r.lot.streamId,r.lot.basisHash].join(':');if(!cache.has(key))cache.set(key,actorLotIdentity(c,r.lot,blockTag));try{r.identity=await cache.get(key);if(r.identity.material)await actorReadComposition(c,r,actorId,blockTag);}catch(e){r.identity=null;r.error=e.message||String(e);}rows.push(r);}
   }
   if(!active())return;const result=actorStockAggregate(rows),esc=escaparHtml,stamp='Bloco '+blockTag+' · '+new Date(Number(block.timestamp)*1000).toLocaleString('pt-BR'),coverage=result.unidentified?result.unidentified+' lote(s) sem identificação validada, excluído(s) do total em kg.':'Todos os saldos exibidos têm elemento e unidade verificados.';
   const metrics='<div class="client-live-stats"><div class="client-live-stat"><b>'+actorKg(result.total)+'</b><span>'+(result.unidentified?'Subtotal identificado':'Total de elementos rastreados')+'</span></div><div class="client-live-stat"><b>'+result.groups.length+'</b><span>Bases elementais</span></div><div class="client-live-stat"><b>'+rows.length+'</b><span>Lotes com saldo disponível</span></div><div class="client-live-stat"><b>'+result.unidentified+'</b><span>Identificação não validada</span></div></div>';
@@ -5247,6 +5347,7 @@ async function actorStockRefresh(){
   document.getElementById('productProduction').innerHTML='<section class="panel pad"><h2>Saldos por corrente</h2><p>Estoque atual dos lotes. Saldo, isoladamente, não permite calcular rendimento histórico de produção.</p>'+rows.filter(r=>r.identity).map(r=>'<p>Lote '+r.id+' · '+esc(r.identity.stream)+' · '+esc(r.identity.element)+' · '+actorKg(r.balance)+'</p>').join('')+'</section>';
   renderUnifiedStockDashboard(c,rows,blockTag,false,active);
   renderStockProofs(c,rows,blockTag,active);
+  bindStockHistory(c,actorId,rows,blockTag,active);
   document.getElementById('productPeriodNote').textContent=stamp+' · saldo atual; sem soma histórica de emissões';
  }catch(e){if(!active())return;console.error('ExploreChem: falha na consulta de saldo', {registry:address,actorId,error:e});const message='Não foi possível carregar o balanço no Registry '+address+': '+(e.shortMessage||e.message||e)+'. Nenhum saldo foi presumido. O Console contém os detalhes da chamada.';for(const id of panels){const n=document.getElementById(id);if(n)n.textContent=message;}}
 }
@@ -5257,15 +5358,17 @@ clientBalanceBindUi=function(){
  const select=document.getElementById('clientLiveResultSelect');select?.closest('.field')?.setAttribute('hidden','');if(select){select.disabled=true;select.innerHTML='<option>Saldo atual · todos os lotes da empresa</option>';}
  for(const id of ['productFrom','productTo','productResetDates']){const n=document.getElementById(id);if(n)n.disabled=true;}
  const nav=root.querySelector('.product-nav');
- for(const button of nav?.querySelectorAll('[data-product-tab]')||[]){if(!['overview','lots','proof'].includes(button.dataset.productTab))button.remove();else if(button.dataset.productTab==='overview')button.textContent='Consolidado';}
+ for(const button of nav?.querySelectorAll('[data-product-tab]')||[]){if(!['overview','lots','history','proof'].includes(button.dataset.productTab))button.remove();else if(button.dataset.productTab==='overview')button.textContent='Consolidado';}
  for(const id of ['clientLiveDashboard','productElement','productProduction']){const node=document.getElementById(id);if(node)node.hidden=true;}
  root.querySelector('.product-filters')?.setAttribute('hidden','');
  const workflow=document.getElementById('clientWorkflowStates')?.closest('details');if(workflow)workflow.hidden=true;
  if(!document.getElementById('productLots')){const panel=document.createElement('section');panel.id='productLots';panel.hidden=true;document.getElementById('productOverview').after(panel);}
  if(nav&&!nav.querySelector('[data-product-tab="lots"]')){const button=document.createElement('button');button.type='button';button.dataset.productTab='lots';button.textContent='Por lote';button.className=nav.querySelector('button')?.className||'';button.setAttribute('role','tab');nav.querySelector('[data-product-tab="proof"]')?.before(button);}
- const panelMap={overview:'productOverview',lots:'productLots',proof:'productProof'};
+ if(!document.getElementById('productHistory')){const panel=document.createElement('section');panel.id='productHistory';panel.hidden=true;document.getElementById('productLots').after(panel);}
+ if(nav&&!nav.querySelector('[data-product-tab="history"]')){const b=document.createElement('button');b.type='button';b.dataset.productTab='history';b.textContent='Histórico';b.className=nav.querySelector('button')?.className||'';b.setAttribute('role','tab');nav.querySelector('[data-product-tab="proof"]')?.before(b);}
+ const panelMap={overview:'productOverview',lots:'productLots',history:'productHistory',proof:'productProof'};
  const tabs=[...root.querySelectorAll('[data-product-tab]')];const activate=key=>{for(const [k,id]of Object.entries(panelMap)){const n=document.getElementById(id);if(n){n.hidden=k!==key;n.classList.remove('client-live-hidden');}}for(const t of tabs){t.setAttribute('aria-selected',String(t.dataset.productTab===key));t.tabIndex=t.dataset.productTab===key?0:-1;}};
- for(const t of tabs)t.onclick=()=>activate(t.dataset.productTab);activate('overview');
+ for(const t of tabs)t.onclick=()=>{activate(t.dataset.productTab);if(t.dataset.productTab==='history')document.getElementById('productHistory')?.historyLoad?.();};activate('overview');
  const actor=document.getElementById('clientLiveActorSelect');actor.onchange=()=>{document.getElementById('productTokenization')?.tokenCleanup?.();productTokenizationRender();actorStockRefresh();};
  document.getElementById('clientLiveRefresh').onclick=actorStockRefresh;
  productTokenizationRender();
