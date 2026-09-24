@@ -1881,12 +1881,17 @@ function aplicarSomenteLeitura(){
 let ACTOR_LOAD_SEQUENCE=0, ACTOR_LOAD_ERROR="";
 async function atoresNoRegistry(rows,address){
   const provider=await clientBalanceProvider();
-  const registry=new ethers.Contract(address,["function getActor(bytes32) view returns (tuple(bytes32 actorId,address controller,bytes32 registrationHash,uint8 status,uint64 createdAt,uint64 statusUpdatedAt))","error ActorNotFound(bytes32 actorId)"],provider);
-  const output=[];
+  const proofRegistry=new ethers.Contract(address,["function actorRegistry() view returns(address)"],provider);
+  const actorAddress=await proofRegistry.actorRegistry();
+  if(!ethers.isAddress(actorAddress)||actorAddress===ethers.ZeroAddress)throw new Error("ActorRegistry não configurado.");
+  const registry=new ethers.Contract(actorAddress,["function getActor(bytes32) view returns (tuple(bytes32 actorId,address controller,bytes32 registrationHash,uint8 status,uint64 createdAt,uint64 statusUpdatedAt))","error ActorNotFound(bytes32 actorId)"],provider);
+  const output=[],seen=new Set();
   for(const row of rows){
+    const key=String(row.actor_id||" ").toLowerCase();
+    if(!/^0x[0-9a-f]{64}$/.test(key)||seen.has(key))continue;
     try{
       const actor=await registry.getActor(row.actor_id);
-      if(Number(actor.status)>0)output.push({...row,chainStatus:Number(actor.status),chainController:actor.controller});
+      if(Number(actor.status)>0&&String(actor.actorId).toLowerCase()===key){seen.add(key);output.push({...row,chainStatus:Number(actor.status),chainController:actor.controller});}
     }catch(e){
       let missing=e.revert?.name==='ActorNotFound';
       const data=e.data||e.info?.error?.data;
@@ -3576,10 +3581,12 @@ function clientBalanceActorsFromMainApp(){
 }
 function clientBalanceApplyActorOptions(list){
   const select=$("#clientLiveActorSelect");
-  if(!select||!Array.isArray(list)||!list.length) return false;
+  if(!select||!Array.isArray(list)) return false;
+  list=[...new Map(list.map(actor=>[String(actor.actor_id).toLowerCase(),actor])).values()];
+  if(!list.length){select.innerHTML='<option value="">Nenhuma empresa no contrato atual</option>';select.disabled=true;const refresh=$("#clientLiveRefresh");if(refresh)refresh.disabled=true;return false;}
   const previous=select.value;
   let saved="";
-  try{saved=localStorage.getItem("explorechem_client_live_actor")||"";}catch(_){}
+  try{saved=localStorage.getItem("explorechem_client_live_actor_"+EXPLORERCHEM_CONTRACT_ADDRESS.toLowerCase())||"";}catch(_){}
   select.innerHTML=list.map(actor=>
     '<option value="'+escaparHtml(actor.actor_id)+'">'+
     escaparHtml(actor.display_name)+
@@ -4060,7 +4067,7 @@ async function clientBalanceLoadSelectedActor(){
   const statesPanel=$('#clientWorkflowStates');if(statesPanel)statesPanel.innerHTML='';
   clientBalanceShowMessage('Reading MUF proofs','Checking the active contract and private result commitments for '+actor.display_name+'.');
   try{
-    try{localStorage.setItem('explorechem_client_live_actor',actorId);}catch(_){}
+    try{localStorage.setItem('explorechem_client_live_actor_'+address.toLowerCase(),actorId);}catch(_){}
     const contract=new ethers.Contract(address,CLIENT_BALANCE_ABI,await clientBalanceProvider());
     const rows=[];
     for(let offset=0;;offset+=100){
@@ -5263,7 +5270,22 @@ clientBalanceBindUi=function(){
  document.getElementById('clientLiveRefresh').onclick=actorStockRefresh;
  productTokenizationRender();
 };
-clientBalanceRefreshAll=async function(){try{await clientBalanceEnsureSession();const response=await supabaseClient.from('explorerchem_actors').select('id,actor_id,display_name,actor_type,country_code').eq('active',true).order('display_name');if(response.error)throw response.error;CLIENT_BALANCE_ACTORS=response.data||[];clientBalanceApplyActorOptions(CLIENT_BALANCE_ACTORS);await actorStockRefresh();}catch(e){const n=document.getElementById('productOverview');if(n)n.textContent=e.message||String(e);}};
+let clientActorRefreshSequence=0;
+clientBalanceRefreshAll=async function(){
+ const sequence=++clientActorRefreshSequence,address=EXPLORERCHEM_CONTRACT_ADDRESS;
+ const current=()=>sequence===clientActorRefreshSequence&&address===EXPLORERCHEM_CONTRACT_ADDRESS;
+ try{
+  await clientBalanceEnsureSession();
+  const response=await supabaseClient.from('explorerchem_actors').select('id,actor_id,display_name,actor_type,country_code,created_at').order('created_at',{ascending:false});
+  if(response.error)throw response.error;
+  const actors=await atoresNoRegistry(response.data||[],address);
+  if(!current())return;
+  CLIENT_BALANCE_ACTORS=actors;
+  clientBalanceApplyActorOptions(actors);
+  if(!actors.length){for(const id of ['productOverview','productLots','productProof']){const n=document.getElementById(id);if(n)n.textContent='Nenhuma empresa cadastrada no ActorRegistry atual.';}return;}
+  await actorStockRefresh();
+ }catch(e){if(!current())return;CLIENT_BALANCE_ACTORS=[];clientBalanceApplyActorOptions([]);for(const id of ['productOverview','productLots','productProof']){const n=document.getElementById(id);if(n)n.textContent='Não foi possível validar as empresas do contrato atual: '+(e.shortMessage||e.message||String(e));}}
+};
 clientBalanceRenderDashboard=actorStockRefresh;
 T.tokens=()=>T.dashboard();
 
