@@ -5557,7 +5557,7 @@ function rwaInstruction(name,keys,body=new Uint8Array()){
   return new solanaWeb3.TransactionInstruction({programId:rwaPk(RWA_SOLANA_PROGRAM_ID),keys,data:rwaBytes(rwaHexBytes(disc,8),body)});
 }
 async function rwaSendIx(ixs,label){
-  const provider=rwaSolanaProvider();if(!provider||!rwaSolanaWalletAddress)throw new Error("Conecte a carteira Solana no topo.");
+  const provider=rwaSolanaProvider();if(!provider||!rwaSolanaWalletAddress)throw new Error("Conecte uma carteira Solana para assinar a emissão.");
   if(!window.solanaWeb3)throw new Error("Solana Web3 não carregou; recarregue a página.");
   const connection=new solanaWeb3.Connection(RWA_SOLANA_RPC,"confirmed"),payer=rwaPk(rwaSolanaWalletAddress),latest=await connection.getLatestBlockhash("confirmed");
   const tx=new solanaWeb3.Transaction({feePayer:payer,recentBlockhash:latest.blockhash});for(const ix of ixs)tx.add(ix);
@@ -5567,9 +5567,10 @@ async function rwaSendIx(ixs,label){
   if(confirmation?.value?.err)throw new Error(label+" falhou na Solana: "+JSON.stringify(confirmation.value.err));
   return signature;
 }
-async function rwaBuildIssuanceContext(actor,lot){
+async function rwaBuildIssuanceContext(actor,lot,holderAddress){
   if(!actor||!lot)throw new Error("Selecione empresa e lote.");
-  if(!rwaSolanaWalletAddress)throw new Error("Conecte a carteira Solana no topo.");
+  if(!rwaSolanaWalletAddress)throw new Error("Conecte a carteira Solana para assinar a emissão.");
+  if(!holderAddress)throw new Error("Informe a public key Solana do holder inicial.");
   const sourceAddress=RWA_SUPPLIER_LOTS_CONTEXT.lotsAddress;if(!/^0x[0-9a-fA-F]{40}$/.test(sourceAddress||""))throw new Error("Endereço do ExploreChemLots não disponível.");
   const sourceChainId=11155111n,sourceContract=rwaEth20(sourceAddress),actorId=rwaHexBytes(actor.id,32),lotId=BigInt(lot.id);
   const origin=await rwaSha(rwaBytes(rwaText("ExploreChem/RWAOrigin/v1"),rwaU64(sourceChainId),sourceContract,actorId,rwaU64(lotId)));
@@ -5577,8 +5578,8 @@ async function rwaBuildIssuanceContext(actor,lot){
   const claim=await rwaSha(rwaBytes(rwaText("ExploreChem/RWAClaim/v1"),origin));
   const nonceHash=await rwaSha(rwaBytes(rwaText("ExploreChem/RWANonce/v1"),origin));
   let nonce=0n;for(let i=0;i<8;i++)nonce|=BigInt(nonceHash[i])<<(8n*BigInt(i));if(nonce===0n)nonce=1n;
-  const program=rwaPk(RWA_SOLANA_PROGRAM_ID),payer=rwaPk(rwaSolanaWalletAddress),config=rwaPda([rwaText("config")],program),series=rwaPda([rwaText("series"),seriesId],program),originLock=rwaPda([rwaText("origin"),origin],program),nonceRecord=rwaPda([rwaText("nonce"),rwaU64(nonce)],program),mintRecord=rwaPda([rwaText("rwa-mint"),seriesId],program),mint=rwaPda([rwaText("mint"),seriesId],program),tokenProgram=rwaPk(RWA_TOKEN_2022_PROGRAM_ID),ataProgram=rwaPk(RWA_ASSOCIATED_TOKEN_PROGRAM_ID),holderAta=rwaPda([payer.toBytes(),tokenProgram.toBytes(),mint.toBytes()],ataProgram);
-  return {program,payer,config,series,originLock,nonceRecord,mintRecord,mint,holderAta,tokenProgram,ataProgram,sourceChainId,sourceContract,actorId,lotId,origin,seriesId,claim,nonce,expiresAt:BigInt(Math.floor(Date.now()/1000)+3600)};
+  const program=rwaPk(RWA_SOLANA_PROGRAM_ID),payer=rwaPk(rwaSolanaWalletAddress),holder=rwaPk(holderAddress),config=rwaPda([rwaText("config")],program),series=rwaPda([rwaText("series"),seriesId],program),originLock=rwaPda([rwaText("origin"),origin],program),nonceRecord=rwaPda([rwaText("nonce"),rwaU64(nonce)],program),mintRecord=rwaPda([rwaText("rwa-mint"),seriesId],program),mint=rwaPda([rwaText("mint"),seriesId],program),tokenProgram=rwaPk(RWA_TOKEN_2022_PROGRAM_ID),ataProgram=rwaPk(RWA_ASSOCIATED_TOKEN_PROGRAM_ID),holderAta=rwaPda([holder.toBytes(),tokenProgram.toBytes(),mint.toBytes()],ataProgram);
+  return {program,payer,holder,config,series,originLock,nonceRecord,mintRecord,mint,holderAta,tokenProgram,ataProgram,sourceChainId,sourceContract,actorId,lotId,origin,seriesId,claim,nonce,expiresAt:BigInt(Math.floor(Date.now()/1000)+3600)};
 }
 async function rwaEnsureConfig(ctx,status){
   const connection=new solanaWeb3.Connection(RWA_SOLANA_RPC,"confirmed"),info=await connection.getAccountInfo(ctx.config,"confirmed");
@@ -5609,22 +5610,27 @@ async function rwaMintIfNeeded(ctx,status){
   const connection=new solanaWeb3.Connection(RWA_SOLANA_RPC,"confirmed");if(await connection.getAccountInfo(ctx.mint,"confirmed"))return;
   status("Criando Token-2022 e mintando a unidade RWA…");
   const ix=rwaInstruction("mint_rwa",[
-    {pubkey:ctx.payer,isSigner:true,isWritable:true},{pubkey:ctx.config,isSigner:false,isWritable:false},{pubkey:ctx.payer,isSigner:true,isWritable:false},{pubkey:ctx.series,isSigner:false,isWritable:true},{pubkey:ctx.payer,isSigner:false,isWritable:false},{pubkey:ctx.mintRecord,isSigner:false,isWritable:true},{pubkey:ctx.mint,isSigner:false,isWritable:true},{pubkey:ctx.holderAta,isSigner:false,isWritable:true},{pubkey:ctx.tokenProgram,isSigner:false,isWritable:false},{pubkey:ctx.ataProgram,isSigner:false,isWritable:false},{pubkey:solanaWeb3.SystemProgram.programId,isSigner:false,isWritable:false}
+    {pubkey:ctx.payer,isSigner:true,isWritable:true},{pubkey:ctx.config,isSigner:false,isWritable:false},{pubkey:ctx.payer,isSigner:true,isWritable:false},{pubkey:ctx.series,isSigner:false,isWritable:true},{pubkey:ctx.holder,isSigner:false,isWritable:false},{pubkey:ctx.mintRecord,isSigner:false,isWritable:true},{pubkey:ctx.mint,isSigner:false,isWritable:true},{pubkey:ctx.holderAta,isSigner:false,isWritable:true},{pubkey:ctx.tokenProgram,isSigner:false,isWritable:false},{pubkey:ctx.ataProgram,isSigner:false,isWritable:false},{pubkey:solanaWeb3.SystemProgram.programId,isSigner:false,isWritable:false}
   ]);
   await rwaSendIx([ix],"Mint do RWA");
 }
 async function rwaCreateSelectedLotOnchain(button){
-  const actor=rwaSelectedActor(),lot=rwaSelectedLot(),statusNode=document.getElementById("rwaIssueStatus"),setStatus=t=>{if(statusNode)statusNode.textContent=t;};
-  if(!actor){toast("Selecione a empresa.");return;}if(!lot){toast("Selecione um lote.");return;}if(!rwaSolanaWalletAddress){toast("Conecte a carteira Solana no topo.");return;}
+  const actor=rwaSelectedActor(),lot=rwaSelectedLot(),statusNode=document.getElementById("rwaIssueStatus"),holderInput=document.getElementById("rwaHolderPubkey"),setStatus=t=>{if(statusNode)statusNode.textContent=t;};
+  if(!actor){toast("Selecione a empresa.");return;}if(!lot){toast("Selecione um lote.");return;}
+  const holderAddress=String(holderInput?.value||"").trim();
+  if(!holderAddress){toast("Informe a public key Solana do holder inicial.");holderInput?.focus();return;}
+  try{rwaPk(holderAddress);}catch(_){toast("A public key Solana informada é inválida.");holderInput?.focus();return;}
+  if(!rwaSolanaWalletAddress){setStatus("Conectando a carteira Solana que assinará a emissão…");await rwaConnectWallet();}
+  if(!rwaSolanaWalletAddress){toast("Conecte uma carteira Solana para assinar a emissão.");return;}
   if(RWA_SUPPLIER_LOTS_CONTEXT.actorId!==actor.id){toast("Atualize os lotes antes de emitir.");return;}
   const original=button.textContent;button.disabled=true;
   try{
-    const ctx=await rwaBuildIssuanceContext(actor,lot);setStatus("Conferindo Config RWA…");await rwaEnsureConfig(ctx,setStatus);await rwaCreateSeriesIfNeeded(ctx,setStatus);await rwaMintIfNeeded(ctx,setStatus);
+    const ctx=await rwaBuildIssuanceContext(actor,lot,holderAddress);setStatus("Conferindo Config RWA…");await rwaEnsureConfig(ctx,setStatus);await rwaCreateSeriesIfNeeded(ctx,setStatus);await rwaMintIfNeeded(ctx,setStatus);
     const state=await rwaMintSummary(ctx.mint.toBase58());if(!state.exists||state.decimals!==0||String(state.supply)!=="1")throw new Error("O Mint foi criado, mas a leitura final não confirmou supply 1 / decimals 0.");
     const rows=rwaCatalog();let item=rows.find(r=>r.supplierActorId===actor.id&&String(r.sourceLotId||"")===lot.id&&String(r.economicStatus||"ACTIVE")!=="REDEEMED");
-    const data={mint:ctx.mint.toBase58(),seriesId:rwaHex(ctx.seriesId),originCommitment:rwaHex(ctx.origin),supplierActorId:actor.id,sourceLotId:lot.id,sourceEvidenceId:lot.evidenceId||null,sourceLotsContract:RWA_SUPPLIER_LOTS_CONTEXT.lotsAddress||null,sourceChainId:11155111,economicStatus:"ACTIVE",priceRisk:"PENDING",createdAt:item?.createdAt||new Date().toISOString()};
+    const data={mint:ctx.mint.toBase58(),seriesId:rwaHex(ctx.seriesId),originCommitment:rwaHex(ctx.origin),supplierActorId:actor.id,sourceLotId:lot.id,sourceEvidenceId:lot.evidenceId||null,sourceLotsContract:RWA_SUPPLIER_LOTS_CONTEXT.lotsAddress||null,sourceChainId:11155111,initialHolder:ctx.holder.toBase58(),economicStatus:"ACTIVE",priceRisk:"PENDING",createdAt:item?.createdAt||new Date().toISOString()};
     if(item)Object.assign(item,data);else{data.id=crypto.randomUUID?crypto.randomUUID():Date.now()+"-"+Math.random();data.priceSol=null;rows.push(data);}rwaSaveCatalog(rows);
-    const map=rwaActorWallets();map[actor.id]=rwaSolanaWalletAddress;rwaSaveActorWallet_REMOVIDOs(map);
+    const map=rwaActorWallets();map[actor.id]=ctx.holder.toBase58();rwaSaveActorWallet_REMOVIDOs(map);
     setStatus("RWA criado na Devnet. Mint: "+ctx.mint.toBase58());toast("RWA do lote #"+lot.id+" criado na Solana Devnet.");
     rwaRenderSelectedLot();await rwaRefreshTables();
   }catch(error){console.error(error);setStatus(error.message||String(error));toast(error.message||String(error));}
@@ -5691,7 +5697,7 @@ function rwaSelectedLot(){
   return RWA_SUPPLIER_LOTS.find(r=>r.id===id)||null;
 }
 function rwaRenderSelectedLot(){
-  const actor=rwaSelectedActor(),row=rwaSelectedLot(),summary=document.getElementById("rwaSourceLotSummary"),issue=document.getElementById("rwaIssueForm"),sale=document.getElementById("rwaSaleForm"),issueTitle=document.getElementById("rwaIssueTitle"),saleTitle=document.getElementById("rwaSaleTitle"),mintText=document.getElementById("rwaCreatedMint"),holderText=document.getElementById("rwaInitialHolder"),price=document.getElementById("rwaIndicativePrice");
+  const actor=rwaSelectedActor(),row=rwaSelectedLot(),summary=document.getElementById("rwaSourceLotSummary"),issue=document.getElementById("rwaIssueForm"),sale=document.getElementById("rwaSaleForm"),issueTitle=document.getElementById("rwaIssueTitle"),saleTitle=document.getElementById("rwaSaleTitle"),mintText=document.getElementById("rwaCreatedMint"),price=document.getElementById("rwaIndicativePrice");
   if(!summary)return;
   if(!row){
     summary.innerHTML='<span class="sm">Selecione um lote. Nenhum dado físico será exibido nesta área.</span>';
@@ -5710,7 +5716,6 @@ function rwaRenderSelectedLot(){
     if(issue)issue.hidden=false;
     if(sale)sale.hidden=true;
     if(issueTitle)issueTitle.textContent='Criar RWA do Lote #'+row.id;
-    if(holderText)holderText.textContent=rwaSolanaWalletAddress?rwaSolanaWalletAddress:"Conecte a carteira Solana no topo";
   }
 }
 function rwaRenderWallet(area){
@@ -5754,7 +5759,7 @@ function rwaBaseHtml(){
     '<section id="rwaSupplierPanel">'+rwaSupplierPanelHtml(actor)+'</section><section id="rwaClientPanel" hidden>'+rwaClientPanelHtml()+'</section></div>';
 }
 function rwaSupplierPanelHtml(actor){
-  return '<div class="rwa-grid"><div class="stack"><section class="panel rwa-card"><div class="rwa-panel-title"><div><span class="section-eyebrow">FORNECEDOR RWA</span><h2>Empresa emissora</h2><p>Escolha uma empresa já reconhecida pelo ExploreChem. O mesmo actorId identifica a origem do RWA.</p></div></div><div class="field"><label for="rwaSupplierActor">Fornecedor / empresa</label><select id="rwaSupplierActor">'+rwaActorOptions(actor?.id)+'</select></div><div id="rwaSupplierSummary">'+rwaSupplierSummaryHtml(actor)+'</div><p class="rwa-form-note">A carteira Solana conectada no topo será usada automaticamente como holder inicial. Você não precisa digitar a public key novamente.</p></section>'+
+  return '<div class="rwa-grid"><div class="stack"><section class="panel rwa-card"><div class="rwa-panel-title"><div><span class="section-eyebrow">FORNECEDOR RWA</span><h2>Empresa emissora</h2><p>Escolha uma empresa já reconhecida pelo ExploreChem. O mesmo actorId identifica a origem do RWA.</p></div></div><div class="field"><label for="rwaSupplierActor">Fornecedor / empresa</label><select id="rwaSupplierActor">'+rwaActorOptions(actor?.id)+'</select></div><div id="rwaSupplierSummary">'+rwaSupplierSummaryHtml(actor)+'</div><div class="field" style="margin-top:16px"><label for="rwaHolderPubkey">Public key Solana do holder inicial</label><input id="rwaHolderPubkey" class="mono" placeholder="Cole a public key Solana" autocomplete="off" spellcheck="false" value="'+escaparHtml(rwaActorWallets()[actor?.id]||rwaSolanaWalletAddress||"")+'"></div><div class="actions"><button type="button" class="btn ghost sm" id="rwaUseConnectedWallet">Usar carteira conectada</button><button type="button" class="btn ghost sm" id="rwaConnectHere">Conectar Solana para assinar</button></div><p class="rwa-form-note">Esta public key será o holder inicial do RWA. A carteira que assina a transação pode ser a mesma ou outra carteira autorizada como attestor.</p></section>'+
   '<section class="panel rwa-card"><span class="section-eyebrow">ORIGEM DO RWA</span><h2>Escolher lote</h2><p class="sub">Selecione somente o identificador do lote. Esta área não exibe massa, quantidade, elemento, teor ou composição.</p>'+
     '<div class="rwa-lot-picker"><div class="rwa-lot-picker-head"><div><h3>Meus lotes</h3><p>O lote selecionado fica ligado ao actorId como origem econômica do RWA.</p></div><button type="button" class="btn ghost sm" id="rwaLoadLots">Atualizar lotes</button></div>'+
     '<div class="field"><label for="rwaSourceLot">Lote de origem</label><select id="rwaSourceLot"><option value="">Carregando lotes da empresa…</option></select></div>'+
@@ -5763,7 +5768,7 @@ function rwaSupplierPanelHtml(actor){
     '<div id="rwaIssueForm" hidden style="margin-top:22px;padding-top:22px;border-top:1px solid var(--rule)">'+
       '<span class="section-eyebrow">EMISSÃO RWA</span><h3 id="rwaIssueTitle">Criar RWA do lote selecionado</h3>'+
       '<p class="sub">A Series e o Mint Token-2022 serão criados automaticamente na Solana Devnet. O Mint não é digitado manualmente.</p>'+
-      '<div class="rwa-ok" style="margin:14px 0"><b>Holder inicial</b><br><span id="rwaInitialHolder" class="mono sm">'+escaparHtml(rwaSolanaWalletAddress||"Conecte a carteira Solana no topo")+'</span></div>'+
+      '<div class="rwa-ok" style="margin:14px 0"><b>Holder inicial</b><br><span class="sm">Será usada a public key informada acima.</span></div>'+
       '<div class="actions"><button type="button" class="btn" id="rwaCreateRwa">Criar RWA deste lote</button></div>'+
       '<p id="rwaIssueStatus" class="rwa-form-note">Depois da confirmação on-chain, o Mint aparecerá automaticamente e você decide se quer colocar preço agora.</p>'+
     '</div>'+
@@ -5821,9 +5826,14 @@ function rwaBindUi(){
     localStorage.setItem("explorechem:rwa:supplier-actor:v1",actorSelect.value);
     const actor=rwaSelectedActor(),summary=document.getElementById("rwaSupplierSummary");
     if(summary)summary.innerHTML=rwaSupplierSummaryHtml(actor);
+    const holder=document.getElementById("rwaHolderPubkey");if(holder)holder.value=rwaActorWallets()[actor?.id]||rwaSolanaWalletAddress||"";
     rwaLoadSupplierLots(actor);rwaRefreshTables();
   };
   const loadLots=document.getElementById("rwaLoadLots");if(loadLots)loadLots.onclick=()=>rwaLoadSupplierLots(rwaSelectedActor());
+  const holder=document.getElementById("rwaHolderPubkey"),useConnected=document.getElementById("rwaUseConnectedWallet"),connectHere=document.getElementById("rwaConnectHere");
+  if(holder)holder.onchange=()=>{const actor=rwaSelectedActor(),value=String(holder.value||"").trim();if(!actor||!value)return;try{rwaPk(value);const map=rwaActorWallets();map[actor.id]=value;rwaSaveActorWallet_REMOVIDOs(map);const summary=document.getElementById("rwaSupplierSummary");if(summary)summary.innerHTML=rwaSupplierSummaryHtml(actor);}catch(_){toast("A public key Solana informada é inválida.");}};
+  if(useConnected)useConnected.onclick=()=>{if(!rwaSolanaWalletAddress){toast("Conecte a carteira Solana primeiro.");return;}if(holder){holder.value=rwaSolanaWalletAddress;holder.dispatchEvent(new Event("change"));}};
+  if(connectHere)connectHere.onclick=async()=>{await rwaConnectWallet();if(rwaSolanaWalletAddress&&holder&&!holder.value){holder.value=rwaSolanaWalletAddress;holder.dispatchEvent(new Event("change"));}};
   const create=document.getElementById("rwaCreateRwa");if(create)create.onclick=()=>rwaCreateSelectedLotOnchain(create);
   const prepare=document.getElementById("rwaPrepareSale");if(prepare)prepare.onclick=()=>{
     const actor=rwaSelectedActor(),lot=rwaSelectedLot(),raw=String(document.getElementById("rwaIndicativePrice")?.value||"").trim().replace(",","."),price=Number(raw),status=document.getElementById("rwaSaleStatus");
