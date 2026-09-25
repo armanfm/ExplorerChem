@@ -1147,7 +1147,54 @@ main{
 <style>
 .product-dashboard [hidden]{display:none!important}.ec-unified .client-live-toolbar{grid-template-columns:minmax(0,1fr) auto}.ec-section-heading{display:flex;align-items:center;justify-content:space-between;gap:20px;margin:26px 0 18px}.ec-section-heading h2{margin:8px 0 0;font-size:24px}.ec-stats{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:14px;margin:18px 0}.ec-stat{position:relative;padding:24px 22px;border:1px solid #24453d;border-radius:18px;background:linear-gradient(135deg,#13372f,#102b26);overflow:hidden}.ec-stat:before{content:'';position:absolute;top:0;left:0;width:48px;height:2px;background:#2bd3bf}.ec-stat strong{display:block;font-size:30px;letter-spacing:-1px;color:#e4f5ef;font-variant-numeric:tabular-nums}.ec-stat span{display:block;color:#b2cdc3;font-size:12px;margin-top:12px}.ec-stat small{display:block;color:#7faaa0;font-size:11px;margin-top:7px}.ec-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:22px}.ec-grid>.panel{min-width:0;margin:0}.ec-chip{display:inline-block;border:1px solid #25564a;border-radius:24px;padding:7px 12px;font-size:11px;color:#87d6bd;background:#12362d}.ec-note,.ec-scope{font-size:12px;color:#98b9ae;line-height:1.7}.ec-scope{margin:12px 0 24px}.ec-composition{display:flex;align-items:center;gap:34px;margin:26px 0}.ec-ring{width:190px;height:190px;flex-shrink:0;border-radius:50%;display:grid;place-items:center}.ec-ring>div{width:150px;height:150px;background:#0b2823;border-radius:50%;display:flex;align-items:center;justify-content:center;flex-direction:column}.ec-ring strong{font-size:25px;color:#e0f3eb}.ec-ring span{font-size:11px;color:#9ab8af;margin-top:7px}.ec-legend{flex:1}.ec-legend>div{display:flex;align-items:center;gap:10px;margin:16px 0;font-size:13px}.ec-legend i{height:9px;width:9px;border-radius:50%;flex-shrink:0}.ec-legend span{margin-left:auto;color:#b6cfc5}.ec-lots{margin-top:24px}.ec-cell-sub{display:block;color:#7fa499;font-size:11px;margin-top:6px}.ec-muf-picker{display:grid;gap:6px;font-size:11px;color:#9ab8ad}.ec-muf-picker select{background:#0c2923;color:#dcefe6;border:1px solid #2c5145;padding:10px;border-radius:10px;max-width:300px}.ec-muf-section{margin:30px 0}.product-filters[hidden]{display:none!important}#productOverview[hidden],#productProof[hidden]{display:none!important}
 @media(max-width:1100px){.ec-grid{grid-template-columns:1fr}.ec-stats{grid-template-columns:repeat(2,minmax(0,1fr))}}@media(max-width:560px){.ec-section-heading{align-items:flex-start;flex-direction:column}.ec-composition{flex-direction:column}.ec-legend{width:100%}.ec-stat{padding:18px 14px}.ec-stat strong{font-size:25px}}
-</style></head>
+</style>
+<style id="rwa-workspace-design">
+/* ===================================================================
+   EXPLORECHEM — RWA WORKSPACE (SOLANA DEVNET)
+   A propriedade do RWA é lida on-chain no Token-2022.
+   O catálogo legível (empresa ↔ actorId ↔ mint) permanece off-chain.
+   O programa atual NÃO contém list_rwa / buy_rwa / cancel_listing;
+   por isso a interface não simula uma venda on-chain inexistente.
+   =================================================================== */
+.rwa-shell{display:grid;gap:18px}
+.rwa-hero{display:grid;grid-template-columns:minmax(0,1.45fr) minmax(320px,.72fr);gap:16px}
+.rwa-hero-main{padding:30px 32px;position:relative;overflow:hidden;background:radial-gradient(circle at 90% 10%,rgba(56,215,202,.15),transparent 32%),linear-gradient(145deg,#0b3430,#071f1e)}
+.rwa-hero-main:after{content:"";position:absolute;width:260px;height:260px;border:1px solid rgba(56,215,202,.11);border-radius:50%;right:-110px;bottom:-150px;box-shadow:0 0 0 30px rgba(56,215,202,.018),0 0 0 60px rgba(56,215,202,.012)}
+.rwa-kicker{font-size:10px;font-weight:800;letter-spacing:.13em;text-transform:uppercase;color:var(--nd);margin-bottom:8px}
+.rwa-program-card{padding:24px;background:linear-gradient(155deg,#0a3b37,#06302e);border-color:rgba(56,215,202,.25);display:flex;flex-direction:column;justify-content:space-between}
+.rwa-program-card .rwa-program-id{word-break:break-all;font:11px/1.55 "IBM Plex Mono",monospace;color:#b9d8d3}
+.rwa-program-card .actions{margin-top:18px}
+.rwa-stats{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}
+.rwa-stat{padding:19px;border:1px solid rgba(67,149,142,.22);border-radius:15px;background:linear-gradient(145deg,#0b302c,#082421)}
+.rwa-stat b{display:block;font:700 20px/1.1 "IBM Plex Mono",monospace;color:#edf8f5;overflow-wrap:anywhere}.rwa-stat span{display:block;margin-top:7px;color:#789792;font-size:10px}
+.rwa-tabs{display:flex;gap:8px;flex-wrap:wrap;padding:7px;border:1px solid var(--rule);border-radius:14px;background:#071f1e}
+.rwa-tabs button{padding:11px 16px;border-radius:10px;color:#96b7b0;font-size:12px;font-weight:700}.rwa-tabs button[aria-selected="true"]{background:#16443c;color:#6be7d0;box-shadow:inset 0 0 0 1px rgba(56,215,202,.16)}
+.rwa-grid{display:grid;grid-template-columns:minmax(0,1fr) minmax(330px,.72fr);gap:16px}.rwa-grid-2{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+.rwa-card{padding:24px}.rwa-card h2{margin-top:0}.rwa-card h3{margin-top:0}.rwa-actor-summary{display:grid;gap:8px;margin-top:13px;padding:14px;border:1px solid var(--rule);border-radius:12px;background:var(--sunk)}
+.rwa-actor-summary div{display:grid;grid-template-columns:130px 1fr;gap:10px;font-size:11px}.rwa-actor-summary span{color:var(--mute)}.rwa-actor-summary b{overflow-wrap:anywhere}
+.rwa-warning{padding:14px 16px;border:1px solid rgba(224,187,104,.35);border-left:3px solid var(--att);border-radius:10px;background:rgba(53,45,23,.7);color:#d5c28d;font-size:11px;line-height:1.6}
+.rwa-ok{padding:14px 16px;border:1px solid rgba(98,216,174,.26);border-left:3px solid var(--ok);border-radius:10px;background:rgba(11,53,43,.55);color:#b7dfd0;font-size:11px;line-height:1.6}
+.rwa-market table{min-width:980px}.rwa-assets table{min-width:860px}.rwa-table-actions{display:flex;gap:6px;flex-wrap:wrap}.rwa-table-actions .btn{padding:6px 10px;font-size:10px}
+.rwa-address{font:11px/1.55 "IBM Plex Mono",monospace;overflow-wrap:anywhere;color:#a8cac5}
+.rwa-right{display:inline-flex;align-items:center;gap:6px}.rwa-right:before{content:"";width:7px;height:7px;border-radius:50%;background:var(--ok);box-shadow:0 0 0 3px rgba(98,216,174,.10)}
+.rwa-right.off:before{background:var(--mute);box-shadow:none}.rwa-right.escrow:before{background:var(--att);box-shadow:0 0 0 3px rgba(224,187,104,.10)}
+.rwa-empty{padding:34px 22px;text-align:center;color:var(--mute)}
+.rwa-live{display:flex;align-items:center;gap:8px}.rwa-live i{width:8px;height:8px;border-radius:50%;background:var(--ok);box-shadow:0 0 0 4px var(--ok-soft)}
+.rwa-form-note{margin:-4px 0 14px;color:var(--mute);font-size:10px;line-height:1.55}
+.rwa-market-state{display:inline-flex;padding:5px 9px;border-radius:999px;background:rgba(224,187,104,.12);color:#e7c76f;font-size:9px;font-weight:800;letter-spacing:.04em}
+.rwa-disabled-reason{font-size:9.5px;color:#a99057;max-width:240px;line-height:1.45}
+.rwa-link{color:var(--nd);text-decoration:none}.rwa-link:hover{text-decoration:underline}
+.rwa-wallet-panel{display:flex;align-items:center;gap:10px;flex-wrap:wrap}.rwa-wallet-pill{padding:8px 11px;border:1px solid rgba(56,215,202,.25);border-radius:10px;background:#082725;font:11px "IBM Plex Mono",monospace;color:#bfe1dc}
+.rwa-chain-chip{display:inline-flex;padding:5px 9px;border:1px solid rgba(56,215,202,.18);border-radius:999px;background:rgba(56,215,202,.07);color:#61dace;font-size:9px;font-weight:700}
+.rwa-panel-title{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;flex-wrap:wrap}.rwa-panel-title h2{margin:0}.rwa-panel-title p{margin:5px 0 0;color:var(--mute);font-size:11px}
+.rwa-catalog-badge{font-size:9px;color:#7fa499}
+.rwa-marketplace-lock{display:grid;grid-template-columns:auto 1fr;gap:12px;align-items:flex-start;padding:15px;border:1px solid rgba(224,187,104,.28);border-radius:13px;background:linear-gradient(90deg,rgba(83,63,18,.28),rgba(7,31,29,.96))}.rwa-marketplace-lock>i{font-style:normal;width:30px;height:30px;border-radius:9px;display:grid;place-items:center;background:rgba(224,187,104,.13);color:var(--att)}.rwa-marketplace-lock b{display:block;font-size:11px}.rwa-marketplace-lock p{margin:4px 0 0;color:#a9986a;font-size:10px;line-height:1.55}
+@media(max-width:1100px){.rwa-hero,.rwa-grid{grid-template-columns:1fr}.rwa-stats{grid-template-columns:1fr 1fr}}
+@media(max-width:680px){.rwa-stats,.rwa-grid-2{grid-template-columns:1fr}.rwa-hero-main,.rwa-card,.rwa-program-card{padding:20px}.rwa-tabs{overflow:auto;flex-wrap:nowrap}.rwa-tabs button{white-space:nowrap}}
+.rail nav button[data-page="rwa"]:after{content:"◎"}
+</style>
+
+</head>
 <body>
 
 <header class="top">
@@ -1174,6 +1221,7 @@ main{
   <div class="role-switch"><label for="roleSelector">Mudar visão</label><select id="roleSelector" aria-label="Mudar visão do sistema">
     <option value="op">Operador</option>
     <option value="cli">Cliente</option>
+    <option value="rwa">RWA</option>
   </select></div>
   <div class="wallet-area" id="walletArea"></div>
   <div class="session" id="session" aria-label="Usuário autenticado"></div>
@@ -1201,6 +1249,16 @@ const SUPABASE_URL = "https://mnmflnqmohgsxgavwenn.supabase.co";
 const SUPABASE_PUBLISHABLE_KEY = "sb_publishable_va4nLJ-Uzw2KzYzdOel-hQ_Toeddk-1";
 const DEFAULT_EXPLORERCHEM_CONTRACT_ADDRESS = "0x388529A4fC4f480c3dde99C3dC9C4C9B61615D13";
 const EXPLORERCHEM_CONTRACT_STORAGE_KEY = "explorechem_contract_address_registry_current_v3";
+
+const RWA_SOLANA_PROGRAM_ID = "CC5N6Bpht1z6nuR2ReamaYAXG9VagN3w27df4PWxAMFG";
+const RWA_SOLANA_CLUSTER = "devnet";
+const RWA_SOLANA_RPC = "https://api.devnet.solana.com";
+const RWA_TOKEN_2022_PROGRAM_ID = "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb";
+const RWA_ACTOR_SOLANA_WALLET_KEY = "explorechem:rwa:actor-solana:v1";
+const RWA_CATALOG_KEY = "explorechem:rwa:catalog:v1";
+let rwaSolanaWalletAddress = "";
+let rwaSolanaWalletBalance = null;
+let rwaOwnedTokenAmounts = new Map();
 function carregarEnderecoContrato(){
   try{
     const saved=localStorage.getItem(EXPLORERCHEM_CONTRACT_STORAGE_KEY);
@@ -1984,15 +2042,17 @@ const kg3=n=>(n/1000000).toLocaleString("pt-BR",{minimumFractionDigits:3,maximum
 /* Navegação atualizada (inclui laboratório) */
 const NAVS={
   op:[["enviar","Pedidos"],["evidencias","Evidências"],["atores","Empresas"],["cadastro","Cadastrar empresa"],["admin","Admin"]],
-  cli:[["dashboard","Meu balanço"]]};
+  cli:[["dashboard","Meu balanço"]],
+  rwa:[["rwa","RWA"]]};
 
 let SESSION={
   op:{iniciais:"—",nome:"Não autenticado",acesso:"Operação"},
-  cli:{iniciais:"—",nome:"Cliente",acesso:"Balanço de massa"}
+  cli:{iniciais:"—",nome:"Cliente",acesso:"Balanço de massa"},
+  rwa:{iniciais:"R",nome:"RWA",acesso:"Direitos econômicos · Solana Devnet"}
 };
 
 const roleSolicitada=new URLSearchParams(window.location.search).get("role");
-let role=["op","cli"].includes(roleSolicitada)?roleSolicitada:"op";
+let role=["op","cli","rwa"].includes(roleSolicitada)?roleSolicitada:"op";
 let page=NAVS[role][0][0];
 let walletAddress="";
 let walletChainId="";
@@ -2044,6 +2104,7 @@ const networkName=chainId=>({"0xaa36a7":"Sepolia","0x1":"Ethereum","0x89":"Polyg
 
 function renderWallet(){
   const area=$("#walletArea");
+  if(role==="rwa"){rwaRenderWallet(area);return;}
   if(role==="cli"){
     area.innerHTML=page==='tokens'?'<span class="readonly-state">Operações autorizadas pela carteira</span>':'<span class="readonly-state">Acesso somente leitura</span>';
     translateUiTree(area);
@@ -2083,6 +2144,7 @@ async function connectWallet(){
 }
 
 async function restoreWallet(){
+  if(role==="rwa"){await restoreRwaWallet();return;}
   const provider=getWalletProvider();
   if(!provider||role==="cli") return;
   try{
@@ -5268,7 +5330,15 @@ function historySvg(groups){
  const x=i=>85+i*650/Math.max(1,values.length-1),y=v=>220-(v-min)/range*175;
  let grid='';for(let i=0;i<=4;i++){const v=min+range*i/4;grid+=`<line x1="85" x2="735" y1="${y(v)}" y2="${y(v)}" stroke="#234c46"/><text x="75" y="${y(v)+4}" text-anchor="end" fill="#aac8c0" font-size="12">${v.toLocaleString('pt-BR',{maximumFractionDigits:2})} kg</text>`;}
  let path=`M ${x(0)} ${y(values[0])}`;for(let i=1;i<values.length;i++)path+=` H ${x(i)} V ${y(values[i])}`;
- return `<svg viewBox="0 0 780 270" role="img" aria-label="Evolução do saldo material após cada transação; valores detalhados na tabela abaixo" style="width:100%;max-height:360px">${grid}<path d="${path}" fill="none" stroke="#24d0bf" stroke-width="3"/>${values.map((v,i)=>`<circle cx="${x(i)}" cy="${y(v)}" r="4" fill="#91d1c9"><title>${i===0?'Antes da primeira movimentação':escaparHtml(groups[i-1].date)}: ${v.toLocaleString('pt-BR')} kg</title></circle>`).join('')}<text x="85" y="252" fill="#aac8c0" font-size="12">Início</text><text x="735" y="252" text-anchor="end" fill="#aac8c0" font-size="12">${groups.length} transações · ordem cronológica</text></svg>`;
+ return `<svg viewBox="0 0 780 270" role="group" aria-label="Evolução do saldo material. Selecione um ponto para ver origem e destino" style="width:100%;max-height:360px">${grid}<path d="${path}" fill="none" stroke="#24d0bf" stroke-width="3"/>${values.map((v,i)=>`<circle ${i?`data-history-point="${i-1}" tabindex="0" role="button" aria-label="Ver movimentação ${i}" style="cursor:pointer"`:""} cx="${x(i)}" cy="${y(v)}" r="${i?8:4}" fill="#91d1c9" stroke="#052e29" stroke-width="2"><title>${i===0?'Antes da primeira movimentação':escaparHtml(groups[i-1].date)}: ${v.toLocaleString('pt-BR')} kg</title></circle>`).join('')}<text x="85" y="252" fill="#aac8c0" font-size="12">Início</text><text x="735" y="252" text-anchor="end" fill="#aac8c0" font-size="12">${groups.length} transações · ordem cronológica</text></svg>`;
+}
+function bindHistoryPoints(result,groups){
+ const detail=result.querySelector('[data-history-detail]');
+ const show=index=>{const g=groups[index];if(!g)return;const esc=escaparHtml;
+  result.querySelectorAll('[data-history-point]').forEach(point=>{const selected=Number(point.dataset.historyPoint)===index;point.setAttribute('aria-pressed',String(selected));point.setAttribute('fill',selected?'#f1d590':'#91d1c9');point.setAttribute('r',selected?'10':'8');});
+  detail.innerHTML='<section class="panel pad"><h3>'+esc(g.label)+'</h3><p>'+esc(g.date)+'</p><p style="overflow-wrap:anywhere"><strong>Origem:</strong> '+(g.origins.length?g.origins.map(esc).join(' · '):'Emissão de material')+'</p><p style="overflow-wrap:anywhere"><strong>Destino:</strong> '+(g.destinations.length?g.destinations.map(esc).join(' · '):'Consumo sem crédito a outra empresa nesta transação')+'</p><p><strong>Entradas:</strong> '+actorKg(g.incoming)+' · <strong>Saídas:</strong> '+actorKg(g.outgoing)+'</p><p><strong>Saldo após:</strong> '+actorKg(g.balance)+'</p><p>'+g.items.map(i=>'Lote '+esc(i.id)+': '+(i.out?'−'+actorKg(i.out):'')+(i.inc?' +'+actorKg(i.inc):'')).join('<br>')+'</p><a target="_blank" rel="noopener noreferrer" href="https://sepolia.etherscan.io/tx/'+encodeURIComponent(g.tx)+'">Ver transação na blockchain</a></section>';
+ };
+ result.querySelectorAll('[data-history-point]').forEach(point=>{point.setAttribute('aria-pressed','false');point.onclick=()=>show(Number(point.dataset.historyPoint));point.onkeydown=event=>{if(event.key==='Enter'||event.key===' '){event.preventDefault();show(Number(point.dataset.historyPoint));}};});
 }
 function bindStockHistory(c,actorId,currentRows,blockTag,active){
  const host=document.getElementById('productHistory');if(!host)return;
@@ -5304,12 +5374,21 @@ function bindStockHistory(c,actorId,currentRows,blockTag,active){
    const names=new Map((typeof CLIENT_BALANCE_ACTORS==='undefined'?[]:CLIENT_BALANCE_ACTORS).map(a=>[String(a.actor_id||a.actorId||'').toLowerCase(),a.display_name||a.nome||a.actor_id]));
    const name=id=>names.get(String(id).toLowerCase())||id;
    for(const g of groups){if(!active())return;const [block,receipt]=await Promise.all([c.provider.getBlock(g.block),c.provider.getTransactionReceipt(g.tx)]);if(!receipt||Number(receipt.status)!==1)throw Error('Transação não confirmada.');g.date=new Date(Number(block.timestamp)*1000).toLocaleString('pt-BR');
-    const peers=new Set();for(const l of receipt.logs){if(!igualHex(l.address,address))continue;try{const a=ledger.interface.parseLog(l)?.args;if(a)for(const id of [a.from,a.to])if(!igualHex(id,actorId)&&!igualHex(id,ethers.ZeroHash)&&!igualHex(id,ethers.id('ExploreChem/OrderEscrow/v2')))peers.add(name(id));}catch(_){} }
+    const peers=new Set(),origins=new Map(),destinations=new Map();
+    const party=(id,target)=>{if(igualHex(id,ethers.ZeroHash))return;const label=igualHex(id,ethers.id('ExploreChem/OrderEscrow/v2'))?'Reserva do pedido':name(id);target.set(String(id).toLowerCase(),label);};
+    for(const l of receipt.logs){if(!igualHex(l.address,address))continue;let a;try{a=ledger.interface.parseLog(l)?.args;}catch(_){}if(!a)continue;
+     const id=String(a.id);if(!lots.has(id))lots.set(id,await c.lots.getLot(id,{blockTag}));
+     if(!igualHex(lots.get(id).basisHash,basis))continue;
+     party(a.from,origins);party(a.to,destinations);
+     for(const id of [a.from,a.to])if(!igualHex(id,actorId)&&!igualHex(id,ethers.ZeroHash)&&!igualHex(id,ethers.id('ExploreChem/OrderEscrow/v2')))peers.add(name(id));
+    }
+    g.origins=[...origins.values()];g.destinations=[...destinations.values()];
     g.peers=[...peers].join(' · ');g.label=g.incoming&&g.outgoing?'Transformação / movimentação interna':g.outgoing?'Saída / consumo':g.peers?'Entrada de material':'Emissão de material';
    }
    if(!active()||!host.isConnected)return;
    const esc=escaparHtml;
-   result.innerHTML='<section class="panel pad"><span class="section-eyebrow">EVOLUÇÃO DO SALDO MATERIAL</span><h2>'+actorKg(last)+'</h2><p>Saldo disponível após cada transação. Consumo e emissão na mesma transação são contabilizados juntos.</p>'+historySvg(groups)+'</section><section class="panel pad"><h2>Movimentações confirmadas</h2><div class="scrollx"><table><thead><tr><th>Data</th><th>Movimentação / empresa envolvida</th><th>Lotes</th><th>Entradas</th><th>Saídas</th><th>Saldo após</th><th>Comprovante</th></tr></thead><tbody>'+[...groups].reverse().map(g=>'<tr><td>'+esc(g.date)+'</td><td>'+esc(g.label)+(g.peers?'<br><small style="overflow-wrap:anywhere">'+esc(g.peers)+'</small>':'')+'</td><td>'+g.items.map(i=>'Lote '+esc(i.id)+': '+(i.out?'−'+actorKg(i.out):'')+(i.inc?' +'+actorKg(i.inc):'')).join('<br>')+'</td><td>+'+actorKg(g.incoming)+'</td><td>−'+actorKg(g.outgoing)+'</td><td>'+actorKg(g.balance)+'</td><td><a target="_blank" rel="noopener noreferrer" href="https://sepolia.etherscan.io/tx/'+g.tx+'">Ver transação</a></td></tr>').join('')+'</tbody></table></div>'+(groups.length?'':'<p>Nenhuma movimentação de massa material encontrada.</p>')+'<p class="ec-note">Reservas e liberações alteram o saldo disponível. Saída ou consumo não significa necessariamente venda. Os elementos estão contidos na massa material e não são somados novamente.</p></section>';
+   result.innerHTML='<section class="panel pad"><span class="section-eyebrow">EVOLUÇÃO DO SALDO MATERIAL</span><h2>'+actorKg(last)+'</h2><p>Saldo disponível após cada transação. Consumo e emissão na mesma transação são contabilizados juntos.</p>'+historySvg(groups)+'<p>Toque ou clique em uma bolinha para ver a movimentação.</p><div data-history-detail aria-live="polite"></div></section><section class="panel pad"><h2>Movimentações confirmadas</h2><div class="scrollx"><table><thead><tr><th>Data</th><th>Movimentação / empresa envolvida</th><th>Lotes</th><th>Entradas</th><th>Saídas</th><th>Saldo após</th><th>Comprovante</th></tr></thead><tbody>'+[...groups].reverse().map(g=>'<tr><td>'+esc(g.date)+'</td><td>'+esc(g.label)+(g.peers?'<br><small style="overflow-wrap:anywhere">'+esc(g.peers)+'</small>':'')+'</td><td>'+g.items.map(i=>'Lote '+esc(i.id)+': '+(i.out?'−'+actorKg(i.out):'')+(i.inc?' +'+actorKg(i.inc):'')).join('<br>')+'</td><td>+'+actorKg(g.incoming)+'</td><td>−'+actorKg(g.outgoing)+'</td><td>'+actorKg(g.balance)+'</td><td><a target="_blank" rel="noopener noreferrer" href="https://sepolia.etherscan.io/tx/'+g.tx+'">Ver transação</a></td></tr>').join('')+'</tbody></table></div>'+(groups.length?'':'<p>Nenhuma movimentação de massa material encontrada.</p>')+'<p class="ec-note">Reservas e liberações alteram o saldo disponível. Saída ou consumo não significa necessariamente venda. Os elementos estão contidos na massa material e não são somados novamente.</p></section>';
+   bindHistoryPoints(result,groups);
    status.textContent='Histórico completo desde o bloco '+lo+' até '+blockTag+' · saldo conferido com o contrato.';done=true;button.hidden=true;
   }catch(e){if(active()){result.replaceChildren();console.error('ExploreChem histórico',{stage:status.textContent,error:e});status.textContent='Histórico indisponível ('+status.textContent+'): '+(e.info?.error?.message||e.error?.message||e.shortMessage||e.message||String(e));button.textContent='Tentar novamente';}}
   finally{running=false;if(active())button.disabled=false;}
@@ -5392,6 +5471,149 @@ clientBalanceRefreshAll=async function(){
 clientBalanceRenderDashboard=actorStockRefresh;
 T.tokens=()=>T.dashboard();
 
+
+/* ===================================================================
+   RWA — SOLANA DEVNET WORKSPACE
+   -------------------------------------------------------------------
+   Fonte de verdade da titularidade: Token-2022 on-chain.
+   Vínculo legível empresa/actorId ↔ carteira Solana: off-chain.
+   Catálogo abaixo registra apenas metadados de interface para RWAs que
+   já foram emitidos. Ele NÃO cria/minta token e NÃO prova uma venda.
+
+   O programa atual já suporta Series, mint, transferência Token-2022,
+   redemption/escrow/settlement/burn. Ele ainda NÃO possui um mercado
+   atômico list_rwa / buy_rwa / cancel_listing; portanto Comprar/Publicar
+   venda permanecem bloqueados, evitando representar uma venda inexistente.
+   =================================================================== */
+function rwaShort(value){const s=String(value||"");return s.length>18?s.slice(0,8)+"…"+s.slice(-7):s||"—";}
+function rwaSolanaProvider(){return window.phantom?.solana||window.solana||null;}
+function rwaActorWallets(){try{return JSON.parse(localStorage.getItem(RWA_ACTOR_SOLANA_WALLET_KEY)||"{}");}catch(_){return {};}}
+function rwaSaveActorWallets(map){localStorage.setItem(RWA_ACTOR_SOLANA_WALLET_KEY,JSON.stringify(map));}
+function rwaCatalog(){try{const v=JSON.parse(localStorage.getItem(RWA_CATALOG_KEY)||"[]");return Array.isArray(v)?v:[];}catch(_){return [];}}
+function rwaSaveCatalog(rows){localStorage.setItem(RWA_CATALOG_KEY,JSON.stringify(rows));}
+function rwaValidPubkey(v){return /^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(String(v||"").trim());}
+function rwaValidBytes32(v){return /^(?:0x)?[0-9a-fA-F]{64}$/.test(String(v||"").trim());}
+function rwaExplorerAddress(address){return "https://explorer.solana.com/address/"+encodeURIComponent(address)+"?cluster=devnet";}
+function rwaExplorerProgram(){return rwaExplorerAddress(RWA_SOLANA_PROGRAM_ID);}
+async function rwaRpc(method,params=[]){
+  const response=await fetch(RWA_SOLANA_RPC,{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({jsonrpc:"2.0",id:Date.now(),method,params})});
+  if(!response.ok)throw new Error("RPC Solana Devnet: HTTP "+response.status);
+  const json=await response.json();if(json.error)throw new Error(json.error.message||"Falha no RPC Solana Devnet.");return json.result;
+}
+async function rwaRefreshWalletChain(){
+  rwaOwnedTokenAmounts=new Map();rwaSolanaWalletBalance=null;
+  if(!rwaSolanaWalletAddress)return;
+  const [balance,tokens]=await Promise.all([
+    rwaRpc("getBalance",[rwaSolanaWalletAddress,{commitment:"confirmed"}]),
+    rwaRpc("getTokenAccountsByOwner",[rwaSolanaWalletAddress,{programId:RWA_TOKEN_2022_PROGRAM_ID},{encoding:"jsonParsed",commitment:"confirmed"}])
+  ]);
+  rwaSolanaWalletBalance=Number(balance?.value||0)/1e9;
+  for(const row of tokens?.value||[]){
+    const info=row?.account?.data?.parsed?.info,amount=info?.tokenAmount?.amount,mint=info?.mint;
+    if(mint&&amount!==undefined)rwaOwnedTokenAmounts.set(String(mint),BigInt(String(amount)));
+  }
+}
+async function rwaMintSummary(mint){
+  try{
+    const result=await rwaRpc("getAccountInfo",[mint,{encoding:"jsonParsed",commitment:"confirmed"}]);
+    const parsed=result?.value?.data?.parsed?.info;
+    if(!parsed)return {exists:!!result?.value};
+    return {exists:true,decimals:Number(parsed.decimals),supply:String(parsed.supply),mintAuthority:parsed.mintAuthority,freezeAuthority:parsed.freezeAuthority};
+  }catch(error){return {exists:false,error:error.message||String(error)};}
+}
+function rwaActorById(id){return ATORES.find(a=>String(a.id).toLowerCase()===String(id||"").toLowerCase())||null;}
+function rwaSelectedActor(){
+  const select=document.getElementById("rwaSupplierActor");
+  const saved=select?.value||localStorage.getItem("explorechem:rwa:supplier-actor:v1")||"";
+  return ATORES.find(a=>a.id===saved)||ATORES[0]||null;
+}
+function rwaRenderWallet(area){
+  if(!area)return;
+  if(!rwaSolanaWalletAddress){
+    area.innerHTML='<button class="wallet-connect" id="connectRwaWallet" type="button">Conectar Solana</button>';
+    const b=area.querySelector("#connectRwaWallet");if(b)b.onclick=rwaConnectWallet;return;
+  }
+  area.innerHTML='<div class="wallet-state"><span class="wallet-network">Solana Devnet</span><span class="wallet-address">'+escaparHtml(rwaShort(rwaSolanaWalletAddress))+'</span><button type="button" class="wallet-logout" id="disconnectRwaWallet">Logout</button></div>';
+  const b=area.querySelector("#disconnectRwaWallet");if(b)b.onclick=rwaDisconnectWallet;
+}
+async function rwaConnectWallet(){
+  const provider=rwaSolanaProvider();if(!provider){toast("Carteira Solana compatível não detectada. Instale/abra Phantom.");return;}
+  try{
+    const result=await provider.connect();rwaSolanaWalletAddress=String(result?.publicKey||provider.publicKey||"");
+    if(!rwaSolanaWalletAddress)throw new Error("A carteira não retornou uma public key Solana.");
+    renderWallet();await rwaRefreshAll();toast("Carteira Solana conectada à visão RWA.");
+    if(typeof provider.on==="function"&&!provider.__exploreChemRwaBound){provider.__exploreChemRwaBound=true;provider.on("accountChanged",async key=>{rwaSolanaWalletAddress=key?String(key):"";renderWallet();await rwaRefreshAll();});provider.on("disconnect",()=>{rwaSolanaWalletAddress="";rwaOwnedTokenAmounts=new Map();renderWallet();if(role==="rwa")rwaRefreshAll();});}
+  }catch(error){toast(error.message||"Não foi possível conectar a carteira Solana.");}
+}
+async function restoreRwaWallet(){
+  const provider=rwaSolanaProvider();if(!provider){renderWallet();return;}
+  try{const result=await provider.connect({onlyIfTrusted:true});rwaSolanaWalletAddress=String(result?.publicKey||provider.publicKey||"");}catch(_){rwaSolanaWalletAddress="";}
+  renderWallet();if(role==="rwa"&&rwaSolanaWalletAddress)queueMicrotask(()=>rwaRefreshAll());
+}
+async function rwaDisconnectWallet(){const p=rwaSolanaProvider();try{await p?.disconnect?.();}catch(_){}rwaSolanaWalletAddress="";rwaOwnedTokenAmounts=new Map();rwaSolanaWalletBalance=null;renderWallet();if(role==="rwa")rwaRefreshAll();}
+function rwaActorOptions(selected){return ATORES.length?ATORES.map(a=>'<option value="'+escaparHtml(a.id)+'"'+(a.id===selected?' selected':'')+'>'+escaparHtml(a.nome)+' · '+escaparHtml(a.papel||"Empresa")+'</option>').join(""):'<option value="">Nenhuma empresa ativa carregada</option>';}
+function rwaSupplierSummaryHtml(actor){
+  if(!actor)return '<div class="rwa-empty">Nenhuma empresa ativa disponível no Registry atual.</div>';
+  const sol=rwaActorWallets()[actor.id]||"Não vinculada neste navegador";
+  return '<div class="rwa-actor-summary"><div><span>Empresa</span><b>'+escaparHtml(actor.nome)+'</b></div><div><span>actorId</span><b class="mono">'+escaparHtml(actor.id)+'</b></div><div><span>Registry EVM</span><b>'+escaparHtml(actor.chainLabel||"—")+'</b></div><div><span>Carteira Ethereum</span><b class="mono">'+escaparHtml(actor.publicWalletAddress||actor.controller||"—")+'</b></div><div><span>Carteira Solana</span><b class="mono">'+escaparHtml(sol)+'</b></div></div>';
+}
+function rwaProgramStatusHtml(){return '<a class="rwa-link" href="'+rwaExplorerProgram()+'" target="_blank" rel="noopener">'+escaparHtml(rwaShort(RWA_SOLANA_PROGRAM_ID))+'</a>';}
+function rwaBaseHtml(){
+  const actor=rwaSelectedActor(),catalog=rwaCatalog();
+  return '<div class="rwa-shell">'+
+    '<section class="rwa-hero"><div class="panel rwa-hero-main"><div class="rwa-kicker">RWA · DIREITOS ECONÔMICOS · SOLANA DEVNET</div><h1>ExploreChem RWA</h1><p class="sub">A titularidade econômica acompanha a unidade Token-2022 atualmente possuída. A identidade empresarial continua vinculada ao actorId fora da cadeia pública.</p><div class="rwa-wallet-panel"><span class="rwa-chain-chip">Devnet</span><span class="rwa-wallet-pill">'+escaparHtml(rwaSolanaWalletAddress?rwaShort(rwaSolanaWalletAddress):"Carteira Solana não conectada")+'</span></div></div>'+
+    '<aside class="panel rwa-program-card"><div><span class="section-eyebrow">PROGRAMA RWA ON-CHAIN</span><h3>ExploreChem · Solana</h3><div class="rwa-program-id">'+escaparHtml(RWA_SOLANA_PROGRAM_ID)+'</div></div><div class="actions"><a class="btn ghost" href="'+rwaExplorerProgram()+'" target="_blank" rel="noopener">Abrir no Explorer</a></div></aside></section>'+
+    '<section class="rwa-stats"><div class="rwa-stat"><b>'+escaparHtml(String(catalog.length))+'</b><span>RWAs registrados no catálogo da interface</span></div><div class="rwa-stat"><b id="rwaWalletAssetCount">—</b><span>RWAs do catálogo na carteira conectada</span></div><div class="rwa-stat"><b id="rwaSolBalance">'+(rwaSolanaWalletBalance==null?'—':rwaSolanaWalletBalance.toFixed(4)+' SOL')+'</b><span>Saldo Devnet da carteira Solana</span></div><div class="rwa-stat"><b>1</b><span>Supply máximo por série · decimals 0</span></div></section>'+
+    '<nav class="rwa-tabs" role="tablist" aria-label="Área RWA"><button type="button" data-rwa-tab="supplier" aria-selected="true">Fornecedor RWA</button><button type="button" data-rwa-tab="client" aria-selected="false">Cliente RWA</button></nav>'+
+    '<section id="rwaSupplierPanel">'+rwaSupplierPanelHtml(actor)+'</section><section id="rwaClientPanel" hidden>'+rwaClientPanelHtml()+'</section></div>';
+}
+function rwaSupplierPanelHtml(actor){
+  return '<div class="rwa-grid"><div class="stack"><section class="panel rwa-card"><div class="rwa-panel-title"><div><span class="section-eyebrow">FORNECEDOR RWA</span><h2>Empresa emissora</h2><p>Escolha uma empresa já reconhecida pelo ExploreChem. O RWA usa o mesmo actorId; não existe um segundo cadastro empresarial.</p></div></div><div class="field"><label for="rwaSupplierActor">Fornecedor / empresa</label><select id="rwaSupplierActor">'+rwaActorOptions(actor?.id)+'</select></div><div id="rwaSupplierSummary">'+rwaSupplierSummaryHtml(actor)+'</div></section>'+
+  '<section class="panel rwa-card"><h2>Vincular carteira Solana</h2><p class="sub">Este vínculo é off-chain e serve para associar a public key Solana ao actorId. A posse do token continua sendo verificada diretamente na Solana.</p><div class="field"><label for="rwaActorSolanaWallet">Carteira Solana da empresa</label><input id="rwaActorSolanaWallet" class="mono" placeholder="Public key Solana" value="'+escaparHtml(actor?rwaActorWallets()[actor.id]||rwaSolanaWalletAddress:"")+'"></div><div class="actions"><button type="button" class="btn" id="rwaSaveActorWallet">Salvar vínculo local do MVP</button><button type="button" class="btn ghost" id="rwaUseConnectedWallet">Usar carteira conectada</button></div><p class="rwa-form-note">Produção: grave este vínculo em tabela privada com RLS/assinatura. Este HTML usa localStorage apenas para a demonstração.</p></section>'+
+  '<section class="panel rwa-card"><h2>Registrar RWA já emitido</h2><p class="sub">Isto não minta um token. Apenas cadastra na interface uma Series/Mint que já foi criada pelo programa Solana.</p><div class="field"><label for="rwaSeriesId">seriesId · 32 bytes</label><input id="rwaSeriesId" class="mono" placeholder="0x + 64 hex"></div><div class="field"><label for="rwaMintAddress">Mint Token-2022</label><input id="rwaMintAddress" class="mono" placeholder="Public key do mint"></div><div class="rwa-grid-2"><div class="field"><label for="rwaVerificationStatus">Verificação</label><select id="rwaVerificationStatus"><option value="PENDING">PENDING</option><option value="VERIFIED">VERIFIED</option></select></div><div class="field"><label for="rwaIndicativePrice">Preço indicativo · SOL</label><input id="rwaIndicativePrice" inputmode="decimal" placeholder="0,00"></div></div><div class="actions"><button type="button" class="btn" id="rwaRegisterMint">Registrar no catálogo</button></div></section></div>'+
+  '<aside class="stack"><section class="panel rwa-card"><span class="section-eyebrow">REGRA ECONÔMICA</span><h3>Quem possui a unidade possui o direito</h3><div class="rwa-ok">A carteira que tiver <b>amount = 1</b> do mint Token-2022 é a titular atual do direito econômico. Holder anterior não mantém direito residual.</div></section><section class="panel rwa-card"><span class="section-eyebrow">MERCADO</span><h3>Venda atômica ainda não publicada</h3><div class="rwa-marketplace-lock"><i>⌁</i><div><b>Sem list_rwa / buy_rwa / cancel_listing no programa atual</b><p>O HTML não registra uma transferência comum como “venda”. Para provar vendedor, comprador e preço on-chain, o marketplace precisa ser adicionado ao programa Solana.</p></div></div></section></aside></div><section class="panel rwa-card" style="margin-top:16px"><div class="rwa-panel-title"><div><span class="section-eyebrow">MEUS RWAs</span><h2>RWAs do fornecedor selecionado</h2><p>Metadados do catálogo são off-chain; supply e posse são consultados na Devnet.</p></div><button type="button" class="btn ghost" id="rwaRefreshSupplier">Atualizar Solana</button></div><div class="scrollx rwa-market" id="rwaSupplierTable"></div></section>';
+}
+function rwaClientPanelHtml(){
+  return '<section class="panel rwa-card"><div class="rwa-panel-title"><div><span class="section-eyebrow">CLIENTE RWA</span><h2>Mercado e direitos econômicos</h2><p>O mercado exibe o catálogo legível. A propriedade é checada na Token-2022 Devnet.</p></div><button type="button" class="btn ghost" id="rwaRefreshClient">Atualizar Solana</button></div><div class="rwa-warning" style="margin:14px 0"><b>Importante:</b> preço no catálogo é indicativo e não prova uma venda. O botão Comprar fica bloqueado até existir a instrução de marketplace atômico no programa.</div><div class="scrollx rwa-market" id="rwaMarketTable"></div></section><section class="panel rwa-card rwa-assets" style="margin-top:16px"><span class="section-eyebrow">MEUS ATIVOS</span><h2>Direitos econômicos da carteira conectada</h2><p class="sub">Somente mints do catálogo cuja unidade Token-2022 está nesta carteira aparecem como direito econômico ativo.</p><div class="scrollx" id="rwaAssetsTable"></div></section>';
+}
+function rwaOwnershipLabel(row){const amount=rwaOwnedTokenAmounts.get(row.mint)||0n;return amount===1n?'<span class="rwa-right">Você possui o direito</span>':'<span class="rwa-right off">Outro holder / sem saldo</span>';}
+async function rwaCatalogRowsWithChain(){
+  const rows=rwaCatalog();
+  return Promise.all(rows.map(async row=>({...row,mintState:await rwaMintSummary(row.mint)})));
+}
+function rwaSupplierRowsHtml(rows,actor){
+  const mine=rows.filter(r=>r.supplierActorId===actor?.id);
+  if(!mine.length)return '<div class="rwa-empty">Nenhum RWA deste fornecedor foi registrado no catálogo da interface.</div>';
+  return '<table><thead><tr><th>Series</th><th>Mint</th><th>Estado</th><th>Verificação</th><th>Token-2022</th><th>Titularidade</th><th>Preço indicativo</th><th>Ação</th></tr></thead><tbody>'+mine.map(r=>'<tr><td class="mono">'+escaparHtml(rwaShort(r.seriesId))+'</td><td><a class="rwa-address rwa-link" href="'+rwaExplorerAddress(r.mint)+'" target="_blank" rel="noopener">'+escaparHtml(rwaShort(r.mint))+'</a></td><td><span class="tag t-ok">'+escaparHtml(r.economicStatus||"ACTIVE")+'</span></td><td>'+vtag(r.verificationStatus||"PENDING")+'</td><td>'+((r.mintState?.exists&&r.mintState.decimals===0&&String(r.mintState.supply)==="1")?'<span class="tag t-ok">supply 1 · d0</span>':'<span class="tag t-att">'+escaparHtml(r.mintState?.exists?'supply '+String(r.mintState.supply??"?"):'não lido')+'</span>')+'</td><td>'+rwaOwnershipLabel(r)+'</td><td>'+escaparHtml(r.priceSol?String(r.priceSol)+' SOL':'—')+'</td><td><div class="rwa-table-actions"><button class="btn ghost" disabled title="Requer marketplace on-chain">Publicar venda</button><button class="btn ghost" data-rwa-remove="'+escaparHtml(r.id)+'">Remover catálogo</button></div></td></tr>').join('')+'</tbody></table>';
+}
+function rwaMarketRowsHtml(rows){
+  if(!rows.length)return '<div class="rwa-empty">Nenhum RWA foi registrado no catálogo desta demonstração.</div>';
+  return '<table><thead><tr><th>Fornecedor</th><th>Series</th><th>Mint</th><th>Econômico</th><th>Verificação</th><th>Preço indicativo</th><th>Holder atual</th><th></th></tr></thead><tbody>'+rows.map(r=>{const a=rwaActorById(r.supplierActorId);return '<tr><td><b>'+escaparHtml(a?.nome||"Empresa")+'</b><div class="sm mono">'+escaparHtml(rwaShort(r.supplierActorId))+'</div></td><td class="mono">'+escaparHtml(rwaShort(r.seriesId))+'</td><td><a class="rwa-link mono" href="'+rwaExplorerAddress(r.mint)+'" target="_blank" rel="noopener">'+escaparHtml(rwaShort(r.mint))+'</a></td><td><span class="tag t-ok">'+escaparHtml(r.economicStatus||"ACTIVE")+'</span></td><td>'+vtag(r.verificationStatus||"PENDING")+'</td><td>'+escaparHtml(r.priceSol?String(r.priceSol)+' SOL':'—')+'</td><td>'+rwaOwnershipLabel(r)+'</td><td><div class="rwa-table-actions"><button class="btn" disabled title="Requer buy_rwa on-chain">Comprar</button><div class="rwa-disabled-reason">Compra bloqueada até o marketplace atômico ser adicionado ao programa.</div></div></td></tr>';}).join('')+'</tbody></table>';
+}
+function rwaAssetsRowsHtml(rows){
+  const owned=rows.filter(r=>(rwaOwnedTokenAmounts.get(r.mint)||0n)===1n);
+  if(!rwaSolanaWalletAddress)return '<div class="rwa-empty">Conecte sua carteira Solana para verificar seus direitos econômicos.</div>';
+  if(!owned.length)return '<div class="rwa-empty">A carteira conectada não possui nenhuma unidade dos mints ExploreChem registrados neste catálogo.</div>';
+  return '<table><thead><tr><th>Fornecedor original</th><th>Series</th><th>Mint</th><th>Direito econômico</th><th>Verificação</th><th>Próxima ação</th></tr></thead><tbody>'+owned.map(r=>{const a=rwaActorById(r.supplierActorId);return '<tr><td>'+escaparHtml(a?.nome||"Empresa")+'</td><td class="mono">'+escaparHtml(rwaShort(r.seriesId))+'</td><td><a class="rwa-link mono" href="'+rwaExplorerAddress(r.mint)+'" target="_blank" rel="noopener">'+escaparHtml(rwaShort(r.mint))+'</a></td><td><span class="tag t-ok">ATIVO · holder atual</span></td><td>'+vtag(r.verificationStatus||"PENDING")+'</td><td><div class="rwa-table-actions"><button class="btn ghost" disabled title="Cliente web ainda não monta a instrução Anchor">Solicitar resgate</button><button class="btn ghost" disabled title="Requer marketplace on-chain">Revender</button></div></td></tr>';}).join('')+'</tbody></table>';
+}
+async function rwaRefreshTables(){
+  const supplier=document.getElementById("rwaSupplierTable"),market=document.getElementById("rwaMarketTable"),assets=document.getElementById("rwaAssetsTable");
+  for(const n of [supplier,market,assets])if(n)n.innerHTML='<div class="rwa-empty">Consultando Solana Devnet…</div>';
+  try{if(rwaSolanaWalletAddress)await rwaRefreshWalletChain();const rows=await rwaCatalogRowsWithChain(),actor=rwaSelectedActor();if(supplier)supplier.innerHTML=rwaSupplierRowsHtml(rows,actor);if(market)market.innerHTML=rwaMarketRowsHtml(rows);if(assets)assets.innerHTML=rwaAssetsRowsHtml(rows);const count=rows.filter(r=>(rwaOwnedTokenAmounts.get(r.mint)||0n)===1n).length;const counter=document.getElementById("rwaWalletAssetCount");if(counter)counter.textContent=rwaSolanaWalletAddress?String(count):"—";const bal=document.getElementById("rwaSolBalance");if(bal)bal.textContent=rwaSolanaWalletBalance==null?"—":rwaSolanaWalletBalance.toFixed(4)+" SOL";document.querySelectorAll("[data-rwa-remove]").forEach(b=>b.onclick=()=>{rwaSaveCatalog(rwaCatalog().filter(r=>r.id!==b.dataset.rwaRemove));rwaRefreshTables();toast("Registro removido somente do catálogo local. Nada foi alterado na Solana.");});}catch(error){for(const n of [supplier,market,assets])if(n)n.innerHTML='<div class="rwa-empty">Falha ao consultar Devnet: '+escaparHtml(error.message||String(error))+'</div>';}
+}
+async function rwaRefreshAll(){if(role!=="rwa"||page!=="rwa")return;await rwaRefreshTables();}
+function rwaBindUi(){
+  const root=document.getElementById("view");if(!root)return;
+  const tabs=[...root.querySelectorAll("[data-rwa-tab]")],supplier=document.getElementById("rwaSupplierPanel"),client=document.getElementById("rwaClientPanel");
+  const activate=key=>{if(supplier)supplier.hidden=key!=="supplier";if(client)client.hidden=key!=="client";tabs.forEach(t=>t.setAttribute("aria-selected",String(t.dataset.rwaTab===key)));};tabs.forEach(t=>t.onclick=()=>{activate(t.dataset.rwaTab);queueMicrotask(()=>rwaRefreshTables());});activate("supplier");
+  const actorSelect=document.getElementById("rwaSupplierActor");if(actorSelect)actorSelect.onchange=()=>{localStorage.setItem("explorechem:rwa:supplier-actor:v1",actorSelect.value);const actor=rwaSelectedActor(),summary=document.getElementById("rwaSupplierSummary"),wallet=document.getElementById("rwaActorSolanaWallet");if(summary)summary.innerHTML=rwaSupplierSummaryHtml(actor);if(wallet)wallet.value=actor?rwaActorWallets()[actor.id]||rwaSolanaWalletAddress:"";rwaRefreshTables();};
+  const use=document.getElementById("rwaUseConnectedWallet");if(use)use.onclick=()=>{const input=document.getElementById("rwaActorSolanaWallet");if(!rwaSolanaWalletAddress){toast("Conecte uma carteira Solana primeiro.");return;}if(input)input.value=rwaSolanaWalletAddress;};
+  const save=document.getElementById("rwaSaveActorWallet");if(save)save.onclick=()=>{const actor=rwaSelectedActor(),input=document.getElementById("rwaActorSolanaWallet"),value=String(input?.value||"").trim();if(!actor){toast("Selecione uma empresa.");return;}if(!rwaValidPubkey(value)){toast("Informe uma public key Solana válida.");return;}const map=rwaActorWallets();map[actor.id]=value;rwaSaveActorWallets(map);const summary=document.getElementById("rwaSupplierSummary");if(summary)summary.innerHTML=rwaSupplierSummaryHtml(actor);toast("Vínculo Solana salvo localmente para o MVP.");};
+  const register=document.getElementById("rwaRegisterMint");if(register)register.onclick=async()=>{const actor=rwaSelectedActor(),series=String(document.getElementById("rwaSeriesId")?.value||"").trim(),mint=String(document.getElementById("rwaMintAddress")?.value||"").trim(),verification=document.getElementById("rwaVerificationStatus")?.value||"PENDING",rawPrice=String(document.getElementById("rwaIndicativePrice")?.value||"").trim().replace(",","."),price=rawPrice?Number(rawPrice):null;if(!actor){toast("Selecione o fornecedor.");return;}if(!rwaValidBytes32(series)){toast("seriesId precisa ter 32 bytes em hexadecimal.");return;}if(!rwaValidPubkey(mint)){toast("Informe o endereço do mint Token-2022.");return;}if(rawPrice&&(!Number.isFinite(price)||price<0)){toast("Preço indicativo inválido.");return;}register.disabled=true;register.textContent="Conferindo mint…";try{const state=await rwaMintSummary(mint);if(!state.exists)throw new Error("Mint não encontrado na Solana Devnet.");if(state.decimals!==0)throw new Error("O mint não tem decimals = 0.");if(String(state.supply)!=="1")throw new Error("O mint não possui supply = 1.");const rows=rwaCatalog(),normalized=series.startsWith("0x")?series:"0x"+series;if(rows.some(r=>r.mint===mint||r.seriesId.toLowerCase()===normalized.toLowerCase()))throw new Error("Esta Series ou Mint já está no catálogo.");rows.push({id:crypto.randomUUID?crypto.randomUUID():Date.now()+"-"+Math.random(),seriesId:normalized,mint,supplierActorId:actor.id,economicStatus:"ACTIVE",verificationStatus:verification,priceSol:price,createdAt:new Date().toISOString()});rwaSaveCatalog(rows);document.getElementById("rwaSeriesId").value="";document.getElementById("rwaMintAddress").value="";document.getElementById("rwaIndicativePrice").value="";await rwaRefreshTables();toast("RWA real adicionado ao catálogo da interface.");}catch(error){toast(error.message||String(error));}finally{register.disabled=false;register.textContent="Registrar no catálogo";}};
+  const rs=document.getElementById("rwaRefreshSupplier"),rc=document.getElementById("rwaRefreshClient");if(rs)rs.onclick=rwaRefreshTables;if(rc)rc.onclick=rwaRefreshTables;
+}
+T.rwa=()=>rwaBaseHtml();
+
 function render(){
   document.getElementById("productTokenization")?.tokenCleanup?.();
   document.getElementById('productTokenization')?.tokenCleanup?.();
@@ -5428,6 +5650,11 @@ function render(){
   /* Aplica bloqueio */
   aplicarSomenteLeitura();
   translateUiTree(document);
+
+  if(role==="rwa"&&page==="rwa"){
+    rwaBindUi();
+    queueMicrotask(()=>rwaRefreshAll());
+  }
 
   if(role==="cli"&&(page==="dashboard"||page==="tokens")){
     clientBalanceBindUi();
