@@ -5594,10 +5594,16 @@ function rwaSelectedLot(){
   return RWA_SUPPLIER_LOTS.find(r=>r.id===id)||null;
 }
 function rwaRenderSelectedLot(){
-  const actor=rwaSelectedActor(),row=rwaSelectedLot(),summary=document.getElementById("rwaSourceLotSummary");
+  const actor=rwaSelectedActor(),row=rwaSelectedLot(),summary=document.getElementById("rwaSourceLotSummary"),sale=document.getElementById("rwaSaleForm"),title=document.getElementById("rwaSaleTitle");
   if(!summary)return;
-  if(!row){summary.innerHTML='<span class="sm">Selecione um lote. Nenhum dado físico será exibido nesta área.</span>';return;}
+  if(!row){
+    summary.innerHTML='<span class="sm">Selecione um lote. Nenhum dado físico será exibido nesta área.</span>';
+    if(sale)sale.hidden=true;
+    return;
+  }
   summary.innerHTML='<dl><dt>Fornecedor</dt><dd>'+escaparHtml(actor?.nome||"—")+'</dd><dt>actorId</dt><dd class="mono">'+escaparHtml(actor?.id||"—")+'</dd><dt>Lote de origem</dt><dd><b>Lote #'+escaparHtml(row.id)+'</b></dd><dt>Origem on-chain</dt><dd>ExploreChemLots · Sepolia</dd></dl>';
+  if(sale)sale.hidden=false;
+  if(title)title.textContent='Vender Lote #'+row.id+' como RWA';
 }
 function rwaRenderWallet(area){
   if(!area)return;
@@ -5641,22 +5647,23 @@ function rwaBaseHtml(){
 }
 function rwaSupplierPanelHtml(actor){
   return '<div class="rwa-grid"><div class="stack"><section class="panel rwa-card"><div class="rwa-panel-title"><div><span class="section-eyebrow">FORNECEDOR RWA</span><h2>Empresa emissora</h2><p>Escolha uma empresa já reconhecida pelo ExploreChem. O RWA usa o mesmo actorId; não existe um segundo cadastro empresarial.</p></div></div><div class="field"><label for="rwaSupplierActor">Fornecedor / empresa</label><select id="rwaSupplierActor">'+rwaActorOptions(actor?.id)+'</select></div><div id="rwaSupplierSummary">'+rwaSupplierSummaryHtml(actor)+'</div></section>'+
-  '<section class="panel rwa-card"><h2>Vincular carteira Solana</h2><p class="sub">Este vínculo é off-chain e serve para associar a public key Solana ao actorId. A posse do token continua sendo verificada diretamente na Solana.</p><div class="field"><label for="rwaActorSolanaWallet">Carteira Solana da empresa</label><input id="rwaActorSolanaWallet" class="mono" placeholder="Public key Solana" value="'+escaparHtml(actor?rwaActorWallets()[actor.id]||rwaSolanaWalletAddress:"")+'"></div><div class="actions"><button type="button" class="btn" id="rwaSaveActorWallet">Salvar vínculo local do MVP</button><button type="button" class="btn ghost" id="rwaUseConnectedWallet">Usar carteira conectada</button></div><p class="rwa-form-note">Produção: grave este vínculo em tabela privada com RLS/assinatura. Este HTML usa localStorage apenas para a demonstração.</p></section>'+
+  '<details class="panel rwa-card"><summary><div><b>Configuração técnica da carteira Solana da empresa</b><span>Opcional no fluxo visual · esta public key é da empresa/holder, não é o Mint do RWA.</span></div></summary><div class="details-body" style="padding-top:18px"><p class="sub">Este vínculo off-chain associa a carteira Solana ao actorId. Você só precisa configurá-lo quando quiser identificar a carteira empresarial no MVP.</p><div class="field"><label for="rwaActorSolanaWallet">Carteira Solana da empresa · NÃO é o Mint</label><input id="rwaActorSolanaWallet" class="mono" placeholder="Public key da carteira da empresa" value="'+escaparHtml(actor?rwaActorWallets()[actor.id]||rwaSolanaWalletAddress:"")+'"></div><div class="actions"><button type="button" class="btn" id="rwaSaveActorWallet">Salvar carteira da empresa</button><button type="button" class="btn ghost" id="rwaUseConnectedWallet">Usar carteira conectada</button></div><p class="rwa-form-note">O Mint do RWA é informado somente na tela de venda abaixo. Produção: grave o vínculo empresa ↔ carteira em tabela privada com RLS/assinatura.</p></div></details>'+
   '<section class="panel rwa-card"><span class="section-eyebrow">ORIGEM DO RWA</span><h2>Selecionar lote para RWA</h2><p class="sub">A lista abaixo vem dos lotes que a empresa possui no ExploreChemLots da Sepolia. A área RWA mostra somente a identidade do lote — não exibe massa, quantidade, elemento, teor ou composição.</p>'+
     '<div class="rwa-lot-picker"><div class="rwa-lot-picker-head"><div><h3>Meus lotes elegíveis</h3><p>Selecione o identificador único do lote que dará origem econômica à Series.</p></div><button type="button" class="btn ghost sm" id="rwaLoadLots">Atualizar lotes</button></div>'+
     '<div class="field"><label for="rwaSourceLot">Lote de origem</label><select id="rwaSourceLot"><option value="">Carregando lotes da empresa…</option></select></div>'+
     '<div id="rwaSourceLotSummary" class="rwa-lot-summary"><span class="sm">Selecione um lote. Nenhum dado físico será exibido nesta área.</span></div>'+
     '<p id="rwaLotsStatus" class="rwa-form-note">A elegibilidade final e o vínculo de linhagem continuam sendo verificados pelo fluxo confidencial/attestor antes da emissão.</p></div>'+
-    '<hr style="border:0;border-top:1px solid var(--rule);margin:22px 0">'+
-    '<h3>Vincular a Series/Mint emitida ao lote selecionado</h3><p class="sub">Depois que o programa Solana criar a Series e o Token-2022, registre aqui os identificadores para o marketplace. O lote selecionado fica associado ao actorId do fornecedor no catálogo da interface.</p>'+
-    '<div class="field"><label for="rwaSeriesId">seriesId · 32 bytes</label><input id="rwaSeriesId" class="mono" placeholder="0x + 64 hex"></div><div class="field"><label for="rwaMintAddress">Mint Token-2022</label><input id="rwaMintAddress" class="mono" placeholder="Public key do mint"></div>'+
-    '<div class="rwa-grid-2"><div class="field"><label for="rwaPriceRisk">Risco de preço</label><select id="rwaPriceRisk"><option value="PENDING">PENDING</option><option value="LOW">BAIXO</option><option value="MEDIUM">MÉDIO</option><option value="HIGH">ALTO</option></select></div><div class="field"><label for="rwaIndicativePrice">Preço de venda · SOL</label><input id="rwaIndicativePrice" inputmode="decimal" placeholder="0,00"></div></div>'+
-    '<p class="rwa-form-note">O risco de preço poderá comparar a referência da API com o preço observado no mercado secundário. Enquanto o verificador não concluir, permanece PENDING sem bloquear o RWA nem definir o preço.</p>'+
-    '<div class="actions"><button type="button" class="btn" id="rwaRegisterMint">Vincular RWA ao lote selecionado</button></div></section></div>'+
-  '<aside class="stack"><section class="panel rwa-card"><span class="section-eyebrow">REGRA ECONÔMICA</span><h3>Quem possui a unidade possui o direito</h3><div class="rwa-ok">A carteira que tiver <b>amount = 1</b> do mint Token-2022 é a titular atual do direito econômico. Holder anterior não mantém direito residual.</div></section><section class="panel rwa-card"><span class="section-eyebrow">PRIVACIDADE DO ATIVO</span><h3>O mercado não recebe os dados físicos</h3><div class="rwa-ok">A área RWA publica a empresa/actorId, o identificador do lote, Series, Mint, preço e risco de preço. Massa, quantidade, elemento, teor, composição e documentos permanecem fora desta visão.</div></section><section class="panel rwa-card"><span class="section-eyebrow">MERCADO</span><h3>Venda atômica ainda não publicada</h3><div class="rwa-marketplace-lock"><i>⌁</i><div><b>Sem list_rwa / buy_rwa / cancel_listing no programa atual</b><p>O HTML não registra uma transferência comum como “venda”. Para provar vendedor, comprador e preço on-chain, o marketplace precisa ser adicionado ao programa Solana.</p></div></div></section></aside></div><section class="panel rwa-card" style="margin-top:16px"><div class="rwa-panel-title"><div><span class="section-eyebrow">MEUS RWAs</span><h2>RWAs do fornecedor selecionado</h2><p>Cada RWA permanece ligado ao actorId e ao identificador do lote de origem. Supply e posse são consultados na Devnet.</p></div><button type="button" class="btn ghost" id="rwaRefreshSupplier">Atualizar Solana</button></div><div class="scrollx rwa-market" id="rwaSupplierTable"></div></section>';
+    '<div id="rwaSaleForm" hidden style="margin-top:22px;padding-top:22px;border-top:1px solid var(--rule)">'+
+    '<span class="section-eyebrow">OFERTA RWA</span><h3 id="rwaSaleTitle">Vender o lote selecionado como RWA</h3><p class="sub">Depois de escolher o lote, informe somente o Mint Token-2022 e o preço que deseja pedir. O actorId e o identificador do lote já vêm da seleção acima.</p>'+
+    '<div class="field"><label for="rwaMintAddress">Mint Token-2022</label><input id="rwaMintAddress" class="mono" placeholder="Public key do Mint"></div>'+
+    '<div class="field"><label for="rwaIndicativePrice">Preço que deseja pedir · SOL</label><input id="rwaIndicativePrice" inputmode="decimal" placeholder="Ex.: 2,50"></div>'+
+    '<div class="rwa-ok" style="margin:14px 0"><b>Risco de preço: PENDING</b><br><span class="sm">Calculado automaticamente pelo workflow a partir da referência da API e do mercado secundário. O fornecedor não escolhe manualmente LOW / MEDIUM / HIGH.</span></div>'+
+    '<div class="actions"><button type="button" class="btn" id="rwaRegisterMint">Preparar venda deste RWA</button></div>'+
+    '<p class="rwa-form-note">Esta versão valida o Mint na Devnet e associa Mint + actorId + lote + preço. A publicação/compra atômica continuará bloqueada até list_rwa / buy_rwa / cancel_listing existirem no programa Solana.</p></div></section></div>'+
+  '<aside class="stack"><section class="panel rwa-card"><span class="section-eyebrow">REGRA ECONÔMICA</span><h3>Quem possui a unidade possui o direito</h3><div class="rwa-ok">A carteira que tiver <b>amount = 1</b> do mint Token-2022 é a titular atual do direito econômico. Holder anterior não mantém direito residual.</div></section><section class="panel rwa-card"><span class="section-eyebrow">PRIVACIDADE DO ATIVO</span><h3>O mercado não recebe os dados físicos</h3><div class="rwa-ok">A área RWA publica a empresa/actorId, o identificador do lote, o Mint, o preço pedido e o risco de preço. Massa, quantidade, elemento, teor, composição e documentos permanecem fora desta visão.</div></section><section class="panel rwa-card"><span class="section-eyebrow">MERCADO</span><h3>Venda atômica ainda não publicada</h3><div class="rwa-marketplace-lock"><i>⌁</i><div><b>Sem list_rwa / buy_rwa / cancel_listing no programa atual</b><p>O HTML não registra uma transferência comum como “venda”. Para provar vendedor, comprador e preço on-chain, o marketplace precisa ser adicionado ao programa Solana.</p></div></div></section></aside></div><section class="panel rwa-card" style="margin-top:16px"><div class="rwa-panel-title"><div><span class="section-eyebrow">MEUS RWAs</span><h2>RWAs do fornecedor selecionado</h2><p>Cada RWA permanece ligado ao actorId, ao identificador do lote de origem e ao Mint. Supply e posse são consultados na Devnet.</p></div><button type="button" class="btn ghost" id="rwaRefreshSupplier">Atualizar Solana</button></div><div class="scrollx rwa-market" id="rwaSupplierTable"></div></section>';
 }
 function rwaClientPanelHtml(){
-  return '<section class="panel rwa-card"><div class="rwa-panel-title"><div><span class="section-eyebrow">CLIENTE RWA</span><h2>Mercado e direitos econômicos</h2><p>O mercado exibe fornecedor, lote de origem, Series, Mint, preço e risco de preço. Dados físicos do lote permanecem privados.</p></div><button type="button" class="btn ghost" id="rwaRefreshClient">Atualizar Solana</button></div><div class="rwa-warning" style="margin:14px 0"><b>Importante:</b> o risco de preço é informacional e pode permanecer PENDING; ele não bloqueia o ativo nem define o preço. O botão Comprar fica bloqueado até existir a instrução de marketplace atômico no programa.</div><div class="scrollx rwa-market" id="rwaMarketTable"></div></section><section class="panel rwa-card rwa-assets" style="margin-top:16px"><span class="section-eyebrow">MEUS ATIVOS</span><h2>Direitos econômicos da carteira conectada</h2><p class="sub">Somente mints do catálogo cuja unidade Token-2022 está nesta carteira aparecem como direito econômico ativo.</p><div class="scrollx" id="rwaAssetsTable"></div></section>';
+  return '<section class="panel rwa-card"><div class="rwa-panel-title"><div><span class="section-eyebrow">CLIENTE RWA</span><h2>Mercado e direitos econômicos</h2><p>O mercado exibe fornecedor, lote de origem, Mint, preço e risco de preço. Dados físicos do lote permanecem privados.</p></div><button type="button" class="btn ghost" id="rwaRefreshClient">Atualizar Solana</button></div><div class="rwa-warning" style="margin:14px 0"><b>Importante:</b> o risco de preço é informacional e pode permanecer PENDING; ele não bloqueia o ativo nem define o preço. O botão Comprar fica bloqueado até existir a instrução de marketplace atômico no programa.</div><div class="scrollx rwa-market" id="rwaMarketTable"></div></section><section class="panel rwa-card rwa-assets" style="margin-top:16px"><span class="section-eyebrow">MEUS ATIVOS</span><h2>Direitos econômicos da carteira conectada</h2><p class="sub">Somente mints do catálogo cuja unidade Token-2022 está nesta carteira aparecem como direito econômico ativo.</p><div class="scrollx" id="rwaAssetsTable"></div></section>';
 }
 function rwaPriceRiskHtml(value){
   const risk=String(value||"PENDING").toUpperCase();
@@ -5672,17 +5679,17 @@ async function rwaCatalogRowsWithChain(){
 function rwaSupplierRowsHtml(rows,actor){
   const mine=rows.filter(r=>r.supplierActorId===actor?.id);
   if(!mine.length)return '<div class="rwa-empty">Nenhum RWA deste fornecedor foi registrado no catálogo da interface.</div>';
-  return '<table><thead><tr><th>Lote</th><th>Series</th><th>Mint</th><th>Estado</th><th>Risco de preço</th><th>Token-2022</th><th>Titularidade</th><th>Preço</th><th>Ação</th></tr></thead><tbody>'+mine.map(r=>'<tr><td><b>Lote #'+escaparHtml(r.sourceLotId||"—")+'</b></td><td class="mono">'+escaparHtml(rwaShort(r.seriesId))+'</td><td><a class="rwa-address rwa-link" href="'+rwaExplorerAddress(r.mint)+'" target="_blank" rel="noopener">'+escaparHtml(rwaShort(r.mint))+'</a></td><td><span class="tag t-ok">'+escaparHtml(r.economicStatus||"ACTIVE")+'</span></td><td>'+rwaPriceRiskHtml(r.priceRisk)+'</td><td>'+((r.mintState?.exists&&r.mintState.decimals===0&&String(r.mintState.supply)==="1")?'<span class="tag t-ok">supply 1 · d0</span>':'<span class="tag t-att">'+escaparHtml(r.mintState?.exists?'supply '+String(r.mintState.supply??"?"):'não lido')+'</span>')+'</td><td>'+rwaOwnershipLabel(r)+'</td><td>'+escaparHtml(r.priceSol?String(r.priceSol)+' SOL':'—')+'</td><td><div class="rwa-table-actions"><button class="btn ghost" disabled title="Requer marketplace on-chain">Publicar venda</button><button class="btn ghost" data-rwa-remove="'+escaparHtml(r.id)+'">Remover catálogo</button></div></td></tr>').join('')+'</tbody></table>';
+  return '<table><thead><tr><th>Lote</th><th>Mint</th><th>Estado</th><th>Risco de preço</th><th>Token-2022</th><th>Titularidade</th><th>Preço pedido</th><th>Ação</th></tr></thead><tbody>'+mine.map(r=>'<tr><td><b>Lote #'+escaparHtml(r.sourceLotId||"—")+'</b></td><td><a class="rwa-address rwa-link" href="'+rwaExplorerAddress(r.mint)+'" target="_blank" rel="noopener">'+escaparHtml(rwaShort(r.mint))+'</a></td><td><span class="tag t-ok">'+escaparHtml(r.economicStatus||"ACTIVE")+'</span></td><td>'+rwaPriceRiskHtml(r.priceRisk)+'</td><td>'+((r.mintState?.exists&&r.mintState.decimals===0&&String(r.mintState.supply)==="1")?'<span class="tag t-ok">supply 1 · d0</span>':'<span class="tag t-att">'+escaparHtml(r.mintState?.exists?'supply '+String(r.mintState.supply??"?"):'não lido')+'</span>')+'</td><td>'+rwaOwnershipLabel(r)+'</td><td>'+escaparHtml(r.priceSol?String(r.priceSol)+' SOL':'—')+'</td><td><div class="rwa-table-actions"><button class="btn ghost" disabled title="Requer marketplace on-chain">Publicar venda</button><button class="btn ghost" data-rwa-remove="'+escaparHtml(r.id)+'">Remover catálogo</button></div></td></tr>').join('')+'</tbody></table>';
 }
 function rwaMarketRowsHtml(rows){
   if(!rows.length)return '<div class="rwa-empty">Nenhum RWA foi registrado no catálogo desta demonstração.</div>';
-  return '<table><thead><tr><th>Fornecedor</th><th>Lote</th><th>Series</th><th>Mint</th><th>Econômico</th><th>Risco de preço</th><th>Preço</th><th>Holder atual</th><th></th></tr></thead><tbody>'+rows.map(r=>{const a=rwaActorById(r.supplierActorId);return '<tr><td><b>'+escaparHtml(a?.nome||"Empresa")+'</b><div class="sm mono">'+escaparHtml(rwaShort(r.supplierActorId))+'</div></td><td><b>Lote #'+escaparHtml(r.sourceLotId||"—")+'</b></td><td class="mono">'+escaparHtml(rwaShort(r.seriesId))+'</td><td><a class="rwa-link mono" href="'+rwaExplorerAddress(r.mint)+'" target="_blank" rel="noopener">'+escaparHtml(rwaShort(r.mint))+'</a></td><td><span class="tag t-ok">'+escaparHtml(r.economicStatus||"ACTIVE")+'</span></td><td>'+rwaPriceRiskHtml(r.priceRisk)+'</td><td>'+escaparHtml(r.priceSol?String(r.priceSol)+' SOL':'—')+'</td><td>'+rwaOwnershipLabel(r)+'</td><td><div class="rwa-table-actions"><button class="btn" disabled title="Requer buy_rwa on-chain">Comprar</button><div class="rwa-disabled-reason">Compra bloqueada até o marketplace atômico ser adicionado ao programa.</div></div></td></tr>';}).join('')+'</tbody></table>';
+  return '<table><thead><tr><th>Fornecedor</th><th>Lote</th><th>Mint</th><th>Econômico</th><th>Risco de preço</th><th>Preço pedido</th><th>Holder atual</th><th></th></tr></thead><tbody>'+rows.map(r=>{const a=rwaActorById(r.supplierActorId);return '<tr><td><b>'+escaparHtml(a?.nome||"Empresa")+'</b><div class="sm mono">'+escaparHtml(rwaShort(r.supplierActorId))+'</div></td><td><b>Lote #'+escaparHtml(r.sourceLotId||"—")+'</b></td><td><a class="rwa-link mono" href="'+rwaExplorerAddress(r.mint)+'" target="_blank" rel="noopener">'+escaparHtml(rwaShort(r.mint))+'</a></td><td><span class="tag t-ok">'+escaparHtml(r.economicStatus||"ACTIVE")+'</span></td><td>'+rwaPriceRiskHtml(r.priceRisk)+'</td><td>'+escaparHtml(r.priceSol?String(r.priceSol)+' SOL':'—')+'</td><td>'+rwaOwnershipLabel(r)+'</td><td><div class="rwa-table-actions"><button class="btn" disabled title="Requer buy_rwa on-chain">Comprar</button><div class="rwa-disabled-reason">Compra bloqueada até o marketplace atômico ser adicionado ao programa.</div></div></td></tr>';}).join('')+'</tbody></table>';
 }
 function rwaAssetsRowsHtml(rows){
   const owned=rows.filter(r=>(rwaOwnedTokenAmounts.get(r.mint)||0n)===1n);
   if(!rwaSolanaWalletAddress)return '<div class="rwa-empty">Conecte sua carteira Solana para verificar seus direitos econômicos.</div>';
   if(!owned.length)return '<div class="rwa-empty">A carteira conectada não possui nenhuma unidade dos mints ExploreChem registrados neste catálogo.</div>';
-  return '<table><thead><tr><th>Fornecedor original</th><th>Lote</th><th>Series</th><th>Mint</th><th>Direito econômico</th><th>Risco de preço</th><th>Próxima ação</th></tr></thead><tbody>'+owned.map(r=>{const a=rwaActorById(r.supplierActorId);return '<tr><td>'+escaparHtml(a?.nome||"Empresa")+'</td><td><b>Lote #'+escaparHtml(r.sourceLotId||"—")+'</b></td><td class="mono">'+escaparHtml(rwaShort(r.seriesId))+'</td><td><a class="rwa-link mono" href="'+rwaExplorerAddress(r.mint)+'" target="_blank" rel="noopener">'+escaparHtml(rwaShort(r.mint))+'</a></td><td><span class="tag t-ok">ATIVO · holder atual</span></td><td>'+rwaPriceRiskHtml(r.priceRisk)+'</td><td><div class="rwa-table-actions"><button class="btn ghost" disabled title="Cliente web ainda não monta a instrução Anchor">Solicitar resgate</button><button class="btn ghost" disabled title="Requer marketplace on-chain">Revender</button></div></td></tr>';}).join('')+'</tbody></table>';
+  return '<table><thead><tr><th>Fornecedor original</th><th>Lote</th><th>Mint</th><th>Direito econômico</th><th>Risco de preço</th><th>Próxima ação</th></tr></thead><tbody>'+owned.map(r=>{const a=rwaActorById(r.supplierActorId);return '<tr><td>'+escaparHtml(a?.nome||"Empresa")+'</td><td><b>Lote #'+escaparHtml(r.sourceLotId||"—")+'</b></td><td><a class="rwa-link mono" href="'+rwaExplorerAddress(r.mint)+'" target="_blank" rel="noopener">'+escaparHtml(rwaShort(r.mint))+'</a></td><td><span class="tag t-ok">ATIVO · holder atual</span></td><td>'+rwaPriceRiskHtml(r.priceRisk)+'</td><td><div class="rwa-table-actions"><button class="btn ghost" disabled title="Cliente web ainda não monta a instrução Anchor">Solicitar resgate</button><button class="btn ghost" disabled title="Requer marketplace on-chain">Revender</button></div></td></tr>';}).join('')+'</tbody></table>';
 }
 async function rwaRefreshTables(){
   const supplier=document.getElementById("rwaSupplierTable"),market=document.getElementById("rwaMarketTable"),assets=document.getElementById("rwaAssetsTable");
@@ -5708,25 +5715,23 @@ function rwaBindUi(){
   const save=document.getElementById("rwaSaveActorWallet");if(save)save.onclick=()=>{const actor=rwaSelectedActor(),input=document.getElementById("rwaActorSolanaWallet"),value=String(input?.value||"").trim();if(!actor){toast("Selecione uma empresa.");return;}if(!rwaValidPubkey(value)){toast("Informe uma public key Solana válida.");return;}const map=rwaActorWallets();map[actor.id]=value;rwaSaveActorWallets(map);const summary=document.getElementById("rwaSupplierSummary");if(summary)summary.innerHTML=rwaSupplierSummaryHtml(actor);toast("Vínculo Solana salvo localmente para o MVP.");};
   const register=document.getElementById("rwaRegisterMint");
   if(register)register.onclick=async()=>{
-    const actor=rwaSelectedActor(),lot=rwaSelectedLot(),series=String(document.getElementById("rwaSeriesId")?.value||"").trim(),mint=String(document.getElementById("rwaMintAddress")?.value||"").trim(),priceRisk=document.getElementById("rwaPriceRisk")?.value||"PENDING",rawPrice=String(document.getElementById("rwaIndicativePrice")?.value||"").trim().replace(",","."),price=rawPrice?Number(rawPrice):null;
+    const actor=rwaSelectedActor(),lot=rwaSelectedLot(),mint=String(document.getElementById("rwaMintAddress")?.value||"").trim(),rawPrice=String(document.getElementById("rwaIndicativePrice")?.value||"").trim().replace(",","."),price=rawPrice?Number(rawPrice):null;
     if(!actor){toast("Selecione o fornecedor.");return;}
     if(!lot){toast("Selecione primeiro um lote real do ExploreChem.");return;}
     if(RWA_SUPPLIER_LOTS_CONTEXT.actorId!==actor.id){toast("Atualize os lotes da empresa antes de continuar.");return;}
-    if(!rwaValidBytes32(series)){toast("seriesId precisa ter 32 bytes em hexadecimal.");return;}
-    if(!rwaValidPubkey(mint)){toast("Informe o endereço do mint Token-2022.");return;}
-    if(rawPrice&&(!Number.isFinite(price)||price<0)){toast("Preço de venda inválido.");return;}
-    register.disabled=true;register.textContent="Conferindo mint…";
+    if(!rwaValidPubkey(mint)){toast("Informe a public key do Mint Token-2022.");return;}
+    if(!rawPrice||!Number.isFinite(price)||price<=0){toast("Informe o preço que deseja pedir em SOL.");return;}
+    register.disabled=true;register.textContent="Conferindo Mint…";
     try{
       const state=await rwaMintSummary(mint);
       if(!state.exists)throw new Error("Mint não encontrado na Solana Devnet.");
       if(state.decimals!==0)throw new Error("O mint não tem decimals = 0.");
       if(String(state.supply)!=="1")throw new Error("O mint não possui supply = 1.");
-      const rows=rwaCatalog(),normalized=series.startsWith("0x")?series:"0x"+series;
-      if(rows.some(r=>r.mint===mint||r.seriesId.toLowerCase()===normalized.toLowerCase()))throw new Error("Esta Series ou Mint já está no catálogo.");
+      const rows=rwaCatalog();
+      if(rows.some(r=>String(r.mint||"")===mint))throw new Error("Este Mint já está no catálogo.");
       if(rows.some(r=>r.supplierActorId===actor.id&&String(r.sourceLotId||"")===lot.id&&String(r.economicStatus||"ACTIVE")!=="REDEEMED"))throw new Error("Este lote já está ligado a outro RWA ativo neste catálogo.");
       rows.push({
         id:crypto.randomUUID?crypto.randomUUID():Date.now()+"-"+Math.random(),
-        seriesId:normalized,
         mint,
         supplierActorId:actor.id,
         sourceLotId:lot.id,
@@ -5734,20 +5739,18 @@ function rwaBindUi(){
         sourceLotsContract:RWA_SUPPLIER_LOTS_CONTEXT.lotsAddress||null,
         sourceChainId:11155111,
         economicStatus:"ACTIVE",
-        priceRisk,
+        priceRisk:"PENDING",
         priceSol:price,
         createdAt:new Date().toISOString()
       });
       rwaSaveCatalog(rows);
-      document.getElementById("rwaSeriesId").value="";
       document.getElementById("rwaMintAddress").value="";
       document.getElementById("rwaIndicativePrice").value="";
-      document.getElementById("rwaPriceRisk").value="PENDING";
       await rwaLoadSupplierLots(actor);
       await rwaRefreshTables();
-      toast("RWA vinculado ao actorId e ao lote #"+lot.id+".");
+      toast("Venda preparada para o lote #"+lot.id+" com risco de preço PENDING.");
     }catch(error){toast(error.message||String(error));}
-    finally{register.disabled=false;register.textContent="Vincular RWA ao lote selecionado";}
+    finally{register.disabled=false;register.textContent="Preparar venda deste RWA";}
   };
   const rs=document.getElementById("rwaRefreshSupplier"),rc=document.getElementById("rwaRefreshClient");if(rs)rs.onclick=rwaRefreshTables;if(rc)rc.onclick=rwaRefreshTables;
   queueMicrotask(()=>rwaLoadSupplierLots(rwaSelectedActor()));
