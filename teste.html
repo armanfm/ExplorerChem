@@ -5494,10 +5494,8 @@ T.tokens=()=>T.dashboard();
    Catálogo abaixo registra apenas metadados de interface para RWAs que
    já foram emitidos. Ele NÃO cria/minta token e NÃO prova uma venda.
 
-   O programa atual já suporta Series, mint, transferência Token-2022,
-   redemption/escrow/settlement/burn. Ele ainda NÃO possui um mercado
-   atômico list_rwa / buy_rwa / cancel_listing; portanto Comprar/Publicar
-   venda permanecem bloqueados, evitando representar uma venda inexistente.
+   Cliente integrado ao marketplace.rs fornecido nesta entrega.
+   As instruções de marketplace exigem upgrade do programa na Devnet.
    =================================================================== */
 function rwaShort(value){const s=String(value||"");return s.length>18?s.slice(0,8)+"…"+s.slice(-7):s||"—";}
 function rwaSolanaProvider(){return window.phantom?.solana||window.solana||null;}
@@ -5889,15 +5887,15 @@ function rwaSupplierPanelHtml(actor){
     '<div id="rwaSaleForm" hidden style="margin-top:22px;padding-top:22px;border-top:1px solid var(--rule)">'+
       '<span class="section-eyebrow">RWA CRIADO</span><h3 id="rwaSaleTitle">RWA do lote selecionado</h3>'+
       '<div class="rwa-lot-summary"><dl><dt>Mint Token-2022</dt><dd id="rwaCreatedMint" class="mono">—</dd><dt>Estado econômico</dt><dd><span class="tag t-ok">ACTIVE</span></dd><dt>Risco de preço</dt><dd><span class="rwa-risk pending">PENDING</span></dd></dl></div>'+
-      '<h3 style="margin-top:20px">Deseja preparar uma oferta?</h3><p class="sub">Informe apenas o preço que deseja pedir. O workflow de risco compara dinamicamente a referência da API com o mercado secundário; ele não define nem bloqueia o preço.</p>'+
+      '<h3 style="margin-top:20px">Deseja preparar uma oferta?</h3><p class="sub">Informe apenas o preço que deseja pedir. A avaliação automática de risco ainda não está conectada; PENDING é informacional e não bloqueia a venda.</p>'+
       '<div class="field"><label for="rwaIndicativePrice">Preço que deseja pedir · SOL</label><input id="rwaIndicativePrice" inputmode="decimal" placeholder="Ex.: 2,50"></div>'+
       '<div class="actions"><button type="button" class="btn" id="rwaPrepareSale">Preparar oferta</button><button type="button" class="btn ghost" id="rwaSkipSale">Agora não</button></div>'+
-      '<p id="rwaSaleStatus" class="rwa-form-note">O preço pode ficar vazio se você não quiser vender agora. A publicação/compra atômica será ligada depois às instruções list_rwa / buy_rwa / cancel_listing.</p>'+
+      '<p id="rwaSaleStatus" class="rwa-form-note">O preço pode ficar vazio se você não quiser vender agora. Depois de preparar o preço, use Vender / revender na tabela para publicar a oferta on-chain.</p>'+
     '</div></section></div>'+
-  '<aside class="stack"><section class="panel rwa-card"><span class="section-eyebrow">REGRA ECONÔMICA</span><h3>Quem possui a unidade possui o direito</h3><div class="rwa-ok">A carteira que tiver <b>amount = 1</b> do mint Token-2022 é a titular atual do direito econômico. Holder anterior não mantém direito residual.</div></section><section class="panel rwa-card"><span class="section-eyebrow">PRIVACIDADE DO ATIVO</span><h3>O mercado não recebe os dados físicos</h3><div class="rwa-ok">A área RWA publica a empresa/actorId, o identificador do lote, o Mint, o preço pedido e o risco de preço. Massa, quantidade, elemento, teor, composição e documentos permanecem fora desta visão.</div></section><section class="panel rwa-card"><span class="section-eyebrow">MERCADO</span><h3>Venda atômica ainda não publicada</h3><div class="rwa-marketplace-lock"><i>⌁</i><div><b>Sem list_rwa / buy_rwa / cancel_listing no programa atual</b><p>O RWA pode ser emitido agora. A oferta fica preparada na interface até adicionarmos o marketplace atômico ao programa Solana.</p></div></div></section></aside></div><section class="panel rwa-card" style="margin-top:16px"><div class="rwa-panel-title"><div><span class="section-eyebrow">MEUS RWAs</span><h2>RWAs do fornecedor selecionado</h2><p>Cada RWA permanece ligado ao actorId, ao identificador do lote de origem e ao Mint. Supply e posse são consultados na Devnet.</p></div><button type="button" class="btn ghost" id="rwaRefreshSupplier">Atualizar Solana</button></div><div class="scrollx rwa-market" id="rwaSupplierTable"></div></section>';
+  '<aside class="stack"><section class="panel rwa-card"><span class="section-eyebrow">REGRA ECONÔMICA</span><h3>Quem possui a unidade possui o direito</h3><div class="rwa-ok">A carteira que tiver <b>amount = 1</b> do mint Token-2022 é a titular atual do direito econômico. Holder anterior não mantém direito residual.</div></section><section class="panel rwa-card"><span class="section-eyebrow">PRIVACIDADE DO ATIVO</span><h3>O mercado não recebe os dados físicos</h3><div class="rwa-ok">A área RWA publica a empresa/actorId, o identificador do lote, o Mint, o preço pedido e o risco de preço. Massa, quantidade, elemento, teor, composição e documentos permanecem fora desta visão.</div></section><section class="panel rwa-card"><span class="section-eyebrow">MERCADO</span><h3>Marketplace Solana Devnet</h3><div class="rwa-marketplace-lock"><i>⌁</i><div><b>Compra, venda e cancelamento on-chain</b><p>Esta versão exige atualizar o programa com marketplace.rs. Publicar envia o token ao escrow; comprar transfere SOL e token na mesma transação. A simulação interrompe instruções não disponíveis.</p></div></div></section></aside></div><section class="panel rwa-card" style="margin-top:16px"><div class="rwa-panel-title"><div><span class="section-eyebrow">MEUS RWAs</span><h2>RWAs do fornecedor selecionado</h2><p>Cada RWA permanece ligado ao actorId, ao identificador do lote de origem e ao Mint. Supply e posse são consultados na Devnet.</p></div><button type="button" class="btn ghost" id="rwaRefreshSupplier">Atualizar Solana</button></div><div class="scrollx rwa-market" id="rwaSupplierTable"></div></section>';
 }
 function rwaClientPanelHtml(){
-  return '<section class="panel rwa-card"><div class="rwa-panel-title"><div><span class="section-eyebrow">CLIENTE RWA</span><h2>Mercado e direitos econômicos</h2><p>O mercado exibe fornecedor, lote de origem, Mint, preço e risco de preço. Dados físicos do lote permanecem privados.</p></div><button type="button" class="btn ghost" id="rwaRefreshClient">Atualizar Solana</button></div><div class="rwa-warning" style="margin:14px 0"><b>Importante:</b> o risco de preço é informacional e pode permanecer PENDING; ele não bloqueia o ativo nem define o preço. O botão Comprar fica bloqueado até existir a instrução de marketplace atômico no programa.</div><div class="scrollx rwa-market" id="rwaMarketTable"></div></section><section class="panel rwa-card rwa-assets" style="margin-top:16px"><span class="section-eyebrow">MEUS ATIVOS</span><h2>Direitos econômicos da carteira conectada</h2><p class="sub">Somente mints do catálogo cuja unidade Token-2022 está nesta carteira aparecem como direito econômico ativo.</p><div class="scrollx" id="rwaAssetsTable"></div></section>';
+  return '<section class="panel rwa-card"><div class="rwa-panel-title"><div><span class="section-eyebrow">CLIENTE RWA</span><h2>Mercado e direitos econômicos</h2><p>O mercado exibe fornecedor, lote de origem, Mint, preço e risco de preço. Dados físicos do lote permanecem privados.</p></div><button type="button" class="btn ghost" id="rwaRefreshClient">Atualizar Solana</button></div><div class="rwa-warning" style="margin:14px 0"><b>Importante:</b> o risco de preço é informacional e pode permanecer PENDING; ele não bloqueia o ativo nem define o preço. As ofertas são consultadas na Solana e podem ser compradas por outra carteira. O programa precisa estar atualizado com as instruções do marketplace.</div><div class="scrollx rwa-market" id="rwaMarketTable"></div></section><section class="panel rwa-card rwa-assets" style="margin-top:16px"><span class="section-eyebrow">MEUS ATIVOS</span><h2>Direitos econômicos da carteira conectada</h2><p class="sub">Exibe tokens na carteira, ofertas desta carteira e seus pedidos de resgate, consultados na Devnet.</p><div class="scrollx" id="rwaAssetsTable"></div></section>';
 }
 function rwaPriceRiskHtml(value){
   const risk=String(value||"PENDING").toUpperCase();
@@ -5959,6 +5957,74 @@ function rwaBindUi(){
   const rs=document.getElementById("rwaRefreshSupplier"),rc=document.getElementById("rwaRefreshClient");if(rs)rs.onclick=rwaRefreshTables;if(rc)rc.onclick=rwaRefreshTables;
   queueMicrotask(()=>rwaLoadSupplierLots(rwaSelectedActor()));
 }
+// Marketplace e resgate: estado lido do programa, nunca do preço local.
+let rwaLiveRows=[],rwaActionBusy=false,rwaAttestor='';
+function rwaMeta(pubkey,isWritable=false,isSigner=false){return {pubkey,isWritable,isSigner};}
+function rwaAta(owner,mint){return rwaPda([owner.toBytes(),rwaPk(RWA_TOKEN_2022_PROGRAM_ID).toBytes(),mint.toBytes()],rwaPk(RWA_ASSOCIATED_TOKEN_PROGRAM_ID));}
+function rwaCreateAta(payer,owner,mint){return new solanaWeb3.TransactionInstruction({programId:rwaPk(RWA_ASSOCIATED_TOKEN_PROGRAM_ID),keys:[rwaMeta(payer,true,true),rwaMeta(rwaAta(owner,mint),true),rwaMeta(owner),rwaMeta(mint),rwaMeta(solanaWeb3.SystemProgram.programId),rwaMeta(rwaPk(RWA_TOKEN_2022_PROGRAM_ID))],data:new Uint8Array([1])});}
+function rwaLamports(raw){const s=String(raw).trim().replace(',','.');if(!/^\d+(\.\d{1,9})?$/.test(s))throw new Error('Use preço positivo em SOL, com até 9 casas decimais.');const [a,b='']=s.split('.'),n=BigInt(a)*1000000000n+BigInt(b.padEnd(9,'0'));if(n<=0n||n>18446744073709551615n)throw new Error('Preço fora do intervalo permitido.');return n;}
+function rwaSol(n){n=BigInt(n);return (n/1000000000n).toString()+((n%1000000000n)?'.'+(n%1000000000n).toString().padStart(9,'0').replace(/0+$/,''):'');}
+async function rwaDisc(namespace,name){return (await rwaSha(rwaText(namespace+':'+name))).slice(0,8);}
+async function rwaDecode(account,name,min){if(!account||!account.owner.equals(rwaPk(RWA_SOLANA_PROGRAM_ID)))throw new Error('Conta ausente ou programa incorreto: '+name);const d=new Uint8Array(account.data);if(d.length<min||rwaHex(d.slice(0,8))!==rwaHex(await rwaDisc('account',name)))throw new Error('Formato inválido: '+name);return d;}
+function rwaContext(row){const sid=rwaHexBytes(row.seriesId,32),mint=rwaPk(row.mint),listing=rwaPda([rwaText('listing'),sid]),redemption=rwaPda([rwaText('redemption'),sid]);return {sid,mint,listing,redemption,config:rwaPda([rwaText('config')]),series:rwaPda([rwaText('series'),sid]),record:rwaPda([rwaText('rwa-mint'),sid]),token:rwaPk(RWA_TOKEN_2022_PROGRAM_ID),ata:rwaPk(RWA_ASSOCIATED_TOKEN_PROGRAM_ID),system:solanaWeb3.SystemProgram.programId};}
+async function rwaMarketIx(name,keys,body=new Uint8Array()){return new solanaWeb3.TransactionInstruction({programId:rwaPk(RWA_SOLANA_PROGRAM_ID),keys,data:rwaBytes(await rwaDisc('global',name),body)});}
+async function rwaCatalogRowsWithChain(){
+ const conn=new solanaWeb3.Connection(RWA_SOLANA_RPC,'confirmed');
+ const accounts=await conn.getProgramAccounts(rwaPk(RWA_SOLANA_PROGRAM_ID),{commitment:'confirmed',filters:[{dataSize:183}]});
+ const local=rwaCatalog(),out=[];
+ const cfg=await conn.getAccountInfo(rwaPda([rwaText('config')]));rwaAttestor=cfg?rwaPk((await rwaDecode(cfg,'Config',102)).slice(40,72)).toBase58():'';
+ for(const a of accounts){
+  const d=await rwaDecode(a.account,'Series',183),sid=rwaHex(d.slice(8,40));
+  if(!a.pubkey.equals(rwaPda([rwaText('series'),d.slice(8,40)])))continue;
+  const row={...(local.find(r=>r.seriesId?.toLowerCase()===sid)||{}),id:sid,seriesId:sid,supplierActorId:rwaHex(d.slice(40,72)),economicStatus:({1:'ACTIVE',2:'REDEEMED',3:'CLOSED'})[d[180]]||'UNKNOWN',priceRisk:'PENDING',verificationStatus:d[181]};
+  row.mint=rwaPda([rwaText('mint'),d.slice(8,40)]).toBase58();
+  const c=rwaContext(row),[rec,listing,red]=await conn.getMultipleAccountsInfo([c.record,c.listing,c.redemption]);if(!rec)continue;
+  const rd=await rwaDecode(rec,'RwaMintRecord',113);if(rwaHex(rd.slice(8,40))!==sid||!rwaPk(rd.slice(40,72)).equals(c.mint))throw new Error('Vínculo série/mint inválido.');
+  row.mintState=await rwaMintSummary(row.mint);
+  if(listing){const l=await rwaDecode(listing,'Listing',113);if(rwaHex(l.slice(8,40))!==sid||!rwaPk(l.slice(40,72)).equals(c.mint))throw new Error('Oferta inválida.');row.listing={seller:rwaPk(l.slice(72,104)).toBase58(),price:rwaReadU64(l,104).toString()};}
+  if(red){const r=await rwaDecode(red,'Redemption',186);row.redemption={holder:rwaPk(r.slice(72,104)).toBase58(),status:r[136]};}
+  out.push(row);
+ }
+ rwaLiveRows=out;return out;
+}
+function rwaOwnershipLabel(r){if(r.redemption?.status===1)return '<span>Em resgate</span>';if(r.economicStatus!=='ACTIVE')return '<span>'+escaparHtml(r.economicStatus)+'</span>';if(r.listing)return '<span>Em oferta · vendedor '+escaparHtml(rwaShort(r.listing.seller))+'</span>';return (rwaOwnedTokenAmounts.get(r.mint)||0n)===1n?'<span class="rwa-right">Você possui o direito</span>':'<span>Outra carteira</span>';}
+function rwaActionButtons(r){const w=rwaSolanaWalletAddress,own=(rwaOwnedTokenAmounts.get(r.mint)||0n)===1n;const b=(a,t)=>'<button class="btn ghost" data-rwa-action="'+a+'" data-rwa-series="'+escaparHtml(r.seriesId)+'">'+t+'</button>';if(r.redemption?.status===1)return w===rwaAttestor?b('settle','Confirmar liquidação e queimar'):'Aguardando liquidação pelo attestor';if(r.economicStatus!=='ACTIVE')return 'Encerrado';let html=r.listing?(r.listing.seller===w?b('cancel','Cancelar venda'):b('buy','Comprar por '+rwaSol(r.listing.price)+' SOL')):own?b('list','Vender / revender')+b('redeem','Solicitar resgate'):'Sem oferta publicada';if(w===rwaAttestor&&r.verificationStatus===1)html+=b('verify','Verificar série');return html;}
+function rwaMarketRowsHtml(rows){if(!rows.length)return '<div class="rwa-empty">Nenhum RWA emitido encontrado na Devnet.</div>';return '<table><thead><tr><th>Fornecedor</th><th>Lote / Série</th><th>Mint</th><th>Estado</th><th>Risco</th><th>Oferta on-chain</th><th>Ações</th></tr></thead><tbody>'+rows.map(r=>'<tr><td>'+escaparHtml(rwaActorById(r.supplierActorId)?.nome||rwaShort(r.supplierActorId))+'</td><td>'+escaparHtml(r.sourceLotId?'Lote #'+r.sourceLotId:rwaShort(r.seriesId))+'</td><td><a target="_blank" rel="noopener" href="'+rwaExplorerAddress(r.mint)+'">'+escaparHtml(rwaShort(r.mint))+'</a></td><td>'+rwaOwnershipLabel(r)+'</td><td>'+rwaPriceRiskHtml(r.priceRisk)+'</td><td>'+(r.listing?escaparHtml(rwaSol(r.listing.price))+' SOL':'—')+'</td><td><div class="rwa-table-actions">'+rwaActionButtons(r)+'</div></td></tr>').join('')+'</tbody></table>';}
+function rwaSupplierRowsHtml(rows,actor){return rwaMarketRowsHtml(rows.filter(r=>r.supplierActorId.toLowerCase()===String(actor?.id||'').toLowerCase()));}
+function rwaAssetsRowsHtml(rows){if(!rwaSolanaWalletAddress)return '<div class="rwa-empty">Conecte a carteira Solana.</div>';return rwaMarketRowsHtml(rows.filter(r=>(rwaOwnedTokenAmounts.get(r.mint)||0n)===1n||r.listing?.seller===rwaSolanaWalletAddress||r.redemption?.holder===rwaSolanaWalletAddress));}
+async function rwaAction(action,id){
+ if(rwaActionBusy)return;
+ rwaActionBusy=true;
+ try{
+  if(!rwaSolanaWalletAddress)await rwaConnectWallet();if(!rwaSolanaWalletAddress)return;
+  const before=rwaLiveRows.find(r=>r.seriesId===id),quoted=before?.listing?.price;
+  const rows=await rwaCatalogRowsWithChain(),r=rows.find(r=>r.seriesId===id);if(!r)throw new Error('Série não encontrada.');
+  const c=rwaContext(r),payer=rwaPk(rwaSolanaWalletAddress),m=rwaMeta,base=[m(c.config),m(c.series),m(c.record),m(c.mint)],tail=[m(c.token),m(c.ata),m(c.system)];let ixs=[],label='';
+  if(action==='list'){
+   const raw=prompt('Preço de venda em SOL (Devnet):',r.priceSol?String(r.priceSol):'');if(raw===null)return;const price=rwaLamports(raw);
+   label='Publicação da venda';ixs=[rwaCreateAta(payer,c.listing,c.mint),await rwaMarketIx('list_rwa',[m(payer,true,true),...base,m(rwaAta(payer,c.mint),true),m(c.listing,true),m(rwaAta(c.listing,c.mint),true),...tail],rwaU64(price))];
+  }else if(action==='buy'){
+   if(!r.listing)throw new Error('Oferta não está mais disponível.');if(quoted!==r.listing.price)throw new Error('O preço mudou. Confira a oferta atualizada antes de comprar.');if(r.listing.seller===rwaSolanaWalletAddress)throw new Error('Esta oferta é sua. Use outra carteira para comprar.');
+   if(!confirm('Comprar este RWA por '+rwaSol(r.listing.price)+' SOL na Devnet? A carteira também paga taxas e eventual criação da conta de token.'))return;
+   label='Compra do RWA';ixs=[rwaCreateAta(payer,payer,c.mint),await rwaMarketIx('buy_rwa',[m(payer,true,true),m(rwaPk(r.listing.seller),true),...base,m(c.listing,true),m(rwaAta(c.listing,c.mint),true),m(rwaAta(payer,c.mint),true),...tail],rwaU64(r.listing.price))];
+  }else if(action==='cancel'){
+   label='Cancelamento da venda';ixs=[rwaCreateAta(payer,payer,c.mint),await rwaMarketIx('cancel_listing',[m(payer,true,true),...base,m(c.listing,true),m(rwaAta(c.listing,c.mint),true),m(rwaAta(payer,c.mint),true),...tail])];
+  }else if(action==='redeem'){
+   const actor=prompt('ActorId do titular que solicita o resgate (32 bytes hexadecimais):','');if(actor===null)return;const actorBytes=rwaHexBytes(actor,32);if(actorBytes.every(v=>v===0))throw new Error('ActorId não pode ser zero.');
+   if(!confirm('Enviar o token ao escrow de resgate? Ele ficará indisponível para venda até a liquidação pelo attestor.'))return;
+   label='Solicitação de resgate';ixs=[await rwaMarketIx('request_redemption',[m(payer,true,true),...base,m(rwaAta(payer,c.mint),true),m(c.redemption,true),m(rwaAta(c.redemption,c.mint),true),...tail],actorBytes)];
+  }else if(action==='verify'){
+   label='Verificação da série';ixs=[await rwaMarketIx('verify_series',[m(c.config),m(payer,false,true),m(c.series,true)])];
+  }else if(action==='settle'){
+   const hash=prompt('Hash de comprovação da liquidação já realizada (32 bytes hexadecimais):','');if(hash===null)return;const bytes=rwaHexBytes(hash,32);if(bytes.every(v=>v===0))throw new Error('Hash não pode ser zero.');if(!confirm('Você confirma que a liquidação externa ocorreu? Esta ação queima o token e encerra o direito.'))return;
+   label='Liquidação e queima';ixs=[await rwaMarketIx('settle_and_burn',[m(c.config),m(payer,false,true),m(c.series,true),m(c.record),m(c.mint,true),m(c.redemption,true),m(rwaPk(r.redemption.holder),true),m(rwaAta(c.redemption,c.mint),true),m(c.token)],bytes)];
+  }else throw new Error('Ação desconhecida.');
+  const signature=await rwaSendIx(ixs,label);toast(label+' confirmada.');let status=document.getElementById('rwaTransactionStatus');if(!status){status=document.createElement('p');status.id='rwaTransactionStatus';document.getElementById('view').prepend(status);}status.textContent=label+' · ';const link=document.createElement('a');link.href='https://explorer.solana.com/tx/'+encodeURIComponent(signature)+'?cluster=devnet';link.target='_blank';link.rel='noopener';link.textContent='Ver transação confirmada';status.append(link);
+ }catch(e){console.error(e);toast(e.message||String(e));alert(e.message||String(e));}
+ finally{rwaActionBusy=false;try{await rwaRefreshTables();}catch(e){toast("Não foi possível atualizar a leitura: "+(e.message||e));}}
+}
+document.addEventListener('click',e=>{const b=e.target.closest('[data-rwa-action]');if(b)rwaAction(b.dataset.rwaAction,b.dataset.rwaSeries);});
+
 T.rwa=()=>rwaBaseHtml();
 
 function render(){
