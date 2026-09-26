@@ -5556,16 +5556,104 @@ function rwaInstruction(name,keys,body=new Uint8Array()){
   if(!disc)throw new Error("Instrução RWA desconhecida: "+name);
   return new solanaWeb3.TransactionInstruction({programId:rwaPk(RWA_SOLANA_PROGRAM_ID),keys,data:rwaBytes(rwaHexBytes(disc,8),body)});
 }
+function rwaBlockhashExpired(error){
+  const message=String(error?.message||error||"").toLowerCase();
+  return message.includes("block height exceeded")||
+    message.includes("blockhash not found")||
+    message.includes("transactionexpiredblockheightexceedederror")||
+    message.includes("transaction expired")||
+    message.includes("blockhash expired");
+}
+async function rwaSignatureStatus(connection,signature){
+  if(!signature)return null;
+  try{
+    const result=await connection.getSignatureStatuses([signature],{searchTransactionHistory:true});
+    return result?.value?.[0]||null;
+  }catch(_){return null;}
+}
 async function rwaSendIx(ixs,label){
-  const provider=rwaSolanaProvider();if(!provider||!rwaSolanaWalletAddress)throw new Error("Conecte uma carteira Solana para assinar a emissão.");
+  const provider=rwaSolanaProvider();
+  if(!provider||!rwaSolanaWalletAddress)throw new Error("Conecte uma carteira Solana para assinar a emissão.");
   if(!window.solanaWeb3)throw new Error("Solana Web3 não carregou; recarregue a página.");
-  const connection=new solanaWeb3.Connection(RWA_SOLANA_RPC,"confirmed"),payer=rwaPk(rwaSolanaWalletAddress),latest=await connection.getLatestBlockhash("confirmed");
-  const tx=new solanaWeb3.Transaction({feePayer:payer,recentBlockhash:latest.blockhash});for(const ix of ixs)tx.add(ix);
-  const sent=await provider.signAndSendTransaction(tx),signature=typeof sent==="string"?sent:String(sent?.signature||"");
-  if(!signature)throw new Error("A carteira não retornou a assinatura da transação.");
-  const confirmation=await connection.confirmTransaction({signature,blockhash:latest.blockhash,lastValidBlockHeight:latest.lastValidBlockHeight},"confirmed");
-  if(confirmation?.value?.err)throw new Error(label+" falhou na Solana: "+JSON.stringify(confirmation.value.err));
-  return signature;
+
+  const connection=new solanaWeb3.Connection(RWA_SOLANA_RPC,"confirmed");
+  const payer=rwaPk(rwaSolanaWalletAddress);
+  let lastError=null;
+
+  // A Phantom pode ficar aberta por tempo suficiente para um blockhash expirar.
+  // Cada tentativa abaixo cria uma transação NOVA com um blockhash recém obtido.
+  // Nunca reutilizamos uma transação/assinatura expirada.
+  for(let attempt=1;attempt<=3;attempt++){
+    let latest=null,signature="";
+    try{
+      latest=await connection.getLatestBlockhash("processed");
+      const tx=new solanaWeb3.Transaction();
+      tx.feePayer=payer;
+      tx.recentBlockhash=latest.blockhash;
+      for(const ix of ixs)tx.add(ix);
+
+      if(typeof provider.signTransaction==="function"){
+        const signed=await provider.signTransaction(tx);
+
+        // Se o usuário demorou muito no Phantom, nem tentamos transmitir um
+        // blockhash já vencido: renovamos e pedimos a assinatura novamente.
+        const height=await connection.getBlockHeight("confirmed");
+        if(height>=latest.lastValidBlockHeight){
+          if(attempt<3){
+            toast("O blockhash expirou enquanto o Phantom estava aberto. Atualizando a transação e pedindo nova assinatura…");
+            continue;
+          }
+          throw new Error("A transação expirou antes do envio. Tente novamente e confirme no Phantom assim que ele abrir.");
+        }
+
+        signature=await connection.sendRawTransaction(signed.serialize(),{
+          skipPreflight:false,
+          preflightCommitment:"confirmed",
+          maxRetries:5
+        });
+      }else if(typeof provider.signAndSendTransaction==="function"){
+        // Fallback para wallets que não expõem signTransaction.
+        const sent=await provider.signAndSendTransaction(tx);
+        signature=typeof sent==="string"?sent:String(sent?.signature||"");
+      }else{
+        throw new Error("A carteira Solana não suporta assinatura de transações.");
+      }
+
+      if(!signature)throw new Error("A carteira não retornou a assinatura da transação.");
+
+      try{
+        const confirmation=await connection.confirmTransaction({
+          signature,
+          blockhash:latest.blockhash,
+          lastValidBlockHeight:latest.lastValidBlockHeight
+        },"confirmed");
+        if(confirmation?.value?.err){
+          throw new Error(label+" falhou na Solana: "+JSON.stringify(confirmation.value.err));
+        }
+        return signature;
+      }catch(confirmError){
+        // Uma confirmação pode estourar a janela local mesmo quando a transação
+        // já entrou. Antes de repetir, consultamos a assinatura na rede.
+        const status=await rwaSignatureStatus(connection,signature);
+        if(status&&!status.err&&(status.confirmationStatus==="confirmed"||status.confirmationStatus==="finalized")){
+          return signature;
+        }
+        throw confirmError;
+      }
+    }catch(error){
+      lastError=error;
+      if(rwaBlockhashExpired(error)&&attempt<3){
+        if(signature){
+          const status=await rwaSignatureStatus(connection,signature);
+          if(status&&!status.err&&(status.confirmationStatus==="confirmed"||status.confirmationStatus==="finalized"))return signature;
+        }
+        toast("Blockhash da Solana expirou. Gerando uma transação nova com blockhash atualizado…");
+        continue;
+      }
+      throw error;
+    }
+  }
+  throw lastError||new Error(label+" não pôde ser confirmada.");
 }
 async function rwaBuildIssuanceContext(actor,lot,holderAddress){
   if(!actor||!lot)throw new Error("Selecione empresa e lote.");
@@ -5770,7 +5858,7 @@ function rwaSupplierPanelHtml(actor){
       '<p class="sub">A Series e o Mint Token-2022 serão criados automaticamente na Solana Devnet. O Mint não é digitado manualmente.</p>'+
       '<div class="rwa-ok" style="margin:14px 0"><b>Holder inicial</b><br><span class="sm">Será usada a public key informada acima.</span></div>'+
       '<div class="actions"><button type="button" class="btn" id="rwaCreateRwa">Criar RWA deste lote</button></div>'+
-      '<p id="rwaIssueStatus" class="rwa-form-note">Depois da confirmação on-chain, o Mint aparecerá automaticamente e você decide se quer colocar preço agora.</p>'+
+      '<p id="rwaIssueStatus" class="rwa-form-note">Depois da confirmação on-chain, o Mint aparecerá automaticamente. Se o Phantom ficar aberto até o blockhash expirar, a tela gera uma transação nova e pede a assinatura novamente.</p>'+
     '</div>'+
     '<div id="rwaSaleForm" hidden style="margin-top:22px;padding-top:22px;border-top:1px solid var(--rule)">'+
       '<span class="section-eyebrow">RWA CRIADO</span><h3 id="rwaSaleTitle">RWA do lote selecionado</h3>'+
