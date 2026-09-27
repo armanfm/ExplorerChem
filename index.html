@@ -5687,8 +5687,7 @@ async function rwaBuildIssuanceContext(actor,lot,holderAddress){
   const sourceChainId=11155111n,sourceContract=rwaEth20(sourceAddress),actorId=rwaHexBytes(actor.id,32),lotId=BigInt(lot.id);
   const origin=await rwaSha(rwaBytes(rwaText("ExploreChem/RWAOrigin/v1"),rwaU64(sourceChainId),sourceContract,actorId,rwaU64(lotId)));
   const creditReference=["ExploreChem/IssuerLot/v1",String(sourceChainId),sourceAddress.toLowerCase(),actor.id.toLowerCase(),String(lotId)].join(":");
-  const creditTerms=String(document.getElementById("rwaCreditTerms")?.value||"").normalize('NFC').replace(/\r\n/g,'\n').trim();
-  if(!creditTerms)throw Error("Informe as condições do direito econômico e do resgate na tela de emissão.");
+  const creditTerms=JSON.stringify({schema:"ExploreChem/DemoRight/v1",network:"Solana Devnet",issuerActorId:actor.id.toLowerCase(),sourceChainId:String(sourceChainId),sourceContract:sourceAddress.toLowerCase(),sourceLotId:String(lotId),description:"Emissão de demonstração de direito econômico vinculada ao emissor e ao lote identificados. Token transferível na Solana Devnet, sem obrigação de pagamento real. O detentor pode solicitar resgate para testar o fluxo de liquidação e queima. Não representa transferência da propriedade do lote físico."});
   const creditId=await rwaSha(rwaBytes(rwaText("ExploreChem/CreditId/v1"),rwaText(creditReference)));
   const seriesId=await rwaSha(rwaBytes(rwaText("ExploreChem/CreditSeries/v2"),actorId,creditId));
   const creditLock=rwaPda([rwaText('credit'),actorId,creditId]);
@@ -5892,8 +5891,7 @@ function rwaSupplierPanelHtml(actor){
       '<div class="rwa-ok" style="margin:14px 0"><b>Holder inicial</b><br><span class="sm">Será usada a public key informada acima.</span></div>'+
       '<div class="field"><label for="rwaIssuePrice">Preço de venda · SOL (Devnet)</label><input id="rwaIssuePrice" inputmode="decimal" autocomplete="off" required></div>'+
       '<p class="rwa-form-note">Preço da oferta, sem fixar o valor de resgate. Para mudar o preço após anunciar, cancele a oferta e anuncie novamente.</p>'+
-      '<div class="field"><label for="rwaCreditTerms">Direito econômico e condições de resgate</label><textarea id="rwaCreditTerms" rows="4" required></textarea></div>'+
-      '<p class="rwa-form-note">Descreva a obrigação do emissor e as condições de resgate. A referência do crédito é automática. Para anunciar agora, use a carteira conectada como holder inicial.</p>'+
+      '<p class="rwa-form-note">Emissão de demonstração na Devnet, sem obrigação de pagamento real. A descrição e a referência são geradas automaticamente com o emissor e o lote. Para anunciar agora, use a carteira conectada como holder inicial.</p>'+
       '<div class="actions"><button type="button" class="btn" id="rwaCreateRwa">Criar RWA e colocar à venda</button></div>'+
       '<p id="rwaIssueStatus" class="rwa-form-note">Cada etapa é simulada na Devnet antes da assinatura. Os logs aparecem abaixo. Depois da confirmação on-chain, o Mint aparecerá automaticamente.</p>'+
     '</div>'+
