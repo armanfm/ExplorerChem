@@ -5596,89 +5596,33 @@ async function rwaSimulateBeforeSigning(tx,label){
 }
 async function rwaSendIx(ixs,label){
   const provider=rwaSolanaProvider();
-  if(!provider||!rwaSolanaWalletAddress)throw new Error("Conecte uma carteira Solana para assinar a emissão.");
-  if(!window.solanaWeb3)throw new Error("Solana Web3 não carregou; recarregue a página.");
-
+  if(!provider||!rwaSolanaWalletAddress)throw Error("Conecte a carteira Solana.");
+  if(typeof provider.signTransaction!=="function")throw Error("Esta carteira precisa oferecer signTransaction para o envio pela RPC Devnet.");
   const connection=new solanaWeb3.Connection(RWA_SOLANA_RPC,"confirmed");
   const payer=rwaPk(rwaSolanaWalletAddress);
-  let lastError=null;
-
-  // A Phantom pode ficar aberta por tempo suficiente para um blockhash expirar.
-  // Cada tentativa abaixo cria uma transação NOVA com um blockhash recém obtido.
-  // Nunca reutilizamos uma transação/assinatura expirada.
-  for(let attempt=1;attempt<=3;attempt++){
-    let latest=null,signature="";
-    try{
-      latest=await connection.getLatestBlockhash("confirmed");
-      const tx=new solanaWeb3.Transaction();
-      tx.feePayer=payer;
-      tx.recentBlockhash=latest.blockhash;
-      for(const ix of ixs)tx.add(ix);
-      await rwaSimulateBeforeSigning(tx,label);
-
-      if(typeof provider.signTransaction==="function"){
-        const signed=await provider.signTransaction(tx);
-
-        // Se o usuário demorou muito no Phantom, nem tentamos transmitir um
-        // blockhash já vencido: renovamos e pedimos a assinatura novamente.
-        const height=await connection.getBlockHeight("confirmed");
-        if(height>=latest.lastValidBlockHeight){
-          if(attempt<3){
-            toast("O blockhash expirou enquanto o Phantom estava aberto. Atualizando a transação e pedindo nova assinatura…");
-            continue;
-          }
-          throw new Error("A transação expirou antes do envio. Tente novamente e confirme no Phantom assim que ele abrir.");
-        }
-
-        signature=await connection.sendRawTransaction(signed.serialize(),{
-          skipPreflight:false,
-          preflightCommitment:"confirmed",
-          maxRetries:5
-        });
-      }else if(typeof provider.signAndSendTransaction==="function"){
-        // Fallback para wallets que não expõem signTransaction.
-        const sent=await provider.signAndSendTransaction(tx);
-        signature=typeof sent==="string"?sent:String(sent?.signature||"");
-      }else{
-        throw new Error("A carteira Solana não suporta assinatura de transações.");
-      }
-
-      if(!signature)throw new Error("A carteira não retornou a assinatura da transação.");
-
-      try{
-        const confirmation=await connection.confirmTransaction({
-          signature,
-          blockhash:latest.blockhash,
-          lastValidBlockHeight:latest.lastValidBlockHeight
-        },"confirmed");
-        if(confirmation?.value?.err){
-          throw new Error(label+" falhou na Solana: "+JSON.stringify(confirmation.value.err));
-        }
-        return signature;
-      }catch(confirmError){
-        // Uma confirmação pode estourar a janela local mesmo quando a transação
-        // já entrou. Antes de repetir, consultamos a assinatura na rede.
-        const status=await rwaSignatureStatus(connection,signature);
-        if(status&&!status.err&&(status.confirmationStatus==="confirmed"||status.confirmationStatus==="finalized")){
-          return signature;
-        }
-        throw confirmError;
-      }
-    }catch(error){
-      lastError=error;
-      if(rwaBlockhashExpired(error)&&attempt<3){
-        if(signature){
-          const status=await rwaSignatureStatus(connection,signature);
-          if(status&&!status.err&&(status.confirmationStatus==="confirmed"||status.confirmationStatus==="finalized"))return signature;
-        }
-        toast("Blockhash da Solana expirou. Gerando uma transação nova com blockhash atualizado…");
-        continue;
-      }
-      throw error;
-    }
+  if(!provider.publicKey||!provider.publicKey.equals(payer))throw Error("A carteira mudou. Reconecte antes de continuar.");
+  const latest=await connection.getLatestBlockhash("confirmed");
+  const tx=new solanaWeb3.Transaction();tx.feePayer=payer;tx.recentBlockhash=latest.blockhash;tx.add(...ixs);
+  await rwaSimulateBeforeSigning(tx,label);
+  const signed=await provider.signTransaction(tx);
+  if(!provider.publicKey||!provider.publicKey.equals(payer))throw Error("A carteira mudou durante a assinatura. Operação interrompida.");
+  if(await connection.getBlockHeight("confirmed")>=latest.lastValidBlockHeight)throw Error("Transação expirada. Operação interrompida sem envio e sem nova assinatura automática. Clique novamente para retomar.");
+  const signature=await connection.sendRawTransaction(signed.serialize(),{skipPreflight:false,preflightCommitment:"confirmed",maxRetries:5});
+  try{
+    const result=await connection.confirmTransaction({signature,blockhash:latest.blockhash,lastValidBlockHeight:latest.lastValidBlockHeight},"confirmed");
+    if(result.value.err)throw Error("Falha on-chain: "+JSON.stringify(result.value.err));
+  }catch(error){
+    const status=await rwaSignatureStatus(connection,signature);
+    if(status?.err)throw Error(label+": falha on-chain "+JSON.stringify(status.err)+". Assinatura: "+signature);
+    if(!status||!['confirmed','finalized'].includes(status.confirmationStatus))throw Error(label+": confirmação não obtida. Confira a assinatura "+signature+" na Devnet antes de tentar novamente. "+(error.message||error));
   }
-  throw lastError||new Error(label+" não pôde ser confirmada.");
+  return signature;
 }
+function rwaLineageBatchFits(ixs,payer){
+  if(ixs.length>6)return false;
+  try{const tx=new solanaWeb3.Transaction();tx.feePayer=payer;tx.recentBlockhash=solanaWeb3.SystemProgram.programId.toBase58();tx.add(...ixs);return tx.serialize({requireAllSignatures:false,verifySignatures:false}).length<=1100;}catch(_){return false;}
+}
+
 async function rwaBuildIssuanceContext(actor,lot,holderAddress){
   if(!actor||!lot)throw new Error("Selecione empresa e lote.");
   if(!rwaSolanaWalletAddress)throw new Error("Conecte a carteira Solana para assinar a emissão.");
@@ -6082,13 +6026,26 @@ async function rwaPrepareLineage(ctx,status){
  const legacy=registry?.ready?null:await rwaLineageSeries(ctx,snapshot);
  const m=rwaMeta,manage=[m(ctx.config),m(ctx.payer,false,true),m(rwaLineagePda(),true)];
  if(!registry){status('Inicializando registro de cobertura…');await rwaSendIx([await rwaMarketIx('initialize_lineage',[m(ctx.payer,true,true),m(ctx.config),m(ctx.payer,false,true),m(rwaLineagePda(),true),m(solanaWeb3.SystemProgram.programId)])],'Inicialização da linhagem');registry=await rwaLineageRead();}
+ const batches=[];let batch={ixs:[],ids:[]};
  for(const n of snapshot.nodes){
   const old=registry.nodes.find(x=>x.id===n.id);
   if(old){if(old.mask!==n.mask)throw Error('Linhagem registrada difere do Ethereum.');continue;}
-  status('Registrando linhagem do lote '+n.id+'…');
   const body=rwaBytes(rwaLot256(n.id),rwaU32(n.parents.length),...n.parents.map(rwaLot256));
-  await rwaSendIx([await rwaMarketIx('register_lineage_lot',manage,body)],'Registro do lote '+n.id);
+  const ix=await rwaMarketIx('register_lineage_lot',manage,body);
+  if(!rwaLineageBatchFits([...batch.ixs,ix],ctx.payer)){
+    if(batch.ixs.length)batches.push(batch);
+    batch={ixs:[],ids:[]};
+    if(!rwaLineageBatchFits([ix],ctx.payer))throw Error('Registro do lote '+n.id+' excede o tamanho permitido para esta transação.');
+  }
+  batch.ixs.push(ix);batch.ids.push(n.id);
  }
+ if(batch.ixs.length)batches.push(batch);
+ for(let i=0;i<batches.length;i++){
+   const group=batches[i],label='Linhagem '+(i+1)+'/'+batches.length+' · lotes '+group.ids.join(', ');
+   status(label+' — uma assinatura para este grupo.');
+   await rwaSendIx(group.ixs,label);
+ }
+
  if(!registry.ready){
   for(const r of legacy){status('Reservando cobertura da série existente: lote '+r.id+'…');await rwaSendIx([await rwaMarketIx('adopt_lineage_series',[...manage,m(r.pubkey)],rwaLot256(r.id))],'Migração do RWA do lote '+r.id);}
   // Re-enumerate immediately before activation; new increment calls are blocked until ready.
