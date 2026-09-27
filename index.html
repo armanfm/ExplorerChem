@@ -5618,9 +5618,47 @@ async function rwaSendIx(ixs,label){
   }
   return signature;
 }
+function rwaBatchInstructions(ixs){
+  return [solanaWeb3.ComputeBudgetProgram.setComputeUnitLimit({units:1400000}),...ixs];
+}
 function rwaLineageBatchFits(ixs,payer){
   if(ixs.length>6)return false;
-  try{const tx=new solanaWeb3.Transaction();tx.feePayer=payer;tx.recentBlockhash=solanaWeb3.SystemProgram.programId.toBase58();tx.add(...ixs);return tx.serialize({requireAllSignatures:false,verifySignatures:false}).length<=1100;}catch(_){return false;}
+  try{const tx=new solanaWeb3.Transaction();tx.feePayer=payer;tx.recentBlockhash=solanaWeb3.SystemProgram.programId.toBase58();tx.add(...rwaBatchInstructions(ixs));return tx.serialize({requireAllSignatures:false,verifySignatures:false}).length<=1232;}catch(_){return false;}
+}
+async function rwaQueueIx(ctx,ixs,label){
+  if(ctx.plan){ctx.plan.push({ixs,label});return;}
+  return rwaSendIx(ixs,label);
+}
+function rwaBuildBatches(plan,payer){
+  const batches=[];let batch={ixs:[],labels:[]};
+  for(const step of plan){
+    if(!rwaLineageBatchFits(step.ixs,payer))throw Error(step.label+': transação excede o limite. Nenhuma assinatura foi solicitada.');
+    if(!rwaLineageBatchFits([...batch.ixs,...step.ixs],payer)){
+      if(batch.ixs.length)batches.push(batch);batch={ixs:[],labels:[]};
+    }
+    batch.ixs.push(...step.ixs);batch.labels.push(step.label);
+  }
+  if(batch.ixs.length)batches.push(batch);
+  return batches;
+}
+async function rwaExecutePlan(ctx,status){
+  const plan=ctx.plan.slice(),start=ctx.coreStart;
+  if(Number.isInteger(start)){
+    const core=plan.slice(start),ixs=core.flatMap(s=>s.ixs);
+    if(ixs.length&&rwaLineageBatchFits(ixs,ctx.payer))plan.splice(start,core.length,{ixs,label:core.map(s=>s.label).join(' + ')});
+  }
+  const batches=rwaBuildBatches(plan,ctx.payer);
+  status('Preparação concluída: '+batches.length+' assinatura(s) para finalizar.');
+  ctx.receipts=[];
+  for(let i=0;i<batches.length;i++){
+    if(rwaSolanaWalletAddress!==ctx.payer.toBase58())throw Error('Carteira alterada. Operação interrompida.');
+    const batch=batches[i],label='Assinatura '+(i+1)+' de '+batches.length+' — '+batch.labels.join(' + ');
+    status(label);
+    const signature=await rwaSendIx(rwaBatchInstructions(batch.ixs),label);
+    ctx.receipts.push({signature,steps:batch.labels});
+    status('Confirmada '+(i+1)+' de '+batches.length+'. '+signature);
+  }
+  return batches.length;
 }
 
 async function rwaBuildIssuanceContext(actor,lot,holderAddress){
@@ -5655,7 +5693,7 @@ async function rwaEnsureConfig(ctx,status){
   const ix=rwaInstruction("initialize",[
     {pubkey:ctx.payer,isSigner:true,isWritable:true},{pubkey:ctx.config,isSigner:false,isWritable:true},{pubkey:solanaWeb3.SystemProgram.programId,isSigner:false,isWritable:false}
   ],body);
-  await rwaSendIx([ix],"Inicialização da Config RWA");
+  await rwaQueueIx(ctx,[ix],"Inicialização da Config RWA");
 }
 async function rwaMintIfNeeded(ctx,status){
   const connection=new solanaWeb3.Connection(RWA_SOLANA_RPC,"confirmed");if(await connection.getAccountInfo(ctx.mint,"confirmed"))return;
@@ -5663,43 +5701,55 @@ async function rwaMintIfNeeded(ctx,status){
   const ix=rwaInstruction("mint_rwa",[
     {pubkey:ctx.payer,isSigner:true,isWritable:true},{pubkey:ctx.config,isSigner:false,isWritable:false},{pubkey:ctx.payer,isSigner:true,isWritable:false},{pubkey:ctx.series,isSigner:false,isWritable:true},{pubkey:ctx.holder,isSigner:false,isWritable:false},{pubkey:ctx.mintRecord,isSigner:false,isWritable:true},{pubkey:ctx.mint,isSigner:false,isWritable:true},{pubkey:ctx.holderAta,isSigner:false,isWritable:true},{pubkey:ctx.tokenProgram,isSigner:false,isWritable:false},{pubkey:ctx.ataProgram,isSigner:false,isWritable:false},{pubkey:solanaWeb3.SystemProgram.programId,isSigner:false,isWritable:false},rwaMeta(rwaLineagePda())
   ]);
-  await rwaSendIx([ix],"Mint do RWA");
+  await rwaQueueIx(ctx,[ix],"Mint do RWA");
 }
 async function rwaCreateSelectedLotOnchain(button){
-  const actor=rwaSelectedActor(),lot=rwaSelectedLot(),statusNode=document.getElementById("rwaIssueStatus"),holderInput=document.getElementById("rwaHolderPubkey"),setStatus=t=>{if(statusNode)statusNode.textContent=t;};
-  if(!actor){toast("Selecione a empresa.");return;}if(!lot){toast("Selecione um lote.");return;}
-  const holderAddress=String(holderInput?.value||"").trim();
-  if(!holderAddress){toast("Informe a public key Solana do holder inicial.");holderInput?.focus();return;}
-  try{rwaPk(holderAddress);}catch(_){toast("A public key Solana informada é inválida.");holderInput?.focus();return;}
-  if(!rwaSolanaWalletAddress){setStatus("Conectando a carteira Solana que assinará a emissão…");await rwaConnectWallet();}
-  if(!rwaSolanaWalletAddress){toast("Conecte uma carteira Solana para assinar a emissão.");return;}
-  if(RWA_SUPPLIER_LOTS_CONTEXT.actorId!==actor.id){toast("Atualize os lotes antes de emitir.");return;}
+  if(rwaActionBusy){toast('Já existe uma operação em andamento.');return;}
+  rwaActionBusy=true;
   const original=button.textContent;button.disabled=true;
+  const statusNode=document.getElementById('rwaIssueStatus'),setStatus=t=>{if(statusNode)statusNode.textContent=t;};
+  let ctx=null;
   try{
-    const price=rwaLamports(document.getElementById("rwaIssuePrice")?.value||"");
-    if(holderAddress!==rwaSolanaWalletAddress)throw Error("Para criar e anunciar agora, use a carteira conectada como holder inicial. Ela precisa assinar a venda.");
-    const ctx=await rwaBuildIssuanceContext(actor,lot,holderAddress);setStatus("Conferindo Config RWA…");await rwaEnsureConfig(ctx,setStatus);await rwaCreateSeriesIfNeeded(ctx,setStatus);await rwaMintIfNeeded(ctx,setStatus);
-    const state=await rwaMintSummary(ctx.mint.toBase58());if(!state.exists||state.decimals!==0||String(state.supply)!=="1")throw new Error("O Mint foi criado, mas a leitura final não confirmou supply 1 / decimals 0.");
-    const rows=rwaCatalog();let item=rows.find(r=>r.supplierActorId===actor.id&&String(r.sourceLotId||"")===lot.id&&String(r.economicStatus||"ACTIVE")!=="REDEEMED");
-    const data={creditId:rwaHex(ctx.creditId),creditReference:ctx.creditReference,creditTerms:ctx.creditTerms,termsCommitment:rwaHex(ctx.claim),mint:ctx.mint.toBase58(),seriesId:rwaHex(ctx.seriesId),originCommitment:rwaHex(ctx.origin),supplierActorId:actor.id,sourceLotId:lot.id,sourceEvidenceId:lot.evidenceId||null,sourceLotsContract:RWA_SUPPLIER_LOTS_CONTEXT.lotsAddress||null,sourceChainId:11155111,initialHolder:ctx.holder.toBase58(),economicStatus:"ACTIVE",priceRisk:"PENDING",createdAt:item?.createdAt||new Date().toISOString()};
-    if(item)Object.assign(item,data);else{data.id=crypto.randomUUID?crypto.randomUUID():Date.now()+"-"+Math.random();data.priceSol=null;rows.push(data);}rwaSaveCatalog(rows);
-    const map=rwaActorWallets();map[actor.id]=ctx.holder.toBase58();rwaSaveActorWallet_REMOVIDOs(map);
-    setStatus("RWA criado. Assine agora a publicação da oferta por "+rwaSol(price)+" SOL…");
-    try{
-      const row=rows.find(r=>r.seriesId===rwaHex(ctx.seriesId));
-      const c=rwaContext(row),payer=ctx.payer,m=rwaMeta;
-      const ix=await rwaMarketIx('list_rwa',[m(payer,true,true),m(c.config),m(c.series),m(c.record),m(c.mint),m(rwaAta(payer,c.mint),true),m(c.listing,true),m(rwaAta(c.listing,c.mint),true),m(c.token),m(c.ata),m(c.system)],rwaU64(price));
-      await rwaSendIx([rwaCreateAta(payer,c.listing,c.mint),ix],"Publicação da venda");
-      row.priceSol=rwaSol(price);rwaSaveCatalog(rows);
-      rwaRenderSelectedLot();setStatus("RWA criado e anunciado por "+rwaSol(price)+" SOL.");toast("RWA criado e colocado à venda.");
-    }catch(listError){
-      rwaRenderSelectedLot();setStatus("O RWA foi criado, mas a oferta não foi publicada: "+(listError.message||listError)+". Use Vender / revender na tabela para tentar novamente.");
-      toast("RWA criado; publicação da oferta pendente.");
-    }
-    await rwaRefreshTables();
-  }catch(error){console.error(error);setStatus(error.message||String(error));toast(error.message||String(error));}
-  finally{button.disabled=false;button.textContent=original;}
+    const actor=rwaSelectedActor(),lot=rwaSelectedLot();
+    if(!actor||!lot)throw Error('Selecione empresa e lote.');
+    const holderAddress=String(document.getElementById('rwaHolderPubkey')?.value||'').trim();
+    if(!holderAddress)throw Error('Informe a carteira Solana do titular inicial.');
+    rwaPk(holderAddress);
+    const price=rwaLamports(document.getElementById('rwaIssuePrice')?.value||'');
+    if(!rwaSolanaWalletAddress)await rwaConnectWallet();
+    if(!rwaSolanaWalletAddress)throw Error('Conecte a carteira Solana.');
+    if(holderAddress!==rwaSolanaWalletAddress)throw Error('Use a carteira conectada como titular inicial para emitir e anunciar.');
+    if(RWA_SUPPLIER_LOTS_CONTEXT.actorId!==actor.id)throw Error('Atualize os lotes antes de emitir.');
+    ctx=await rwaBuildIssuanceContext(actor,lot,holderAddress);ctx.plan=[];
+    setStatus('Verificando cobertura e preparando transações agrupadas…');
+    await rwaEnsureConfig(ctx,setStatus);
+    await rwaCreateSeriesIfNeeded(ctx,setStatus);
+    await rwaMintIfNeeded(ctx,setStatus);
+    const data={creditId:rwaHex(ctx.creditId),creditReference:ctx.creditReference,creditTerms:ctx.creditTerms,termsCommitment:rwaHex(ctx.claim),mint:ctx.mint.toBase58(),seriesId:rwaHex(ctx.seriesId),originCommitment:rwaHex(ctx.origin),supplierActorId:actor.id,sourceLotId:lot.id,sourceEvidenceId:lot.evidenceId||null,sourceLotsContract:rwaHex(ctx.sourceContract),sourceChainId:11155111,initialHolder:holderAddress,economicStatus:'ACTIVE',priceRisk:'PENDING'};
+    const c=rwaContext(data),payer=ctx.payer,m=rwaMeta,conn=new solanaWeb3.Connection(RWA_SOLANA_RPC,'confirmed');
+    const listing=await conn.getAccountInfo(c.listing,'confirmed');
+    if(listing)throw Error('Este RWA já possui uma oferta. Use a tabela para gerenciar a venda.');
+    const ix=await rwaMarketIx('list_rwa',[m(payer,true,true),m(c.config),m(c.series),m(c.record),m(c.mint),m(rwaAta(payer,c.mint),true),m(c.listing,true),m(rwaAta(c.listing,c.mint),true),m(c.token),m(c.ata),m(c.system)],rwaU64(price));
+    await rwaQueueIx(ctx,[rwaCreateAta(payer,c.listing,c.mint),ix],'Publicar venda');
+    const count=await rwaExecutePlan(ctx,setStatus);
+    const rows=rwaCatalog(),item=rows.find(r=>r.seriesId===data.seriesId);
+    Object.assign(data,{id:item?.id||data.seriesId,createdAt:item?.createdAt||new Date().toISOString(),priceSol:rwaSol(price)});
+    if(item)Object.assign(item,data);else rows.push(data);rwaSaveCatalog(rows);
+    const map=rwaActorWallets();map[actor.id]=holderAddress;rwaSaveActorWallet_REMOVIDOs(map);
+    setStatus('RWA emitido e anunciado por '+rwaSol(price)+' SOL. '+count+' transação(ões) confirmada(s).');
+    toast('RWA emitido e colocado à venda.');
+    rwaRenderSelectedLot();
+  }catch(error){
+    console.error(error);
+    const done=ctx?.receipts||[];
+    setStatus((error.message||String(error))+(done.length?' '+done.length+' transação(ões) anteriores confirmadas. Ao tentar novamente, as etapas existentes serão consultadas e reaproveitadas. Assinaturas: '+done.map(r=>r.signature).join(', '):''));
+    toast('Operação interrompida. Confira a mensagem antes de tentar novamente.');
+  }finally{
+    rwaActionBusy=false;button.disabled=false;button.textContent=original;
+    try{await rwaRefreshTables();}catch(e){console.error(e);}
+  }
 }
+
 function rwaActorById(id){return ATORES.find(a=>String(a.id).toLowerCase()===String(id||"").toLowerCase())||null;}
 function rwaSelectedActor(){
   const select=document.getElementById("rwaSupplierActor");
@@ -6025,35 +6075,23 @@ async function rwaPrepareLineage(ctx,status){
  // Check the complete legacy inventory before sending migration transactions.
  const legacy=registry?.ready?null:await rwaLineageSeries(ctx,snapshot);
  const m=rwaMeta,manage=[m(ctx.config),m(ctx.payer,false,true),m(rwaLineagePda(),true)];
- if(!registry){status('Inicializando registro de cobertura…');await rwaSendIx([await rwaMarketIx('initialize_lineage',[m(ctx.payer,true,true),m(ctx.config),m(ctx.payer,false,true),m(rwaLineagePda(),true),m(solanaWeb3.SystemProgram.programId)])],'Inicialização da linhagem');registry=await rwaLineageRead();}
- const batches=[];let batch={ixs:[],ids:[]};
+ if(!registry){status('Inicializando registro de cobertura…');await rwaQueueIx(ctx,[await rwaMarketIx('initialize_lineage',[m(ctx.payer,true,true),m(ctx.config),m(ctx.payer,false,true),m(rwaLineagePda(),true),m(solanaWeb3.SystemProgram.programId)])],'Inicialização da linhagem');registry=ctx.plan?{ready:false,nodes:[],reservations:[]}:await rwaLineageRead();}
  for(const n of snapshot.nodes){
   const old=registry.nodes.find(x=>x.id===n.id);
   if(old){if(old.mask!==n.mask)throw Error('Linhagem registrada difere do Ethereum.');continue;}
   const body=rwaBytes(rwaLot256(n.id),rwaU32(n.parents.length),...n.parents.map(rwaLot256));
-  const ix=await rwaMarketIx('register_lineage_lot',manage,body);
-  if(!rwaLineageBatchFits([...batch.ixs,ix],ctx.payer)){
-    if(batch.ixs.length)batches.push(batch);
-    batch={ixs:[],ids:[]};
-    if(!rwaLineageBatchFits([ix],ctx.payer))throw Error('Registro do lote '+n.id+' excede o tamanho permitido para esta transação.');
-  }
-  batch.ixs.push(ix);batch.ids.push(n.id);
- }
- if(batch.ixs.length)batches.push(batch);
- for(let i=0;i<batches.length;i++){
-   const group=batches[i],label='Linhagem '+(i+1)+'/'+batches.length+' · lotes '+group.ids.join(', ');
-   status(label+' — uma assinatura para este grupo.');
-   await rwaSendIx(group.ixs,label);
+  await rwaQueueIx(ctx,[await rwaMarketIx('register_lineage_lot',manage,body)],'Registrar lote '+n.id);
+  registry.nodes.push({id:n.id,mask:n.mask});
  }
 
  if(!registry.ready){
-  for(const r of legacy){status('Reservando cobertura da série existente: lote '+r.id+'…');await rwaSendIx([await rwaMarketIx('adopt_lineage_series',[...manage,m(r.pubkey)],rwaLot256(r.id))],'Migração do RWA do lote '+r.id);}
+  for(const r of legacy){status('Reservando cobertura da série existente: lote '+r.id+'…');await rwaQueueIx(ctx,[await rwaMarketIx('adopt_lineage_series',[...manage,m(r.pubkey)],rwaLot256(r.id))],'Migração do RWA do lote '+r.id);}
   // Re-enumerate immediately before activation; new increment calls are blocked until ready.
   const latest=await rwaLineageSeries(ctx,snapshot);
   if(latest.map(x=>x.sid).sort().join()!==legacy.map(x=>x.sid).sort().join())throw Error('Inventário mudou durante a migração. Atualize antes de habilitar.');
-  await rwaSendIx([await rwaMarketIx('enable_lineage',manage,rwaU32(legacy.length))],'Ativação da trava de cobertura');
+  await rwaQueueIx(ctx,[await rwaMarketIx('enable_lineage',manage,rwaU32(legacy.length))],'Ativação da trava de cobertura');
  }
- registry=await rwaLineageRead();if(!registry?.ready)throw Error('Trava de cobertura ainda indisponível.');
+ if(ctx.plan){registry.ready=true;if(legacy)for(const r of legacy){if(!registry.reservations.some(x=>x.series===r.sid))registry.reservations.push({node:registry.nodes.findIndex(n=>n.id===r.id),issuer:r.issuer,series:r.sid});}}else registry=await rwaLineageRead();if(!registry?.ready)throw Error('Trava de cobertura ainda indisponível.');
  const index=registry.nodes.findIndex(n=>n.id===String(ctx.lotId));if(index<0)throw Error('Lote não registrado.');
  for(const r of registry.reservations){if(r.issuer!==rwaHex(ctx.actorId)||r.series===rwaHex(ctx.seriesId))continue;const j=r.node;
  if((registry.nodes[index].mask&(1n<<BigInt(j)))||(registry.nodes[j].mask&(1n<<BigInt(index))))throw Error('Emissão bloqueada: este emissor já possui crédito ativo no lote '+registry.nodes[j].id+' ou em sua linhagem.');}
@@ -6061,9 +6099,10 @@ async function rwaPrepareLineage(ctx,status){
 }
 async function rwaCreateSeriesIfNeeded(ctx,status){
  await rwaPrepareLineage(ctx,status);
+ if(ctx.plan)ctx.coreStart=ctx.plan.length;
  const conn=new solanaWeb3.Connection(RWA_SOLANA_RPC,'confirmed');const existing=await conn.getAccountInfo(ctx.series,'confirmed');if(existing){const d=await rwaDecode(existing,'Series',183);if(rwaHex(d.slice(40,72))!==rwaHex(ctx.actorId)||rwaHex(d.slice(72,104))!==rwaHex(ctx.origin)||rwaHex(d.slice(104,136))!==rwaHex(ctx.claim))throw Error('Este identificador de crédito já está vinculado a outro lote ou outros termos.');return;}
  const body=rwaBytes(new Uint8Array([2]),ctx.seriesId,ctx.actorId,ctx.origin,ctx.claim,rwaU64(ctx.sourceChainId),ctx.sourceContract,rwaU64(ctx.nonce),rwaI64(ctx.expiresAt),rwaLot256(ctx.lotId),ctx.creditId);
- const m=rwaMeta;await rwaSendIx([rwaInstruction('increment',[m(ctx.payer,true,true),m(ctx.config),m(ctx.payer,false,true),m(ctx.series,true),m(ctx.originLock,true),m(ctx.nonceRecord,true),m(solanaWeb3.SystemProgram.programId),m(rwaLineagePda(),true),m(ctx.creditLock,true)],body)],'Criação da série com reserva de cobertura');
+ const m=rwaMeta;await rwaQueueIx(ctx,[rwaInstruction('increment',[m(ctx.payer,true,true),m(ctx.config),m(ctx.payer,false,true),m(ctx.series,true),m(ctx.originLock,true),m(ctx.nonceRecord,true),m(solanaWeb3.SystemProgram.programId),m(rwaLineagePda(),true),m(ctx.creditLock,true)],body)],'Criação da série com reserva de cobertura');
 }
 
 function rwaDownloadCreditTerms(ctx){
