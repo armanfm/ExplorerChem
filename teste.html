@@ -5328,6 +5328,22 @@ async function renderWalletLedgerNotice(c,actorId,count,blockTag,active,panels){
  const note=document.getElementById('productPeriodNote');if(note)note.textContent='Consulta por carteira no bloco '+blockTag+'; consolidação por empresa indisponível nesta versão do contrato.';
 }
 
+async function stockHistoryReadRange(provider,address,iface,fromBlock,toBlock){
+ // Alguns RPCs omitem eventos quando recebem topics. Ler por endereço e
+ // decodificar localmente preserva também os consumos e emissões intermediários.
+ const raw=await provider.send('eth_getLogs',[{address,fromBlock:ethers.toQuantity(fromBlock),toBlock:ethers.toQuantity(toBlock)}]);
+ if(!Array.isArray(raw))throw Error('Resposta inválida ao consultar eventos do contrato.');
+ const events=[];
+ for(const log of raw){
+  if(log.removed||!igualHex(log.address,address))continue;
+  let parsed;try{parsed=iface.parseLog(log);}catch(_){continue;}
+  if(parsed?.name!=='ActorBalanceChanged')continue;
+  const blockNumber=Number(log.blockNumber),index=Number(log.logIndex);
+  if(!Number.isSafeInteger(blockNumber)||blockNumber<fromBlock||blockNumber>toBlock||log.logIndex==null||!Number.isSafeInteger(index)||!log.transactionHash)throw Error('Evento retornado sem identificação válida.');
+  events.push({...log,blockNumber,index,args:parsed.args});
+ }
+ return events;
+}
 async function stockHistoryStart(c,blockTag,active){
  // A primeira emissão só pode ocorrer após o registro de sua evidência.
  // Cabeçalhos antigos não exigem acesso ao estado histórico (archive).
@@ -5397,14 +5413,19 @@ function bindStockHistory(c,actorId,currentRows,blockTag,active){
     const lot=await c.lots.getLot(id,{blockTag});lots.set(String(id),lot);
     if(igualHex(lot.basisHash,basis))expectedLots.set(String(id),BigInt(await c.lots.balanceOf(actorId,id,{blockTag})));
    }
-   const read=async broad=>{
-    const logs=[];let cursor=lo,step=broad?250:2000;
+   let transactionLogs=new Map();
+   const read=async retry=>{
+    const logs=[];transactionLogs=new Map();let cursor=lo,step=retry?1000:10000;
     while(cursor<=blockTag){
      if(!active())throw Error('Consulta substituída por outra empresa.');
-     const end=Math.min(blockTag,cursor+step-1);status.textContent='Consultando blocos '+cursor+' a '+end+(broad?' · conferência completa':'')+'…';
+     const end=Math.min(blockTag,cursor+step-1);status.textContent='Consultando eventos completos · blocos '+cursor+' a '+end+'…';
      try{
-      const sets=broad?[await ledger.queryFilter(ledger.filters.ActorBalanceChanged(),cursor,end)]:await Promise.all([ledger.queryFilter(ledger.filters.ActorBalanceChanged(null,actorId,null),cursor,end),ledger.queryFilter(ledger.filters.ActorBalanceChanged(null,null,actorId),cursor,end)]);
-      logs.push(...sets.flat());cursor=end+1;
+      const events=await stockHistoryReadRange(c.provider,address,ledger.interface,cursor,end);
+      for(const event of events){
+       logs.push(event);
+       const txEvents=transactionLogs.get(event.transactionHash)||[];txEvents.push(event);transactionLogs.set(event.transactionHash,txEvents);
+      }
+      cursor=end+1;
      }catch(e){if(step<=1)throw e;step=Math.max(1,Math.floor(step/2));}
     }
     return logs.filter(l=>expectedLots.has(String(l.args.id))&&(igualHex(l.args.from,actorId)||igualHex(l.args.to,actorId)));
@@ -5417,10 +5438,10 @@ function bindStockHistory(c,actorId,currentRows,blockTag,active){
    if(differences.length||groups.some(g=>g.balance<0n))throw Error('Não foi possível reconciliar o histórico no bloco '+blockTag+'. Saldo reconstruído: '+actorKg(last)+'; saldo no contrato: '+actorKg(expected)+'. '+differences.join('; ')+(groups.some(g=>g.balance<0n)?' Há saldo intermediário negativo.':'')+' Nenhum gráfico parcial foi apresentado.');
    const names=new Map((typeof CLIENT_BALANCE_ACTORS==='undefined'?[]:CLIENT_BALANCE_ACTORS).map(a=>[String(a.actor_id||a.actorId||'').toLowerCase(),a.display_name||a.nome||a.actor_id]));
    const name=id=>names.get(String(id).toLowerCase())||id;
-   for(const g of groups){if(!active())return;const [block,receipt]=await Promise.all([c.provider.getBlock(g.block),c.provider.getTransactionReceipt(g.tx)]);if(!receipt||Number(receipt.status)!==1)throw Error('Transação não confirmada.');g.date=new Date(Number(block.timestamp)*1000).toLocaleString('pt-BR');
+   for(const g of groups){if(!active())return;const block=await c.provider.getBlock(g.block);if(!block)throw Error('Cabeçalho da movimentação indisponível.');g.date=new Date(Number(block.timestamp)*1000).toLocaleString('pt-BR');
     const peers=new Set(),origins=new Map(),destinations=new Map();
     const party=(id,target)=>{if(igualHex(id,ethers.ZeroHash))return;const label=igualHex(id,ethers.id('ExploreChem/OrderEscrow/v2'))?'Reserva do pedido':name(id);target.set(String(id).toLowerCase(),label);};
-    for(const l of receipt.logs){if(!igualHex(l.address,address))continue;let a;try{a=ledger.interface.parseLog(l)?.args;}catch(_){}if(!a)continue;
+    for(const l of transactionLogs.get(g.tx)||[]){const a=l.args;
      const id=String(a.id);if(!lots.has(id))lots.set(id,await c.lots.getLot(id,{blockTag}));
      if(!igualHex(lots.get(id).basisHash,basis))continue;
      party(a.from,origins);party(a.to,destinations);
