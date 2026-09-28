@@ -5328,10 +5328,26 @@ async function renderWalletLedgerNotice(c,actorId,count,blockTag,active,panels){
  const note=document.getElementById('productPeriodNote');if(note)note.textContent='Consulta por carteira no bloco '+blockTag+'; consolidação por empresa indisponível nesta versão do contrato.';
 }
 
+async function stockHistoryStart(provider,address,blockTag,active){
+ if(await provider.getCode(address,blockTag)==='0x')throw Error('Contrato ausente no bloco consultado.');
+ let low=0,high=blockTag;
+ while(low<high){
+  if(!active())throw Error('Consulta substituída por outra empresa.');
+  const mid=Math.floor((low+high)/2),code=await provider.getCode(address,mid);
+  if(code==='0x')low=mid+1;else high=mid;
+ }
+ return low;
+}
+function stockHistoryDifferences(groups,expected){
+ const balances=new Map();
+ for(const group of groups)for(const item of group.items)balances.set(item.id,(balances.get(item.id)||0n)+item.inc-item.out);
+ return [...expected].filter(([id,value])=>(balances.get(id)||0n)!==value).map(([id,value])=>'Lote '+id+': histórico '+actorKg(balances.get(id)||0n)+', contrato '+actorKg(value));
+}
 function historyGroups(logs,actorId){
  const groups=new Map(),seen=new Set();
- for(const log of [...logs].sort((a,b)=>a.blockNumber-b.blockNumber||a.index-b.index)){
-  const key=log.transactionHash+':'+log.index;if(seen.has(key))continue;seen.add(key);
+ for(const log of [...logs].sort((a,b)=>a.blockNumber-b.blockNumber||Number(a.index??a.logIndex)-Number(b.index??b.logIndex))){
+  const index=log.index??log.logIndex;if(index==null)throw Error('Evento sem índice de log; consulta incompleta.');
+  const key=log.transactionHash+':'+index;if(seen.has(key))continue;seen.add(key);
   const a=log.args,inc=igualHex(a.to,actorId)?BigInt(a.value):0n,out=igualHex(a.from,actorId)?BigInt(a.value):0n;
   if(!inc&&!out)continue;
   let g=groups.get(log.transactionHash);if(!g){g={tx:log.transactionHash,block:log.blockNumber,incoming:0n,outgoing:0n,items:[]};groups.set(g.tx,g);}
@@ -5363,28 +5379,34 @@ function bindStockHistory(c,actorId,currentRows,blockTag,active){
   const button=host.querySelector('[data-history-load]'),status=host.querySelector('[data-history-status]'),result=host.querySelector('[data-history-result]');button.disabled=true;
   try{
    const address=await c.lots.getAddress(),ledger=new ethers.Contract(address,['event ActorBalanceChanged(address indexed operator,bytes32 indexed from,bytes32 indexed to,uint256 id,uint256 value)'],c.provider);
-   status.textContent='Localizando a primeira evidência dos lotes…';
-   const count=await c.lots.lotCount({blockTag});
-   let lo=blockTag;
-   if(count>0n){
-    const firstLot=await c.lots.getLot(1n,{blockTag});
-    const firstEvidence=await c.registry.getEvidence(firstLot.evidenceId,{blockTag});
-    const timestamp=Number(firstEvidence.createdAt);
-    if(!Number.isSafeInteger(timestamp)||timestamp<=0)throw Error('Data da primeira evidência indisponível.');
-    let low=0,high=blockTag;
-    while(low<high){if(!active())return;const mid=Math.floor((low+high)/2),b=await c.provider.getBlock(mid);if(!b)throw Error('Cabeçalho de bloco indisponível: '+mid);if(Number(b.timestamp)<timestamp)low=mid+1;else high=mid;}
-    lo=Math.max(0,low-1);
-   }
-   const logs=[];let cursor=lo,step=2000;
-   while(cursor<=blockTag){if(!active())return;const end=Math.min(blockTag,cursor+step-1);status.textContent='Consultando blocos '+cursor+' a '+end+'…';
-    try{const sets=await Promise.all([ledger.queryFilter(ledger.filters.ActorBalanceChanged(null,actorId,null),cursor,end),ledger.queryFilter(ledger.filters.ActorBalanceChanged(null,null,actorId),cursor,end)]);logs.push(...sets.flat());cursor=end+1;}
-    catch(e){if(step<=1)throw e;step=Math.max(1,Math.floor(step/2));}
-   }
+   status.textContent='Localizando a criação do contrato de lotes…';
+   const lo=await stockHistoryStart(c.provider,address,blockTag,active);
    const basis=ethers.id('ExploreChem/MaterialMass/dry/mg/v1'),lots=new Map();
-   for(const log of logs){if(!active())return;const id=String(log.args.id);if(!lots.has(id))lots.set(id,await c.lots.getLot(id,{blockTag}));}
-   const material=logs.filter(l=>igualHex(lots.get(String(l.args.id)).basisHash,basis)),groups=historyGroups(material,actorId);
-   const expected=currentRows.filter(r=>igualHex(r.lot.basisHash,basis)).reduce((v,r)=>v+BigInt(r.balance),0n),last=groups.length?groups[groups.length-1].balance:0n;
-   if(last!==expected||groups.some(g=>g.balance<0n))throw Error('O histórico retornado pelo RPC não confere com o saldo atual. Nenhum gráfico parcial foi apresentado.');
+   const count=BigInt(await c.lots.lotCount({blockTag}));
+   const expectedLots=new Map();
+   for(let id=1n;id<=count;id++){
+    if(!active())return;
+    const lot=await c.lots.getLot(id,{blockTag});lots.set(String(id),lot);
+    if(igualHex(lot.basisHash,basis))expectedLots.set(String(id),BigInt(await c.lots.balanceOf(actorId,id,{blockTag})));
+   }
+   const read=async broad=>{
+    const logs=[];let cursor=lo,step=broad?250:2000;
+    while(cursor<=blockTag){
+     if(!active())throw Error('Consulta substituída por outra empresa.');
+     const end=Math.min(blockTag,cursor+step-1);status.textContent='Consultando blocos '+cursor+' a '+end+(broad?' · conferência completa':'')+'…';
+     try{
+      const sets=broad?[await ledger.queryFilter(ledger.filters.ActorBalanceChanged(),cursor,end)]:await Promise.all([ledger.queryFilter(ledger.filters.ActorBalanceChanged(null,actorId,null),cursor,end),ledger.queryFilter(ledger.filters.ActorBalanceChanged(null,null,actorId),cursor,end)]);
+      logs.push(...sets.flat());cursor=end+1;
+     }catch(e){if(step<=1)throw e;step=Math.max(1,Math.floor(step/2));}
+    }
+    return logs.filter(l=>expectedLots.has(String(l.args.id))&&(igualHex(l.args.from,actorId)||igualHex(l.args.to,actorId)));
+   };
+   let material=await read(false),groups=historyGroups(material,actorId),differences=stockHistoryDifferences(groups,expectedLots);
+   if(differences.length||groups.some(g=>g.balance<0n)){
+    material=await read(true);groups=historyGroups(material,actorId);differences=stockHistoryDifferences(groups,expectedLots);
+   }
+   const expected=[...expectedLots.values()].reduce((sum,value)=>sum+value,0n),last=groups.length?groups[groups.length-1].balance:0n;
+   if(differences.length||groups.some(g=>g.balance<0n))throw Error('Não foi possível reconciliar o histórico no bloco '+blockTag+'. Saldo reconstruído: '+actorKg(last)+'; saldo no contrato: '+actorKg(expected)+'. '+differences.join('; ')+(groups.some(g=>g.balance<0n)?' Há saldo intermediário negativo.':'')+' Nenhum gráfico parcial foi apresentado.');
    const names=new Map((typeof CLIENT_BALANCE_ACTORS==='undefined'?[]:CLIENT_BALANCE_ACTORS).map(a=>[String(a.actor_id||a.actorId||'').toLowerCase(),a.display_name||a.nome||a.actor_id]));
    const name=id=>names.get(String(id).toLowerCase())||id;
    for(const g of groups){if(!active())return;const [block,receipt]=await Promise.all([c.provider.getBlock(g.block),c.provider.getTransactionReceipt(g.tx)]);if(!receipt||Number(receipt.status)!==1)throw Error('Transação não confirmada.');g.date=new Date(Number(block.timestamp)*1000).toLocaleString('pt-BR');
