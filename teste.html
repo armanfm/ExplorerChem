@@ -5337,10 +5337,10 @@ async function stockHistoryReadRange(provider,address,iface,fromBlock,toBlock){
  for(const log of raw){
   if(log.removed||!igualHex(log.address,address))continue;
   let parsed;try{parsed=iface.parseLog(log);}catch(_){continue;}
-  if(parsed?.name!=='ActorBalanceChanged')continue;
+  if(!['ActorBalanceChanged','ProcessingDifference'].includes(parsed?.name))continue;
   const blockNumber=Number(log.blockNumber),index=Number(log.logIndex);
   if(!Number.isSafeInteger(blockNumber)||blockNumber<fromBlock||blockNumber>toBlock||log.logIndex==null||!Number.isSafeInteger(index)||!log.transactionHash)throw Error('Evento retornado sem identificação válida.');
-  events.push({...log,blockNumber,index,args:parsed.args});
+  events.push({...log,blockNumber,index,eventName:parsed.name,args:parsed.args,raw:log});
  }
  return events;
 }
@@ -5390,7 +5390,7 @@ function bindHistoryPoints(result,groups){
  const detail=result.querySelector('[data-history-detail]');
  const show=index=>{const g=groups[index];if(!g)return;const esc=escaparHtml;
   result.querySelectorAll('[data-history-point]').forEach(point=>{const selected=Number(point.dataset.historyPoint)===index;point.setAttribute('aria-pressed',String(selected));point.setAttribute('fill',selected?'#f1d590':'#91d1c9');point.setAttribute('r',selected?'10':'8');});
-  detail.innerHTML='<section class="panel pad"><h3>'+esc(g.label)+'</h3><p>'+esc(g.date)+'</p><p style="overflow-wrap:anywhere"><strong>Origem:</strong> '+(g.origins.length?g.origins.map(esc).join(' · '):'Emissão de material')+'</p><p style="overflow-wrap:anywhere"><strong>Destino:</strong> '+(g.destinations.length?g.destinations.map(esc).join(' · '):'Consumo sem crédito a outra empresa nesta transação')+'</p><p><strong>Entradas:</strong> '+actorKg(g.incoming)+' · <strong>Saídas:</strong> '+actorKg(g.outgoing)+'</p><p><strong>Saldo após:</strong> '+actorKg(g.balance)+'</p><p>'+g.items.map(i=>'Lote '+esc(i.id)+': '+(i.out?'−'+actorKg(i.out):'')+(i.inc?' +'+actorKg(i.inc):'')).join('<br>')+'</p><a target="_blank" rel="noopener noreferrer" href="https://sepolia.etherscan.io/tx/'+encodeURIComponent(g.tx)+'">Ver transação na blockchain</a></section>';
+  detail.innerHTML='<section class="panel pad"><h3>'+esc(g.label)+'</h3><p>'+esc(g.date)+'</p><p style="overflow-wrap:anywhere"><strong>Origem:</strong> '+(g.origins.length?g.origins.map(esc).join(' · '):'Emissão de material')+'</p><p style="overflow-wrap:anywhere"><strong>Destino:</strong> '+(g.destinations.length?g.destinations.map(esc).join(' · '):'Consumo sem crédito a outra empresa nesta transação')+'</p><p><strong>Entradas:</strong> '+actorKg(g.incoming)+' · <strong>Saídas:</strong> '+actorKg(g.outgoing)+'</p><p><strong>Perda na transformação:</strong> '+actorKg(g.loss||0n)+'</p><p><strong>Saldo após:</strong> '+actorKg(g.balance)+'</p><p>'+g.items.map(i=>'Lote '+esc(i.id)+': '+(i.out?'−'+actorKg(i.out):'')+(i.inc?' +'+actorKg(i.inc):'')).join('<br>')+'</p><a target="_blank" rel="noopener noreferrer" href="https://sepolia.etherscan.io/tx/'+encodeURIComponent(g.tx)+'">Ver transação na blockchain</a></section>';
  };
  result.querySelectorAll('[data-history-point]').forEach(point=>{point.setAttribute('aria-pressed','false');point.onclick=()=>show(Number(point.dataset.historyPoint));point.onkeydown=event=>{if(event.key==='Enter'||event.key===' '){event.preventDefault();show(Number(point.dataset.historyPoint));}};});
 }
@@ -5402,9 +5402,15 @@ function bindStockHistory(c,actorId,currentRows,blockTag,active){
   if(running||done||!active())return;running=true;
   const button=host.querySelector('[data-history-load]'),status=host.querySelector('[data-history-status]'),result=host.querySelector('[data-history-result]');button.disabled=true;
   try{
-   const address=await c.lots.getAddress(),ledger=new ethers.Contract(address,['event ActorBalanceChanged(address indexed operator,bytes32 indexed from,bytes32 indexed to,uint256 id,uint256 value)'],c.provider);
+   const address=await c.lots.getAddress(),ledger=new ethers.Contract(address,EXPLORECHEM_LOTS_ABI,c.provider);
    status.textContent='Localizando o início das emissões…';
-   const lo=await stockHistoryStart(c,blockTag,active);
+   const cacheKey='explorechem:history:v16:'+String((await c.provider.getNetwork()).chainId)+':'+address.toLowerCase();
+   let saved=null;try{saved=JSON.parse(localStorage.getItem(cacheKey));}catch(_){}
+   if(saved){
+    try{const checkpoint=await c.provider.getBlock(saved.to);if(!Number.isSafeInteger(saved.lo)||saved.lo<0||saved.lo>saved.to||saved.to>blockTag||!Array.isArray(saved.logs)||!igualHex(checkpoint?.hash,saved.hash))saved=null;}catch(_){saved=null;}
+   }
+   const lo=saved?saved.lo:await stockHistoryStart(c,blockTag,active);
+   let pendingCache=null;
    const basis=ethers.id('ExploreChem/MaterialMass/dry/mg/v1'),lots=new Map();
    const count=BigInt(await c.lots.lotCount({blockTag}));
    const expectedLots=new Map();
@@ -5415,20 +5421,21 @@ function bindStockHistory(c,actorId,currentRows,blockTag,active){
    }
    let transactionLogs=new Map();
    const read=async retry=>{
-    const logs=[];transactionLogs=new Map();let cursor=lo,step=retry?1000:10000;
+    const logs=[];transactionLogs=new Map();let cursor=saved&&!retry?saved.to+1:lo,step=retry?1000:10000;
+    const rawLogs=saved&&!retry?[...saved.logs]:[];
+    const collect=events=>{for(const event of events){logs.push(event);const txEvents=transactionLogs.get(event.transactionHash)||[];txEvents.push(event);transactionLogs.set(event.transactionHash,txEvents);}};
+    if(rawLogs.length)collect(await stockHistoryReadRange({send:async()=>rawLogs},address,ledger.interface,lo,saved.to));
     while(cursor<=blockTag){
      if(!active())throw Error('Consulta substituída por outra empresa.');
-     const end=Math.min(blockTag,cursor+step-1);status.textContent='Consultando eventos completos · blocos '+cursor+' a '+end+'…';
+     const end=Math.min(blockTag,cursor+step-1);status.textContent=saved&&!retry?'Atualizando novas movimentações…':'Recuperando movimentações da empresa…';
      try{
       const events=await stockHistoryReadRange(c.provider,address,ledger.interface,cursor,end);
-      for(const event of events){
-       logs.push(event);
-       const txEvents=transactionLogs.get(event.transactionHash)||[];txEvents.push(event);transactionLogs.set(event.transactionHash,txEvents);
-      }
+      collect(events);rawLogs.push(...events.map(e=>e.raw));
       cursor=end+1;
      }catch(e){if(step<=1)throw e;step=Math.max(1,Math.floor(step/2));}
     }
-    return logs.filter(l=>expectedLots.has(String(l.args.id))&&(igualHex(l.args.from,actorId)||igualHex(l.args.to,actorId)));
+    pendingCache={lo,to:blockTag,logs:rawLogs};
+    return logs.filter(l=>l.eventName==='ActorBalanceChanged'&&expectedLots.has(String(l.args.id))&&(igualHex(l.args.from,actorId)||igualHex(l.args.to,actorId)));
    };
    let material=await read(false),groups=historyGroups(material,actorId),differences=stockHistoryDifferences(groups,expectedLots);
    if(differences.length||groups.some(g=>g.balance<0n)){
@@ -5436,12 +5443,15 @@ function bindStockHistory(c,actorId,currentRows,blockTag,active){
    }
    const expected=[...expectedLots.values()].reduce((sum,value)=>sum+value,0n),last=groups.length?groups[groups.length-1].balance:0n;
    if(differences.length||groups.some(g=>g.balance<0n))throw Error('Não foi possível reconciliar o histórico no bloco '+blockTag+'. Saldo reconstruído: '+actorKg(last)+'; saldo no contrato: '+actorKg(expected)+'. '+differences.join('; ')+(groups.some(g=>g.balance<0n)?' Há saldo intermediário negativo.':'')+' Nenhum gráfico parcial foi apresentado.');
+   const tip=await c.provider.getBlock(blockTag);if(!tip?.hash)throw Error('Bloco de referência indisponível.');
+   pendingCache.hash=tip.hash;try{localStorage.setItem(cacheKey,JSON.stringify(pendingCache));}catch(_){}
    const names=new Map((typeof CLIENT_BALANCE_ACTORS==='undefined'?[]:CLIENT_BALANCE_ACTORS).map(a=>[String(a.actor_id||a.actorId||'').toLowerCase(),a.display_name||a.nome||a.actor_id]));
    const name=id=>names.get(String(id).toLowerCase())||id;
    for(const g of groups){if(!active())return;const block=await c.provider.getBlock(g.block);if(!block)throw Error('Cabeçalho da movimentação indisponível.');g.date=new Date(Number(block.timestamp)*1000).toLocaleString('pt-BR');
     const peers=new Set(),origins=new Map(),destinations=new Map();
     const party=(id,target)=>{if(igualHex(id,ethers.ZeroHash))return;const label=igualHex(id,ethers.id('ExploreChem/OrderEscrow/v2'))?'Reserva do pedido':name(id);target.set(String(id).toLowerCase(),label);};
     for(const l of transactionLogs.get(g.tx)||[]){const a=l.args;
+     if(l.eventName==='ProcessingDifference'){if(igualHex(a.basisHash,basis)){g.loss=(g.loss||0n)+BigInt(a.difference??a[4]);}continue;}
      const id=String(a.id);if(!lots.has(id))lots.set(id,await c.lots.getLot(id,{blockTag}));
      if(!igualHex(lots.get(id).basisHash,basis))continue;
      party(a.from,origins);party(a.to,destinations);
@@ -5452,9 +5462,9 @@ function bindStockHistory(c,actorId,currentRows,blockTag,active){
    }
    if(!active()||!host.isConnected)return;
    const esc=escaparHtml;
-   result.innerHTML='<section class="panel pad"><span class="section-eyebrow">EVOLUÇÃO DO SALDO MATERIAL</span><h2>'+actorKg(last)+'</h2><p>Saldo disponível após cada transação. Consumo e emissão na mesma transação são contabilizados juntos.</p>'+historySvg(groups)+'<p>Toque ou clique em uma bolinha para ver a movimentação.</p><div data-history-detail aria-live="polite"></div></section><section class="panel pad"><h2>Movimentações confirmadas</h2><div class="scrollx"><table><thead><tr><th>Data</th><th>Movimentação / empresa envolvida</th><th>Lotes</th><th>Entradas</th><th>Saídas</th><th>Saldo após</th><th>Comprovante</th></tr></thead><tbody>'+[...groups].reverse().map(g=>'<tr><td>'+esc(g.date)+'</td><td>'+esc(g.label)+(g.peers?'<br><small style="overflow-wrap:anywhere">'+esc(g.peers)+'</small>':'')+'</td><td>'+g.items.map(i=>'Lote '+esc(i.id)+': '+(i.out?'−'+actorKg(i.out):'')+(i.inc?' +'+actorKg(i.inc):'')).join('<br>')+'</td><td>+'+actorKg(g.incoming)+'</td><td>−'+actorKg(g.outgoing)+'</td><td>'+actorKg(g.balance)+'</td><td><a target="_blank" rel="noopener noreferrer" href="https://sepolia.etherscan.io/tx/'+g.tx+'">Ver transação</a></td></tr>').join('')+'</tbody></table></div>'+(groups.length?'':'<p>Nenhuma movimentação de massa material encontrada.</p>')+'<p class="ec-note">Reservas e liberações alteram o saldo disponível. Saída ou consumo não significa necessariamente venda. Os elementos estão contidos na massa material e não são somados novamente.</p></section>';
+   result.innerHTML='<section class="panel pad"><span class="section-eyebrow">EVOLUÇÃO DO SALDO MATERIAL</span><h2>'+actorKg(last)+'</h2><p>Saldo disponível após cada transação. A perda já está refletida no saldo e não é descontada novamente.</p>'+historySvg(groups)+'<p>Toque ou clique em uma bolinha para ver a movimentação.</p><div data-history-detail aria-live="polite"></div></section><section class="panel pad"><h2>Movimentações confirmadas</h2><div class="scrollx"><table><thead><tr><th>Data</th><th>Movimentação / empresa envolvida</th><th>Lotes</th><th>Entradas</th><th>Saídas</th><th>Perda na transformação</th><th>Saldo após</th><th>Comprovante</th></tr></thead><tbody>'+[...groups].reverse().map(g=>'<tr><td>'+esc(g.date)+'</td><td>'+esc(g.label)+(g.peers?'<br><small style="overflow-wrap:anywhere">'+esc(g.peers)+'</small>':'')+'</td><td>'+g.items.map(i=>'Lote '+esc(i.id)+': '+(i.out?'−'+actorKg(i.out):'')+(i.inc?' +'+actorKg(i.inc):'')).join('<br>')+'</td><td>+'+actorKg(g.incoming)+'</td><td>−'+actorKg(g.outgoing)+'</td><td>'+actorKg(g.loss||0n)+'</td><td>'+actorKg(g.balance)+'</td><td><a target="_blank" rel="noopener noreferrer" href="https://sepolia.etherscan.io/tx/'+g.tx+'">Ver transação</a></td></tr>').join('')+'</tbody></table></div>'+(groups.length?'':'<p>Nenhuma movimentação de massa material encontrada.</p>')+'<p class="ec-note">Reservas e liberações alteram o saldo disponível. Saída ou consumo não significa necessariamente venda. Os elementos estão contidos na massa material e não são somados novamente.</p></section>';
    bindHistoryPoints(result,groups);
-   status.textContent='Histórico completo desde o bloco '+lo+' até '+blockTag+' · saldo conferido com o contrato.';done=true;button.hidden=true;
+   status.textContent=groups.length+' movimentações · saldo conferido com o contrato · histórico salvo neste navegador.';done=true;button.hidden=true;
   }catch(e){if(active()){result.replaceChildren();console.error('ExploreChem histórico',{stage:status.textContent,error:e});status.textContent='Histórico indisponível ('+status.textContent+'): '+(e.info?.error?.message||e.error?.message||e.shortMessage||e.message||String(e));button.textContent='Tentar novamente';}}
   finally{running=false;if(active())button.disabled=false;}
  };
