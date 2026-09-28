@@ -5328,15 +5328,23 @@ async function renderWalletLedgerNotice(c,actorId,count,blockTag,active,panels){
  const note=document.getElementById('productPeriodNote');if(note)note.textContent='Consulta por carteira no bloco '+blockTag+'; consolidação por empresa indisponível nesta versão do contrato.';
 }
 
-async function stockHistoryStart(provider,address,blockTag,active){
- if(await provider.getCode(address,blockTag)==='0x')throw Error('Contrato ausente no bloco consultado.');
+async function stockHistoryStart(c,blockTag,active){
+ // A primeira emissão só pode ocorrer após o registro de sua evidência.
+ // Cabeçalhos antigos não exigem acesso ao estado histórico (archive).
+ const count=BigInt(await c.lots.lotCount({blockTag}));
+ if(count===0n)return blockTag;
+ const first=await c.lots.getLot(1n,{blockTag});
+ const evidence=await c.registry.getEvidence(first.evidenceId,{blockTag});
+ const timestamp=Number(evidence.createdAt);
+ if(!Number.isSafeInteger(timestamp)||timestamp<=0)throw Error('Data da primeira evidência indisponível.');
  let low=0,high=blockTag;
  while(low<high){
   if(!active())throw Error('Consulta substituída por outra empresa.');
-  const mid=Math.floor((low+high)/2),code=await provider.getCode(address,mid);
-  if(code==='0x')low=mid+1;else high=mid;
+  const mid=Math.floor((low+high)/2),block=await c.provider.getBlock(mid);
+  if(!block)throw Error('Cabeçalho de bloco indisponível: '+mid);
+  if(Number(block.timestamp)<timestamp)low=mid+1;else high=mid;
  }
- return low;
+ return Math.max(0,low-1);
 }
 function stockHistoryDifferences(groups,expected){
  const balances=new Map();
@@ -5379,8 +5387,8 @@ function bindStockHistory(c,actorId,currentRows,blockTag,active){
   const button=host.querySelector('[data-history-load]'),status=host.querySelector('[data-history-status]'),result=host.querySelector('[data-history-result]');button.disabled=true;
   try{
    const address=await c.lots.getAddress(),ledger=new ethers.Contract(address,['event ActorBalanceChanged(address indexed operator,bytes32 indexed from,bytes32 indexed to,uint256 id,uint256 value)'],c.provider);
-   status.textContent='Localizando a criação do contrato de lotes…';
-   const lo=await stockHistoryStart(c.provider,address,blockTag,active);
+   status.textContent='Localizando o início das emissões…';
+   const lo=await stockHistoryStart(c,blockTag,active);
    const basis=ethers.id('ExploreChem/MaterialMass/dry/mg/v1'),lots=new Map();
    const count=BigInt(await c.lots.lotCount({blockTag}));
    const expectedLots=new Map();
