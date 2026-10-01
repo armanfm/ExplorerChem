@@ -1,0 +1,8 @@
+{
+  "publicKey": "",
+  "supabaseUrl": "https://mnmflnqmohgsxgavwenn.supabase.co",
+  "secretNamespace": "main",
+  "chainSelectorName": "ethereum-testnet-sepolia",
+  "contractAddress": "0x692234073Aa3581B7A6F63C56D8ad56C8eFCE8Df",
+  "gasLimit": "3000000"
+}

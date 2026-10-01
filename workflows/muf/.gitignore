@@ -1,0 +1,14 @@
+*.env
+
+.env
+.env.*
+secrets.yaml
+secrets.yml
+secrets.*.yaml
+secrets.*.yml
+node_modules/
+.git/
+*.pem
+*.key
+*-keypair.json
+*.bak
