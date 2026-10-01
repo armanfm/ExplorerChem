@@ -280,7 +280,7 @@ AI-assisted tools, including ChatGPT, Claude and Manus, supported implementation
 
 - **Armando Freire — Technical Lead:** architecture, Solidity contracts, Rust/Anchor program, Chainlink CRE workflows, integration, testing and technical documentation.
 - **Jéssica — Product Lead:** product direction, requirements, refinement, documentation, positioning and presentation.
-- **Adriana Tourinho — Solidity Developer & Security Reviewer:** Solidity smart contract development, internal code auditing and support for team coordination using Scrum practices.
+- **Adriana Tourinho — Technical & Business Mentor:** technical and business guidance, hands-on support across the project, Solidity smart contract development, internal code auditing and support for team coordination using Scrum practices.
 
 ## License
 
