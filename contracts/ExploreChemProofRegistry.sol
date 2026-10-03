@@ -13,10 +13,45 @@ interface IReceiver is IERC165 {
 
 /// @title ExploreChem modular proof registry
 /// @notice Anchors one immutable evidence commitment and independent calculation proofs
-///         produced by separately authorized Chainlink CRE/TEE workflows.
+///         produced by separately authorized Chainlink CRE workflows.
 /// @dev Matching and correlation remain private and off-chain. There is no MATCHED state.
 ///      Each workflow can publish only the proof type assigned to its authenticated workflow ID.
-import "./ExploreChemLots.sol";
+/// @notice Required ABI for the new E1 Lots deployment (not compatible with Lots v1).
+interface IExploreChemLotsE1 {
+    enum LotState { NONE, ACTIVE, IN_ESCROW, ENCUMBERED, CONSUMED }
+    struct Lot {
+        bytes32 commitment;
+        bytes32 holder;
+        bytes32 operationId;
+        bytes32 proofId;
+        bytes32 mufProofId;
+        uint64 createdAt;
+        LotState state;
+    }
+    struct OutputLot {
+        bytes32 lotId;
+        bytes32 commitment;
+        bytes32 recipient;
+    }
+    struct OperationReport {
+        uint8 kind; // 1 INITIAL; 2 TRANSFORM
+        bytes32 operationId;
+        bytes32 holder;
+        bytes32[] inputLotIds;
+        OutputLot[] outputs;
+    }
+    function registry() external view returns (address);
+    function getLot(bytes32 lotId) external view returns (Lot memory);
+    /// @dev Must accept only registry; reject replay, duplicate inputs, unusable
+    /// ancestors, non-ACTIVE inputs and existing outputs; consume whole inputs.
+    /// Proof references are explicit so Lots can implement cascading invalidation.
+    function recordOperation(
+        bytes32 evidenceId,
+        bytes32 proofId,
+        bytes32 mufProofId,
+        OperationReport calldata op
+    ) external;
+}
 import "./ExploreChemActorRegistry.sol";
 
 contract ExploreChemProofRegistry is IReceiver {
@@ -32,7 +67,7 @@ contract ExploreChemProofRegistry is IReceiver {
     enum CheckStatus {
         NONE,
         PENDING,
-        COMPLIANT,
+        CALCULATED,
         DIVERGENT,
         NOT_ATTESTED
     }
@@ -73,7 +108,7 @@ contract ExploreChemProofRegistry is IReceiver {
         uint64 createdAt;
     }
 
-    /// @notice Static report emitted by exactly one specialized CRE/TEE workflow.
+    /// @notice Static report emitted by exactly one specialized CRE workflow.
     /// @dev `abi.encode(ProofReport)` contains ten ABI words.
     ///      `evidenceHash`, `committedHash`, `inputCommitmentHash`, and
     ///      `methodologyHash` are mandatory and cannot be zero.
@@ -91,6 +126,7 @@ contract ExploreChemProofRegistry is IReceiver {
     }
 
     uint256 public constant REPORT_LENGTH = 10 * 32;
+    uint8 public constant registryVersion = 3;
 
     // ---------------------------------------------------------------------
     // State
@@ -123,7 +159,6 @@ contract ExploreChemProofRegistry is IReceiver {
     error InvalidHash();
     error InvalidProofType(uint8 proofType);
     error InvalidCheckStatus(uint8 status);
-    error InvalidReportLength(uint256 received);
     error InvalidMetadataLength(uint256 received);
     error InvalidForwarder(address caller, address expected);
     error WorkflowNotConfigured(uint8 proofType);
@@ -269,24 +304,30 @@ contract ExploreChemProofRegistry is IReceiver {
     // ---------------------------------------------------------------------
 
     /// @inheritdoc IReceiver
-    /// @notice Legacy 320-byte reports: MUF or non-COMPLIANT ELEMENTAL only.
-    /// @dev ELEMENTAL COMPLIANT uses abi.encode(ReportV2), including its token action.
+    /// @notice Static reports remain supported for MUF and unsuccessful ELEMENTAL.
+    /// @dev Successful ELEMENTAL requires canonical abi.encode(ReportV3).
+    /// No lot opening, mass, component identifier or salt belongs in this report.
     function onReport(bytes calldata metadata, bytes calldata report) external override nonReentrant {
         if (msg.sender != forwarder) revert InvalidForwarder(msg.sender, forwarder);
         ProofReport memory proof;
-        ExploreChemLots.TokenAction memory action;
+        IExploreChemLotsE1.OperationReport memory op;
+        bool hasEnvelope;
         if (report.length == REPORT_LENGTH) {
             proof = abi.decode(report, (ProofReport));
-            if (proof.proofType == PROOF_ELEMENTAL && proof.status == uint8(CheckStatus.COMPLIANT)) {
-                revert TokenReportRequired();
+            if (proof.proofType == PROOF_ELEMENTAL && proof.status == uint8(CheckStatus.CALCULATED)) {
+                revert OperationReportRequired();
             }
         } else {
-            ReportV2 memory envelope = abi.decode(report, (ReportV2));
-            if (envelope.version != 2 || envelope.chainId != block.chainid || envelope.registry != address(this)) {
+            ReportV3 memory envelope = abi.decode(report, (ReportV3));
+            if (envelope.version != 3 || envelope.chainId != block.chainid || envelope.registry != address(this)) {
                 revert InvalidReportDomain();
             }
+            // Reject trailing payloads and noncanonical encodings. This is not
+            // a secrecy guarantee: callers must never submit private openings.
+            if (keccak256(report) != keccak256(abi.encode(envelope))) revert InvalidReportEncoding();
             proof = envelope.proof;
-            action = envelope.action;
+            op = envelope.op;
+            hasEnvelope = true;
         }
         uint8 proofType = _decodeProofType(proof.proofType);
         CheckStatus status = _decodeFinalStatus(proof.status);
@@ -294,13 +335,108 @@ contract ExploreChemProofRegistry is IReceiver {
         if (expected == bytes32(0)) revert WorkflowNotConfigured(proofType);
         bytes32 workflowId = _readWorkflowId(metadata);
         if (workflowId != expected) revert InvalidWorkflowId(workflowId, expected);
-        _anchorProof(proof, proofType, status, workflowId);
-        if (proofType == PROOF_ELEMENTAL && status == CheckStatus.COMPLIANT) {
-            if (address(lotsContract) == address(0)) revert LotsNotConfigured();
-            lotsContract.processTokenAction(proof.evidenceId, proof.proofId, action);
-        } else if (action.kind != ExploreChemLots.ActionKind.NONE || action.inputs.length != 0 || action.outputs.length != 0 || action.consumedComponents.length != 0) {
-            revert InvalidTokenAction();
+
+        if (proofType == PROOF_ELEMENTAL && status == CheckStatus.CALCULATED) {
+            bytes32 mufId = _currentMuf(proof.evidenceId);
+            _validateOperation(proof.evidenceId, op);
+            bytes32 calculated = _operationCommitment(proof.evidenceId, mufId, op);
+            if (proof.inputCommitmentHash != calculated) {
+                revert InputCommitmentMismatch(calculated, proof.inputCommitmentHash);
+            }
+            _anchorProof(proof, proofType, status, workflowId);
+            usedOperations[op.operationId] = true;
+            // A Lots revert rolls back both the proof and usedOperations.
+            lotsContract.recordOperation(proof.evidenceId, proof.proofId, mufId, op);
+        } else {
+            if (hasEnvelope && !_emptyOperation(op)) revert InvalidOperation();
+            _anchorProof(proof, proofType, status, workflowId);
         }
+    }
+
+    function _emptyOperation(IExploreChemLotsE1.OperationReport memory op) internal pure returns (bool) {
+        return op.kind == 0 && op.operationId == bytes32(0) && op.holder == bytes32(0)
+            && op.inputLotIds.length == 0 && op.outputs.length == 0;
+    }
+
+    function _currentMuf(bytes32 evidenceId) internal view returns (bytes32 mufId) {
+        mufId = latestProofId[evidenceId][PROOF_MUF];
+        if (mufId == bytes32(0) || currentProofStates[evidenceId].mufStatus != CheckStatus.CALCULATED) {
+            revert CurrentMufRequired(evidenceId);
+        }
+    }
+
+    function _validateOperation(bytes32 evidenceId, IExploreChemLotsE1.OperationReport memory op) internal view {
+        if (address(lotsContract) == address(0)) revert LotsNotConfigured();
+        if (op.operationId == bytes32(0) || op.holder == bytes32(0)) revert InvalidOperation();
+        if (usedOperations[op.operationId]) revert OperationAlreadyUsed(op.operationId);
+        if (op.outputs.length == 0 || op.outputs.length > MAX_OPERATION_ITEMS
+            || op.inputLotIds.length > MAX_OPERATION_ITEMS) revert InvalidOperation();
+        if (op.kind == 1) {
+            if (op.inputLotIds.length != 0) revert InvalidOperation();
+        } else if (op.kind == 2) {
+            if (op.inputLotIds.length == 0) revert InvalidOperation();
+        } else revert InvalidOperation();
+        Evidence storage evidence = evidences[evidenceId];
+        if (evidence.submittedBy == address(0)) revert EvidenceNotFound(evidenceId);
+        if (evidence.actorId != op.holder) revert OperationHolderMismatch();
+        actorRegistry.requireActiveActor(op.holder);
+        _requireUniqueInputs(op.inputLotIds);
+        for (uint256 i; i < op.inputLotIds.length; ++i) {
+            IExploreChemLotsE1.Lot memory lot = lotsContract.getLot(op.inputLotIds[i]);
+            if (lot.commitment == bytes32(0) || lot.state != IExploreChemLotsE1.LotState.ACTIVE
+                || lot.holder != op.holder) revert InvalidInputLot(op.inputLotIds[i]);
+        }
+        for (uint256 i; i < op.outputs.length; ++i) {
+            IExploreChemLotsE1.OutputLot memory output = op.outputs[i];
+            if (output.lotId == bytes32(0) || output.commitment == bytes32(0)
+                || output.recipient == bytes32(0)) revert InvalidOperation();
+            actorRegistry.requireActiveActor(output.recipient);
+            if (op.kind == 1 && output.recipient != op.holder) revert OperationHolderMismatch();
+            for (uint256 j; j < i; ++j) {
+                if (op.outputs[j].lotId == output.lotId) revert DuplicateLotId(output.lotId);
+            }
+            for (uint256 j; j < op.inputLotIds.length; ++j) {
+                if (op.inputLotIds[j] == output.lotId) revert DuplicateLotId(output.lotId);
+            }
+            // Existing output IDs must also be rejected by Lots before any mutation.
+        }
+    }
+
+    function _requireUniqueInputs(bytes32[] memory ids) internal pure {
+        for (uint256 i; i < ids.length; ++i) {
+            if (ids[i] == bytes32(0)) revert ZeroIdentifier();
+            for (uint256 j; j < i; ++j) {
+                if (ids[i] == ids[j]) revert DuplicateLotId(ids[i]);
+            }
+        }
+    }
+
+    /// @notice Exact hash the workflow must place in ProofReport.inputCommitmentHash.
+    /// @dev Binds the full operation, ordered input commitments, domain and current MUF.
+    /// Does not validate private arithmetic or prove knowledge of a lot opening.
+    function computeInputCommitmentHash(bytes32 evidenceId, IExploreChemLotsE1.OperationReport calldata op)
+        external view returns (bytes32)
+    {
+        if (address(lotsContract) == address(0)) revert LotsNotConfigured();
+        if (op.inputLotIds.length > MAX_OPERATION_ITEMS || op.outputs.length > MAX_OPERATION_ITEMS) {
+            revert InvalidOperation();
+        }
+        _requireUniqueInputs(op.inputLotIds);
+        return _operationCommitment(evidenceId, _currentMuf(evidenceId), op);
+    }
+
+    function _operationCommitment(bytes32 evidenceId, bytes32 mufId, IExploreChemLotsE1.OperationReport memory op)
+        internal view returns (bytes32)
+    {
+        bytes32[] memory commitments = new bytes32[](op.inputLotIds.length);
+        for (uint256 i; i < op.inputLotIds.length; ++i) {
+            commitments[i] = lotsContract.getLot(op.inputLotIds[i]).commitment;
+            if (commitments[i] == bytes32(0)) revert InvalidInputLot(op.inputLotIds[i]);
+        }
+        return keccak256(abi.encode(
+            OPERATION_DOMAIN_V1, block.chainid, address(this), address(lotsContract),
+            evidenceId, mufId, op, commitments
+        ));
     }
 
     function _anchorProof(
@@ -488,7 +624,7 @@ contract ExploreChemProofRegistry is IReceiver {
     /// @dev Workflows publish final verdicts. PENDING exists only before the first proof.
     function _decodeFinalStatus(uint8 value) internal pure returns (CheckStatus status) {
         if (
-            value < uint8(CheckStatus.COMPLIANT) ||
+            value < uint8(CheckStatus.CALCULATED) ||
             value > uint8(CheckStatus.NOT_ATTESTED)
         ) {
             revert InvalidCheckStatus(value);
@@ -515,44 +651,54 @@ contract ExploreChemProofRegistry is IReceiver {
             interfaceId == type(IERC165).interfaceId;
     }
 
+    /// @notice Public context contains no physical quantities or element identifiers.
     struct ConsumptionContext {
-        ExploreChemLots.LotInput[] inputs;
-        bytes32[] inputBases;
-        ExploreChemLots.Component[][] inputComponents;
-        uint256[] inputIssued;
-        uint256[] inputBalances;
+        bytes32[] inputLotIds;
+        bytes32[] inputCommitments;
+        bytes32[] holders;
+        IExploreChemLotsE1.LotState[] states;
     }
-    function getConsumptionContext(bytes32 actorId, ExploreChemLots.LotInput[] calldata inputs) external view returns (ConsumptionContext memory ctx) {
-        if (inputs.length == 0 || inputs.length > 32) revert InvalidTokenAction();
-        ctx.inputs = inputs;
-        ctx.inputBases = new bytes32[](inputs.length);
-        ctx.inputComponents = new ExploreChemLots.Component[][](inputs.length);
-        ctx.inputIssued = new uint256[](inputs.length);
-        ctx.inputBalances = new uint256[](inputs.length);
-        for (uint256 i; i < inputs.length; ++i) {
-            ExploreChemLots.Lot memory lot = lotsContract.getLot(inputs[i].lotId);
-            ctx.inputBases[i] = lot.basisHash;
-            ctx.inputIssued[i] = lot.supply;
-            ctx.inputBalances[i] = lotsContract.balanceOf(actorId, inputs[i].lotId);
-            ctx.inputComponents[i] = lotsContract.getActorComposition(actorId, inputs[i].lotId);
+    function getConsumptionContext(bytes32[] calldata inputLotIds) external view returns (ConsumptionContext memory ctx) {
+        if (address(lotsContract) == address(0)) revert LotsNotConfigured();
+        if (inputLotIds.length == 0 || inputLotIds.length > MAX_OPERATION_ITEMS) revert InvalidOperation();
+        _requireUniqueInputs(inputLotIds);
+        ctx.inputLotIds = inputLotIds;
+        ctx.inputCommitments = new bytes32[](inputLotIds.length);
+        ctx.holders = new bytes32[](inputLotIds.length);
+        ctx.states = new IExploreChemLotsE1.LotState[](inputLotIds.length);
+        for (uint256 i; i < inputLotIds.length; ++i) {
+            IExploreChemLotsE1.Lot memory lot = lotsContract.getLot(inputLotIds[i]);
+            ctx.inputCommitments[i] = lot.commitment;
+            ctx.holders[i] = lot.holder;
+            ctx.states[i] = lot.state;
         }
     }
-    ExploreChemLots public lotsContract;
+    IExploreChemLotsE1 public lotsContract;
+    uint256 public constant MAX_OPERATION_ITEMS = 32;
+    bytes32 public constant OPERATION_DOMAIN_V1 = keccak256("ExploreChem/OperationCommitment/v1");
+    mapping(bytes32 => bool) public usedOperations;
     uint256 private entered;
     error ReentrantCall();
-    error TokenReportRequired();
+    error OperationReportRequired();
     error InvalidReportDomain();
-    error InvalidTokenAction();
+    error InvalidReportEncoding();
+    error InvalidOperation();
+    error OperationHolderMismatch();
+    error DuplicateLotId(bytes32 lotId);
+    error InvalidInputLot(bytes32 lotId);
+    error OperationAlreadyUsed(bytes32 operationId);
+    error InputCommitmentMismatch(bytes32 expected, bytes32 received);
+    error CurrentMufRequired(bytes32 evidenceId);
     error LotsNotConfigured();
     error LotsAlreadyConfigured();
     error InvalidLotsContract();
     event LotsConfigured(address indexed lots);
-    struct ReportV2 {
+    struct ReportV3 {
         uint8 version;
         uint256 chainId;
         address registry;
         ProofReport proof;
-        ExploreChemLots.TokenAction action;
+        IExploreChemLotsE1.OperationReport op;
     }
     modifier nonReentrant() {
         if (entered != 0) revert ReentrantCall();
@@ -564,11 +710,11 @@ contract ExploreChemProofRegistry is IReceiver {
     function configureLots(address lots) external onlyOwner {
         if (address(lotsContract) != address(0)) revert LotsAlreadyConfigured();
         if (lots.code.length == 0) revert InvalidLotsContract();
-        if (address(ExploreChemLots(lots).registry()) != address(this)) revert InvalidLotsContract();
-        lotsContract = ExploreChemLots(lots);
+        if (address(IExploreChemLotsE1(lots).registry()) != address(this)) revert InvalidLotsContract();
+        lotsContract = IExploreChemLotsE1(lots);
         emit LotsConfigured(lots);
     }
-    /// @notice Identity owning registration balances, independent of signing wallet.
+    /// @notice Actor identity associated with evidence, independent of signing wallet.
     function evidenceActor(bytes32 evidenceId) external view returns (bytes32) {
         return evidences[evidenceId].actorId;
     }
@@ -583,13 +729,13 @@ contract ExploreChemProofRegistry is IReceiver {
     }
     function tokenHolderEligible(bytes32 evidenceId) external view returns (bool) {
         Evidence storage e = evidences[evidenceId];
-        // Eligibility belongs to the company; rotating its signing wallet does not erase its balances.
+        // Eligibility belongs to the company and survives rotation of its signing wallet.
         return e.evidenceId != bytes32(0) && actorRegistry.actorActive(e.actorId);
     }
     function proofsCurrent(bytes32 evidenceId, bytes32 mufId, bytes32 elementalId) external view returns (bool) {
         CurrentProofState storage state = currentProofStates[evidenceId];
         return mufId != bytes32(0) && elementalId != bytes32(0)
-            && state.mufStatus == CheckStatus.COMPLIANT && state.elementalStatus == CheckStatus.COMPLIANT
+            && state.mufStatus == CheckStatus.CALCULATED && state.elementalStatus == CheckStatus.CALCULATED
             && latestProofId[evidenceId][PROOF_MUF] == mufId
             && latestProofId[evidenceId][PROOF_ELEMENTAL] == elementalId;
     }
