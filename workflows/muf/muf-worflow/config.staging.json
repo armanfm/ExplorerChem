@@ -3,6 +3,6 @@
   "supabaseUrl": "https://mnmflnqmohgsxgavwenn.supabase.co",
   "secretNamespace": "main",
   "chainSelectorName": "ethereum-testnet-sepolia",
-  "contractAddress": "0x692234073Aa3581B7A6F63C56D8ad56C8eFCE8Df",
+  "contractAddress": "0x1934305d8FC0a426a0eF5D475E941341d8c9fC1e",
   "gasLimit": "3000000"
 }
