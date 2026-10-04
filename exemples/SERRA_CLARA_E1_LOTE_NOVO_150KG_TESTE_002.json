@@ -1,0 +1,102 @@
+{
+  "schema": "ExploreChem/PrivateEvidence/E1/demo",
+  "lotReference": "SERRA-CLARA-E1-INITIAL-150KG-ND-PR-DY-002",
+  "actorId": "0x2fd9c7823fedcace0fc3060ad815182bde855c9cf88c4cb832c82af37e064f7c",
+  "description": "Dados fictícios para teste E1. Novo lote inicial independente de 150 kg secos: Nd 8% (12 kg), Pr 3% (4,5 kg) e Dy 2% (3 kg); restante 130,5 kg sem composição especificada. Não consome nem referencia lotes anteriores. Não representa material real.",
+  "massBalance": {
+    "inputMassKg": "150",
+    "openingInventoryMassKg": "0",
+    "outputMassKg": "150",
+    "scrapMassKg": "0",
+    "otherOutputMassKg": "0",
+    "closingInventoryMassKg": "0"
+  },
+  "calculationContext": {
+    "trackedElements": [
+      "Nd",
+      "Pr",
+      "Dy"
+    ]
+  },
+  "streams": [
+    {
+      "streamId": "ENTRADA-ND-PR-DY-001",
+      "streamType": "INPUT",
+      "measuredMassKg": "150",
+      "massBasis": "DRY",
+      "assays": [
+        {
+          "element": "Nd",
+          "basis": "ELEMENT_PCT",
+          "value": "8"
+        },
+        {
+          "element": "Pr",
+          "basis": "ELEMENT_PCT",
+          "value": "3"
+        },
+        {
+          "element": "Dy",
+          "basis": "ELEMENT_PCT",
+          "value": "2"
+        }
+      ]
+    },
+    {
+      "streamId": "CONFERENCIA-ND-PR-DY-001",
+      "streamType": "PRODUCT",
+      "measuredMassKg": "150",
+      "massBasis": "DRY",
+      "assays": [
+        {
+          "element": "Nd",
+          "basis": "ELEMENT_PCT",
+          "value": "8"
+        },
+        {
+          "element": "Pr",
+          "basis": "ELEMENT_PCT",
+          "value": "3"
+        },
+        {
+          "element": "Dy",
+          "basis": "ELEMENT_PCT",
+          "value": "2"
+        }
+      ]
+    }
+  ],
+  "e1": {
+    "mode": "INITIAL",
+    "operationId": "0x4bf4c5baec4f5e812273edd4ec4bf2800d6bbce0c54935db6b2e9cab2f20c5cb",
+    "proofSalt": "0x0632fbec05985085a34313589cff21ce18c0fbc63767f879d7504cb10837a3e7",
+    "inputs": [],
+    "outputs": [
+      {
+        "streamId": "ENTRADA-ND-PR-DY-001",
+        "recipient": "0x2fd9c7823fedcace0fc3060ad815182bde855c9cf88c4cb832c82af37e064f7c",
+        "opening": {
+          "lotId": "0xcdc0f6f365fe7325e5e3603329b25ee31d0b07ac4413a540cdebad40d6886760",
+          "materialMassMg": "150000000",
+          "elements": [
+            {
+              "basisHash": "0x26840443a8398c0f3b91d87605ba114623f577fdb3e8e66f3537348e4766e742",
+              "massMg": "4500000"
+            },
+            {
+              "basisHash": "0x8fe013d1a12762e66efaf560989b1fa4d67febb24546576a60f445fc83016dbc",
+              "massMg": "12000000"
+            },
+            {
+              "basisHash": "0xe29a0102a484995a40c96a4555e78b37cf211bbe179f49bd32dcb805a09bd02b",
+              "massMg": "3000000"
+            }
+          ],
+          "salt": "0xd73cb805093e06ea259f76d1c9ec0c1312f6ea80814e4295580fc988e4b4ff38"
+        }
+      }
+    ]
+  },
+  "evidenceType": "OWN_STOCK",
+  "actorType": "OTHER"
+}
