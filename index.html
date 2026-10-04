@@ -5710,8 +5710,33 @@ function rwaValidPubkey(v){return /^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(String(v|
 function rwaValidBytes32(v){return /^(?:0x)?[0-9a-fA-F]{64}$/.test(String(v||"").trim());}
 function rwaExplorerAddress(address){return "https://explorer.solana.com/address/"+encodeURIComponent(address)+"?cluster=devnet";}
 function rwaExplorerProgram(){return rwaExplorerAddress(RWA_SOLANA_PROGRAM_ID);}
+let rwaConnectionInstance=null,rwaRpcQueue=Promise.resolve(),rwaRpcNextAt=0,rwaRpcCooldownUntil=0,rwaRefreshInFlight=null;
+function rwaConnection(){
+  if(!rwaConnectionInstance)rwaConnectionInstance=new solanaWeb3.Connection(RWA_SOLANA_RPC,{
+    commitment:'confirmed',disableRetryOnRateLimit:true,fetch:rwaScheduledFetch
+  });
+  return rwaConnectionInstance;
+}
+async function rwaScheduledFetch(url,options){
+  const run=async()=>{
+    if(Date.now()<rwaRpcCooldownUntil)throw Error('RPC Devnet limitou as consultas. Aguarde '+Math.ceil((rwaRpcCooldownUntil-Date.now())/1000)+' segundos antes de tentar novamente.');
+    const delay=Math.max(0,rwaRpcNextAt-Date.now());
+    if(delay)await new Promise(resolve=>setTimeout(resolve,delay));
+    rwaRpcNextAt=Date.now()+350;
+    const response=await fetch(url,options);
+    if(response.status===429){
+      const retry=Number(response.headers?.get?.('Retry-After'));
+      rwaRpcCooldownUntil=Date.now()+Math.max(30000,Math.min(60000,(Number.isFinite(retry)?retry:30)*1000));
+      throw Error('RPC pública da Solana Devnet atingiu o limite. As consultas foram pausadas por '+Math.ceil((rwaRpcCooldownUntil-Date.now())/1000)+' segundos; nenhuma nova transação foi enviada por esta chamada.');
+    }
+    return response;
+  };
+  const result=rwaRpcQueue.then(run,run);
+  rwaRpcQueue=result.catch(()=>{});
+  return result;
+}
 async function rwaRpc(method,params=[]){
-  const response=await fetch(RWA_SOLANA_RPC,{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({jsonrpc:"2.0",id:Date.now(),method,params})});
+  const response=await rwaScheduledFetch(RWA_SOLANA_RPC,{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({jsonrpc:"2.0",id:Date.now(),method,params})});
   if(!response.ok)throw new Error("RPC Solana Devnet: HTTP "+response.status);
   const json=await response.json();if(json.error)throw new Error(json.error.message||"Falha no RPC Solana Devnet.");return json.result;
 }
@@ -5796,6 +5821,26 @@ async function rwaSimulateBeforeSigning(tx,label){
     const reason=logs.filter(line=>/Error|failed|insufficient/i.test(line)).slice(-4).join(" | ");
     throw new Error(label+" — simulação Devnet falhou: "+JSON.stringify(result.value.err)+(reason?". "+reason:"")+". Nenhuma assinatura foi solicitada.");
   }
+  return result.value;
+}
+function rwaWalletChangeDescription(original,returned){
+  const budget=solanaWeb3.ComputeBudgetProgram.programId;
+  if(!returned?.instructions)return 'formato de transação incompatível';
+  if(!returned.feePayer?.equals(original.feePayer))return 'carteira pagadora';
+  if(returned.recentBlockhash!==original.recentBlockhash)return 'blockhash';
+  const business=tx=>tx.instructions.filter(ix=>!ix.programId.equals(budget));
+  const a=business(original),b=business(returned);
+  if(a.length!==b.length)return 'quantidade de instruções: '+a.length+' → '+b.length;
+  for(let i=0;i<a.length;i++){
+    if(!a[i].programId.equals(b[i].programId))return 'programa da instrução '+i;
+    if(rwaHex(a[i].data)!==rwaHex(b[i].data))return 'dados da instrução '+i;
+    if(a[i].keys.length!==b[i].keys.length)return 'quantidade de contas da instrução '+i;
+    for(let j=0;j<a[i].keys.length;j++){
+      const x=a[i].keys[j],y=b[i].keys[j];
+      if(!x.pubkey.equals(y.pubkey)||x.isSigner!==y.isSigner||x.isWritable!==y.isWritable)return 'conta/permissões '+j+' da instrução '+i;
+    }
+  }
+  return 'instruções de taxa/compute ou assinaturas';
 }
 function rwaWalletFeeAdjustmentAllowed(original, returned){
   if(!returned || !Array.isArray(returned.instructions) ||
@@ -5834,16 +5879,29 @@ function rwaWalletFeeAdjustmentAllowed(original, returned){
   return true;
 }
 
+function rwaComputeLimit(consumed){
+  if(!Number.isFinite(consumed)||consumed<=0)throw Error('Consumo de computação inválido.');
+  return Math.min(1400000,Math.max(25000,Math.ceil(consumed*1.2)+10000));
+}
 async function rwaSendIx(ixs,label){
   const provider=rwaSolanaProvider();
   if(!provider||!rwaSolanaWalletAddress)throw Error("Conecte a carteira Solana.");
   if(typeof provider.signTransaction!=="function")throw Error("Esta carteira precisa oferecer signTransaction para o envio pela RPC Devnet.");
-  const connection=new solanaWeb3.Connection(RWA_SOLANA_RPC,"confirmed");
+  const connection=rwaConnection();
   const payer=rwaPk(rwaSolanaWalletAddress);
   if(!provider.publicKey||!provider.publicKey.equals(payer))throw Error("A carteira mudou. Reconecte antes de continuar.");
   const latest=await connection.getLatestBlockhash("confirmed");
   let tx=new solanaWeb3.Transaction();tx.feePayer=payer;tx.recentBlockhash=latest.blockhash;tx.add(...ixs);
-  await rwaSimulateBeforeSigning(tx,label);
+  const budgetProgram=solanaWeb3.ComputeBudgetProgram.programId;
+  const businessInstructions=tx.instructions.filter(ix=>!ix.programId.equals(budgetProgram));
+  const priceInstructions=tx.instructions.filter(ix=>ix.programId.equals(budgetProgram)&&ix.data[0]===3);
+  tx.instructions=[solanaWeb3.ComputeBudgetProgram.setComputeUnitLimit({units:1400000}),...priceInstructions,...businessInstructions];
+  const simulation=await rwaSimulateBeforeSigning(tx,label+' · estimativa de computação');
+  if(Number.isFinite(simulation?.unitsConsumed)&&simulation.unitsConsumed>0){
+    const units=rwaComputeLimit(simulation.unitsConsumed);
+    tx.instructions=[solanaWeb3.ComputeBudgetProgram.setComputeUnitLimit({units}),...priceInstructions,...businessInstructions];
+    await rwaSimulateBeforeSigning(tx,label+' · limite ajustado: '+units+' unidades');
+  }
   let message=tx.serializeMessage();const required=tx.compileMessage().accountKeys.slice(0,tx.compileMessage().header.numRequiredSignatures);
   for(const key of required){
     if(!provider.publicKey?.equals(key)){
@@ -5853,9 +5911,10 @@ async function rwaSendIx(ixs,label){
       if(!provider.publicKey?.equals(key))throw Error('Carteira selecionada diferente da assinatura exigida. Nada foi enviado.');
     }
     if(await connection.getBlockHeight('confirmed')>=latest.lastValidBlockHeight)throw Error('Transação expirou durante a coleta das assinaturas. Nada foi enviado.');
+    const originalTx=solanaWeb3.Transaction.from(tx.serialize({requireAllSignatures:false,verifySignatures:false}));
     const part=await provider.signTransaction(tx);
     if(rwaHex(part.serializeMessage())!==rwaHex(message)){
-      if(required.length!==1||!rwaWalletFeeAdjustmentAllowed(tx,part))throw Error('A carteira alterou dados da operação ou uma taxa fora do limite. Nada foi enviado.');
+      if(required.length!==1||!rwaWalletFeeAdjustmentAllowed(originalTx,part))throw Error('A carteira alterou dados da operação ou uma taxa fora do limite. Nada foi enviado. Diferença: '+rwaWalletChangeDescription(originalTx,part));
       await rwaSimulateBeforeSigning(part,label+' · taxa ajustada pela carteira');
       tx=part;message=tx.serializeMessage();
     }
@@ -5952,7 +6011,7 @@ async function rwaUpdateSourceConfig(button){
     const source=await newLotsContext(false);
     const address=await source.lots.getAddress(),contract=rwaEth20(address),chain=11155111n;
     const config=rwaPda([rwaText('config')]);
-    const connection=new solanaWeb3.Connection(RWA_SOLANA_RPC,'confirmed');
+    const connection=rwaConnection();
     const data=await rwaDecode(await connection.getAccountInfo(config,'confirmed'),'Config',102);
     const admin=new solanaWeb3.PublicKey(data.slice(8,40));
     if(!admin.equals(rwaPk(rwaSolanaWalletAddress)))throw Error('Conecte a carteira administradora: '+admin.toBase58());
@@ -5979,7 +6038,7 @@ document.addEventListener('click',event=>{
 });
 
 async function rwaEnsureConfig(ctx,status){
-  const connection=new solanaWeb3.Connection(RWA_SOLANA_RPC,"confirmed"),info=await connection.getAccountInfo(ctx.config,"confirmed");
+  const connection=rwaConnection(),info=await connection.getAccountInfo(ctx.config,"confirmed");
   if(info){
     const data=await rwaDecode(info,"Config",102);
     const trusted=new solanaWeb3.PublicKey(data.slice(40,72));ctx.attestor=trusted;
@@ -5997,7 +6056,7 @@ async function rwaEnsureConfig(ctx,status){
   await rwaQueueIx(ctx,[ix],"Inicialização da Config RWA");
 }
 async function rwaMintIfNeeded(ctx,status){
-  const connection=new solanaWeb3.Connection(RWA_SOLANA_RPC,"confirmed");if(await connection.getAccountInfo(ctx.mint,"confirmed"))return;
+  const connection=rwaConnection();if(await connection.getAccountInfo(ctx.mint,"confirmed"))return;
   status("Criando Token-2022 e mintando a unidade RWA…");
   const ix=rwaInstruction("mint_rwa",[
     {pubkey:ctx.payer,isSigner:true,isWritable:true},{pubkey:ctx.config,isSigner:false,isWritable:false},{pubkey:ctx.attestor,isSigner:true,isWritable:false},{pubkey:ctx.series,isSigner:false,isWritable:true},{pubkey:ctx.holder,isSigner:false,isWritable:false},{pubkey:ctx.mintRecord,isSigner:false,isWritable:true},{pubkey:ctx.mint,isSigner:false,isWritable:true},{pubkey:ctx.holderAta,isSigner:false,isWritable:true},{pubkey:ctx.tokenProgram,isSigner:false,isWritable:false},{pubkey:ctx.ataProgram,isSigner:false,isWritable:false},{pubkey:solanaWeb3.SystemProgram.programId,isSigner:false,isWritable:false},rwaMeta(rwaLineagePda())
@@ -6027,7 +6086,7 @@ async function rwaCreateSelectedLotOnchain(button){
     await rwaCreateSeriesIfNeeded(ctx,setStatus);
     await rwaMintIfNeeded(ctx,setStatus);
     const data={creditId:rwaHex(ctx.creditId),creditReference:ctx.creditReference,creditTerms:ctx.creditTerms,termsCommitment:rwaHex(ctx.claim),mint:ctx.mint.toBase58(),seriesId:rwaHex(ctx.seriesId),originCommitment:rwaHex(ctx.origin),supplierActorId:actor.id,sourceLotId:lot.id,sourceEvidenceId:lot.evidenceId||null,sourceLotsContract:rwaHex(ctx.sourceContract),sourceChainId:11155111,initialHolder:holderAddress,issuerWallet:ctx.issuerWallet.toBase58(),economicStatus:'ACTIVE',priceRisk:'PENDING'};
-    const c=rwaContext(data),payer=ctx.payer,m=rwaMeta,conn=new solanaWeb3.Connection(RWA_SOLANA_RPC,'confirmed');
+    const c=rwaContext(data),payer=ctx.payer,m=rwaMeta,conn=rwaConnection();
     const listing=await conn.getAccountInfo(c.listing,'confirmed');
     if(listing)throw Error('Este RWA já possui uma oferta. Use a tabela para gerenciar a venda.');
     const ix=await rwaMarketIx('list_rwa',[m(payer,true,true),m(c.config),m(c.series),m(c.record),m(c.mint),m(rwaAta(payer,c.mint),true),m(c.listing,true),m(rwaAta(c.listing,c.mint),true),m(c.token),m(c.ata),m(c.system)],rwaU64(price));
@@ -6192,6 +6251,12 @@ function rwaAssetsRowsHtml(rows){
   return '<table><thead><tr><th>Fornecedor original</th><th>Lote</th><th>Mint</th><th>Direito econômico</th><th>Risco de preço</th><th>Próxima ação</th></tr></thead><tbody>'+owned.map(r=>{const a=rwaActorById(r.supplierActorId);return '<tr><td>'+escaparHtml(a?.nome||"Empresa")+'</td><td><b>Lote #'+escaparHtml(r.sourceLotId||"—")+'</b></td><td><a class="rwa-link mono" href="'+rwaExplorerAddress(r.mint)+'" target="_blank" rel="noopener">'+escaparHtml(rwaShort(r.mint))+'</a></td><td><span class="tag t-ok">ATIVO · holder atual</span></td><td>'+rwaPriceRiskHtml(r.priceRisk)+'</td><td><div class="rwa-table-actions"><button class="btn ghost" disabled title="Cliente web ainda não monta a instrução Anchor">Solicitar resgate</button><button class="btn ghost" disabled title="Requer marketplace on-chain">Revender</button></div></td></tr>';}).join('')+'</tbody></table>';
 }
 async function rwaRefreshTables(){
+  if(rwaActionBusy)return;
+  if(rwaRefreshInFlight)return rwaRefreshInFlight;
+  rwaRefreshInFlight=rwaRefreshTablesNow();
+  try{return await rwaRefreshInFlight;}finally{rwaRefreshInFlight=null;}
+}
+async function rwaRefreshTablesNow(){
   rwaChainReadOk=false;
   const supplier=document.getElementById("rwaSupplierTable"),market=document.getElementById("rwaMarketTable"),assets=document.getElementById("rwaAssetsTable");
   for(const n of [supplier,market,assets])if(n)n.innerHTML='<div class="rwa-empty">Consultando Solana Devnet…</div>';
@@ -6239,10 +6304,20 @@ async function rwaVerifiedMarketLots(rows){
  for(const r of rows){delete r.issuedMg;delete r.components;r.legacy=String(r.sourceChainId)!=='11155111'||String(r.sourceLotsContract).toLowerCase()!==address;r.needsMigration=!r.issuerWallet||(r.redemption?.status===1&&!r.redemptionLamports);}
 }
 async function rwaCatalogRowsWithChain(){
- const conn=new solanaWeb3.Connection(RWA_SOLANA_RPC,'confirmed');
+ const conn=rwaConnection();
  const [accounts,locks]=await Promise.all([conn.getProgramAccounts(rwaPk(RWA_SOLANA_PROGRAM_ID),{commitment:'confirmed',filters:[{dataSize:183}]}),conn.getProgramAccounts(rwaPk(RWA_SOLANA_PROGRAM_ID),{commitment:'confirmed',filters:[{dataSize:169}]})]);
  const local=rwaCatalog(),out=[];
  const cfg=await conn.getAccountInfo(rwaPda([rwaText('config')]));rwaAttestor=cfg?rwaPk((await rwaDecode(cfg,'Config',102)).slice(40,72)).toBase58():'';
+ const relatedKeys=accounts.flatMap(a=>{
+   const sid=new Uint8Array(a.account.data).slice(8,40);
+   return ['rwa-mint','listing','redemption','redemption-authority','redemption-quote','mint'].map(seed=>rwaPda([rwaText(seed),sid]));
+ });
+ const related=new Map();
+ for(let i=0;i<relatedKeys.length;i+=100){
+   const keys=relatedKeys.slice(i,i+100),values=await conn.getMultipleAccountsInfo(keys,'confirmed');
+   keys.forEach((key,j)=>related.set(key.toBase58(),values[j]));
+ }
+
  for(const a of accounts){
   const d=await rwaDecode(a.account,'Series',183),sid=rwaHex(d.slice(8,40));
   if(!a.pubkey.equals(rwaPda([rwaText('series'),d.slice(8,40)])))continue;
@@ -6251,13 +6326,18 @@ async function rwaCatalogRowsWithChain(){
   delete row.derived;
   delete row.components;
   row.mint=rwaPda([rwaText('mint'),d.slice(8,40)]).toBase58();
-  const c=rwaContext(row),[rec,listing,red,authority,quote]=await conn.getMultipleAccountsInfo([c.record,c.listing,c.redemption,c.authority,c.quote]);if(!rec)continue;
+  const c=rwaContext(row),[rec,listing,red,authority,quote]=[c.record,c.listing,c.redemption,c.authority,c.quote].map(key=>related.get(key.toBase58()));if(!rec)continue;
   if(authority){const a=await rwaDecode(authority,'RedemptionAuthority',73);if(rwaHex(a.slice(8,40))!==sid)throw Error('Carteira emissora vinculada a outra série.');row.issuerWallet=rwaPk(a.slice(40,72)).toBase58();}
   if(quote){const q=await rwaDecode(quote,'RedemptionQuote',49);if(rwaHex(q.slice(8,40))!==sid)throw Error('Proposta vinculada a outra série.');row.redemptionLamports=rwaReadU64(q,40).toString();}
   const lock=locks.find(x=>{const b=new Uint8Array(x.account.data);return rwaHex(b.slice(104,136))===sid;});
   if(lock){const b=await rwaDecode(lock.account,'CreditLock',169);row.sourceLotId=rwaHex(b.slice(136,168));}
   const rd=await rwaDecode(rec,'RwaMintRecord',113);if(rwaHex(rd.slice(8,40))!==sid||!rwaPk(rd.slice(40,72)).equals(c.mint))throw new Error('Vínculo série/mint inválido.');
-  row.mintState=await rwaMintSummary(row.mint);
+  const mintAccount=related.get(row.mint);
+  if(mintAccount){
+    if(!mintAccount.owner.equals(c.token)||mintAccount.data.length<82)throw Error('Mint Token-2022 inválido.');
+    const md=new Uint8Array(mintAccount.data);
+    row.mintState={exists:true,decimals:md[44],supply:rwaReadU64(md,36).toString(),mintAuthority:md[0]===1?rwaPk(md.slice(4,36)).toBase58():null,freezeAuthority:md[46]===1?rwaPk(md.slice(50,82)).toBase58():null};
+  }else row.mintState={exists:false};
   if(listing){const l=await rwaDecode(listing,'Listing',113);if(rwaHex(l.slice(8,40))!==sid||!rwaPk(l.slice(40,72)).equals(c.mint))throw new Error('Oferta inválida.');row.listing={seller:rwaPk(l.slice(72,104)).toBase58(),price:rwaReadU64(l,104).toString()};}
   if(red){const r=await rwaDecode(red,'Redemption',186);row.redemption={holder:rwaPk(r.slice(72,104)).toBase58(),status:r[136]};}
   out.push(row);
@@ -6331,7 +6411,7 @@ function rwaLineagePda(){return rwaPda([rwaText('credit-lineage-v2')]);}
 function rwaLot256(id){let n=BigInt(id);if(n<=0n||n>=(1n<<256n))throw Error('Lote fora de uint256.');const b=new Uint8Array(32);for(let i=0;i<32;i++){b[i]=Number(n&255n);n>>=8n;}return b;}
 function rwaU32(n){const b=new Uint8Array(4);new DataView(b.buffer).setUint32(0,n,true);return b;}
 async function rwaLineageRead(){
- const conn=new solanaWeb3.Connection(RWA_SOLANA_RPC,'confirmed'),a=await conn.getAccountInfo(rwaLineagePda(),'confirmed');if(!a)return null;
+ const conn=rwaConnection(),a=await conn.getAccountInfo(rwaLineagePda(),'confirmed');if(!a)return null;
  const d=await rwaDecode(a,'LineageRegistry',18),view=new DataView(d.buffer,d.byteOffset,d.byteLength),count=view.getUint32(10,true);if(count>64||d.length<18+40*count)throw Error('Registro de créditos inválido.');
  const nodes=[];for(let i=0;i<count;i++){const o=14+i*40;nodes.push({id:rwaHex(d.slice(o,o+32)),mask:rwaReadU64(d,o+32)});}
  const start=14+40*count,rc=view.getUint32(start,true);if(rc>32||d.length<start+4+65*rc)throw Error('Reservas inválidas.');
@@ -6367,7 +6447,7 @@ async function rwaLineageSnapshot(ctx){
  return {nodes,blockHash:block.hash};
 }
 async function rwaLineageSeries(ctx,snapshot){
- const conn=new solanaWeb3.Connection(RWA_SOLANA_RPC,'confirmed'),rows=await conn.getProgramAccounts(ctx.program,{commitment:'confirmed',filters:[{dataSize:183}]}),out=[];
+ const conn=rwaConnection(),rows=await conn.getProgramAccounts(ctx.program,{commitment:'confirmed',filters:[{dataSize:183}]}),out=[];
  for(const r of rows){
   const d=await rwaDecode(r.account,'Series',183),sid=d.slice(8,40);if(!r.pubkey.equals(rwaPda([rwaText('series'),sid])))throw Error('PDA de série inválida.');
   if(![1,2,3].includes(d[180]))throw Error('Estado econômico desconhecido.');if(d[180]!==1)continue;
@@ -6384,7 +6464,7 @@ async function rwaPrepareLineage(ctx,status){
  let registry=await rwaLineageRead();const snapshot=await rwaLineageSnapshot(ctx),m=rwaMeta;
  const manage=[m(ctx.config),m(ctx.attestor,false,true),m(rwaLineagePda(),true)];
  if(!registry||!registry.ready){
-  const conn=new solanaWeb3.Connection(RWA_SOLANA_RPC,'confirmed'),series=await conn.getProgramAccounts(ctx.program,{commitment:'confirmed',filters:[{dataSize:183}]});
+  const conn=rwaConnection(),series=await conn.getProgramAccounts(ctx.program,{commitment:'confirmed',filters:[{dataSize:183}]});
   for(const a of series){const d=await rwaDecode(a.account,'Series',183);if(d[180]===1)throw Error('Linhagem não habilitada com séries antigas ativas. Migração autenticada necessária.');}
  }
  if(!registry){await rwaQueueIx(ctx,[await rwaMarketIx('initialize_lineage',[m(ctx.payer,true,true),m(ctx.config),m(ctx.attestor,false,true),m(rwaLineagePda(),true),m(solanaWeb3.SystemProgram.programId)])],'Inicialização da linhagem');registry={ready:false,nodes:[],reservations:[]};}
@@ -6403,7 +6483,7 @@ async function rwaPrepareLineage(ctx,status){
 async function rwaCreateSeriesIfNeeded(ctx,status){
  await rwaPrepareLineage(ctx,status);
  if(ctx.plan)ctx.coreStart=ctx.plan.length;
- const conn=new solanaWeb3.Connection(RWA_SOLANA_RPC,'confirmed');const existing=await conn.getAccountInfo(ctx.series,'confirmed');if(existing){const d=await rwaDecode(existing,'Series',183);if(rwaHex(d.slice(40,72))!==rwaHex(ctx.actorId)||rwaHex(d.slice(72,104))!==rwaHex(ctx.origin)||rwaHex(d.slice(104,136))!==rwaHex(ctx.claim))throw Error('Este identificador de crédito já está vinculado a outro lote ou outros termos.');const a=await conn.getAccountInfo(ctx.authority,'confirmed');if(!a)throw Error('Série existente sem autoridade de resgate: migração necessária.');const ad=await rwaDecode(a,'RedemptionAuthority',73);if(!rwaPk(ad.slice(40,72)).equals(ctx.issuerWallet))throw Error('A carteira emissora desta série foi alterada. Conecte a carteira atual.');return;}
+ const conn=rwaConnection();const existing=await conn.getAccountInfo(ctx.series,'confirmed');if(existing){const d=await rwaDecode(existing,'Series',183);if(rwaHex(d.slice(40,72))!==rwaHex(ctx.actorId)||rwaHex(d.slice(72,104))!==rwaHex(ctx.origin)||rwaHex(d.slice(104,136))!==rwaHex(ctx.claim))throw Error('Este identificador de crédito já está vinculado a outro lote ou outros termos.');const a=await conn.getAccountInfo(ctx.authority,'confirmed');if(!a)throw Error('Série existente sem autoridade de resgate: migração necessária.');const ad=await rwaDecode(a,'RedemptionAuthority',73);if(!rwaPk(ad.slice(40,72)).equals(ctx.issuerWallet))throw Error('A carteira emissora desta série foi alterada. Conecte a carteira atual.');return;}
  const body=rwaBytes(new Uint8Array([2]),ctx.seriesId,ctx.actorId,ctx.origin,ctx.claim,rwaU64(ctx.sourceChainId),ctx.sourceContract,rwaU64(ctx.nonce),rwaI64(ctx.expiresAt),rwaHexBytes(ctx.lotId,32),ctx.creditId);
  const m=rwaMeta;await rwaQueueIx(ctx,[rwaInstruction('increment',[m(ctx.payer,true,true),m(ctx.config),m(ctx.attestor,false,true),m(ctx.issuerWallet,false,true),m(ctx.authority,true),m(ctx.series,true),m(ctx.originLock,true),m(ctx.nonceRecord,true),m(solanaWeb3.SystemProgram.programId),m(rwaLineagePda(),true),m(ctx.creditLock,true)],body)],'Criação da série com reserva de cobertura');
 }
