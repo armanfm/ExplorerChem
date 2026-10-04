@@ -1203,6 +1203,16 @@ main{
 
 </style>
 
+<style>
+.e1-lot-composition{display:flex;align-items:center;gap:32px;flex-wrap:wrap;margin:20px 0}
+.e1-lot-ring{width:230px;height:230px;border-radius:50%;display:grid;place-items:center;flex-shrink:0;box-shadow:0 8px 30px #0002}
+.e1-lot-ring>div{width:166px;height:166px;border-radius:50%;background:#0d2823;display:flex;align-items:center;justify-content:center;flex-direction:column;gap:8px;text-align:center;padding:12px}
+.e1-lot-ring strong{font-size:25px;color:#e3fff6}.e1-lot-ring small{font-size:11px;color:#9bbeb0}
+.e1-lot-legend{flex:1;min-width:230px}.e1-lot-legend>div{display:grid;grid-template-columns:12px minmax(110px,1fr) auto;gap:9px 12px;align-items:center;padding:13px 0;border-bottom:1px solid #315347}
+.e1-lot-legend i{width:10px;height:10px;border-radius:50%}.e1-lot-legend b{overflow-wrap:anywhere}.e1-lot-legend small{grid-column:2/4;color:#9bbeb0}
+#tokensLotComposition{margin:18px 0}#productElement .product-metrics{gap:16px;padding:12px 0}
+@media(max-width:600px){.e1-lot-composition{justify-content:center;gap:18px}.e1-lot-legend{min-width:0;width:100%;flex-basis:100%}}
+</style>
 </head>
 <body>
 
@@ -4603,10 +4613,10 @@ function bindRegistryOperations(){
  document.getElementById('linkNewLots').onclick=()=>run(async()=>{const c=await newLotsContext(true,document.getElementById('newLotsAddress').value.trim());if(c.linked!==ethers.ZeroAddress)throw Error('O Registry já está vinculado.');if(!igualHex(await c.registry.owner(),c.account))throw Error('Somente o owner pode vincular.');if(!confirm('Confirmar vínculo permanente com este contrato de lotes?'))return;await(await c.registry.configureLots(await c.lots.getAddress())).wait();localStorage.setItem(EXPLORECHEM_LOTS_KEY,await c.lots.getAddress());document.getElementById('registryLinkStatus').textContent='Vínculo confirmado na blockchain.';});
  for(const [id,status] of [['suspendActor',3],['activateActor',2]])document.getElementById(id).onclick=()=>run(async()=>{const c=await adminContractContext();const actor=checkedHash(document.getElementById('statusActor').value.trim()),reason=documentCommit(document.getElementById('statusReason').value);await(await c.contract.setActorStatus(actor,status,reason)).wait();toast(status===3?'Ator suspenso; saldos preservados.':'Ator reativado.');});
 }
-function tokenizationPane(){return '<section class="panel pad"><h2>Enviar lote</h2><p>Selecione o lote e a empresa destinatária. O lote entra no estoque da destinatária quando ela aceitar o recebimento.</p><button class="btn" id="tokensConnect">Conectar carteira Ethereum</button><button class="btn ghost" id="tokensRefresh">Atualizar</button><p id="tokensStatus" role="status"></p><div class="field"><label for="tokensLot">Lote disponível</label><select id="tokensLot" disabled><option value="">Carregando lotes…</option></select></div><div class="field"><label for="tokensRecipient">Empresa destinatária</label><select id="tokensRecipient" disabled><option value="">Carregando empresas…</option></select></div><button class="btn" id="tokensCreateOrder" disabled>Enviar lote</button></section>';}
+function tokenizationPane(){return '<section class="panel pad"><h2>Enviar lote</h2><p>Selecione o lote e a empresa destinatária. O lote entra no estoque da destinatária quando ela aceitar o recebimento.</p><button class="btn" id="tokensConnect">Conectar carteira Ethereum</button><button class="btn ghost" id="tokensRefresh">Atualizar</button><p id="tokensStatus" role="status"></p><div class="field"><label for="tokensLot">Lote disponível</label><select id="tokensLot" disabled><option value="">Carregando lotes…</option></select></div><div id="tokensLotComposition" aria-live="polite" hidden></div><div class="field"><label for="tokensRecipient">Empresa destinatária</label><select id="tokensRecipient" disabled><option value="">Carregando empresas…</option></select></div><button class="btn" id="tokensCreateOrder" disabled>Enviar lote</button></section><section class="panel pad"><h2>Recebimentos pendentes</h2><p>Confira a massa e os elementos de cada lote antes de aceitar. Envios pendentes ficam fora da lista de lotes disponíveis.</p><div id="tokensIncoming" aria-live="polite"></div></section>';}
 async function productTokenizationRender(){
  const host=document.getElementById('productTokenization');if(!host)return;
- host.tokenCleanup?.();host.innerHTML=tokenizationPane();let cancelled=false,busy=false,ctx,compatible=false;
+ host.tokenCleanup?.();host.innerHTML=tokenizationPane();let cancelled=false,busy=false,ctx,compatible=false,compositionRequest=0;const availableLots=new Map(),verifiedOrders=new Map();let privateLotsData=null;
  host.tokenCleanup=()=>{cancelled=true;};
  const history=document.getElementById('e1OrdersPanel');if(!history)return;
  history.innerHTML='<section class="panel pad"><h2>Envios e recebimentos</h2><p id="tokensOrderStatus" role="status"></p><div id="tokensOrdersTable"></div></section>';
@@ -4615,7 +4625,8 @@ async function productTokenizationRender(){
  const el=id=>document.getElementById(id),esc=escaparHtml;
  const name=id=>CLIENT_BALANCE_ACTORS.find(a=>igualHex(a.actor_id,id))?.display_name||ATORES.find(a=>igualHex(a.id,id))?.nome||id;
  const ready=()=>{if(live())el('tokensCreateOrder').disabled=busy||!compatible||!el('tokensLot').value||!el('tokensRecipient').value;};
- const run=async fn=>{if(busy||!live())return;busy=true;ready();for(const b of history.querySelectorAll('button'))b.disabled=true;try{await fn();}catch(e){if(live())el('tokensStatus').textContent=e.shortMessage||e.message;}finally{busy=false;ready();for(const b of history.querySelectorAll('button'))b.disabled=false;}};
+ const orderButtons=()=>[...history.querySelectorAll('[data-order]'),...host.querySelectorAll('[data-order]')];
+ const run=async fn=>{if(busy||!live())return;busy=true;ready();for(const b of orderButtons())b.disabled=true;try{await fn();}catch(e){if(live())el('tokensStatus').textContent=e.shortMessage||e.message;}finally{busy=false;ready();for(const b of orderButtons())b.disabled=b.dataset.reviewBlocked==='true';}};
  async function writable(){if(!ctx){ctx=await newLotsContext(true);if(!await ctx.registry.authorizedWallets(who,ctx.account)){ctx=null;throw Error('Carteira não autorizada para esta empresa.');}}return ctx;}
  async function send(fn){el('tokensStatus').textContent='Confirme na carteira.';const tx=await fn();el('tokensStatus').textContent='Aguardando confirmação: '+tx.hash;await tx.wait();if(live())el('tokensStatus').textContent='Confirmado: '+tx.hash;}
  async function orders(c){
@@ -4623,13 +4634,61 @@ async function productTokenizationRender(){
   for(let i=0;i<count;i++){if(!live())return [];const id=await c.lots.getActorOrderId(who,i);rows.push({id,o:await c.lots.getOrder(id)});}
   if(!live())return [];
   const labels=['Inexistente','Aguardando aceite','Aceito','Em custódia','Recebido','Expirado','Cancelado','Rejeitado'];
-  el('tokensOrdersTable').innerHTML=rows.length?'<div class="scrollx"><table><thead><tr><th>Lote</th><th>Origem</th><th>Destino</th><th>Estado</th><th>Ações</th></tr></thead><tbody>'+rows.map(({id,o})=>'<tr><td class="mono">'+esc(o.lotId)+'</td><td>'+esc(name(o.sender))+'</td><td>'+esc(name(o.recipient))+'</td><td>'+labels[Number(o.status)]+'</td><td>'+(Number(o.status)===1?(igualHex(o.recipient,who)?'<button class="btn" data-order="'+id+'" data-method="acceptOrder">Aceitar recebimento</button><button class="btn ghost" data-order="'+id+'" data-method="rejectOrder">Rejeitar lote</button>':'<button class="btn ghost" data-order="'+id+'" data-method="cancelOrder">Cancelar envio</button>'):'')+'</td></tr>').join('')+'</tbody></table></div>':'<p>Nenhum envio ou recebimento registrado para esta empresa neste contrato.</p>';
-  el('tokensOrderStatus').textContent=count+' pedidos registrados no contrato.';
-  for(const button of history.querySelectorAll('[data-order]'))button.onclick=()=>run(async()=>{const c=await writable();await send(()=>c.lots[button.dataset.method](button.dataset.order));await load();await actorStockRefresh();});
+  const reviews=new Map();
+  const renderOrders=()=>{
+   if(!live())return;
+   const actions=({id,o})=>{
+    if(Number(o.status)!==1)return '';
+    if(!igualHex(o.recipient,who))return '<button class="btn ghost" data-order="'+esc(id)+'" data-method="cancelOrder">Cancelar envio</button>';
+    const checked=verifiedOrders.has(String(id).toLowerCase());
+    return '<button class="btn" data-order="'+esc(id)+'" data-method="acceptOrder" data-review-blocked="'+(!checked)+'"'+(!checked||busy?' disabled':'')+'>Aceitar recebimento</button><button class="btn ghost" data-order="'+esc(id)+'" data-method="rejectOrder"'+(busy?' disabled':'')+'>Rejeitar lote</button>';
+   };
+   const content=({id,o},prefix)=>{
+    const review=reviews.get(String(id).toLowerCase());
+    const base='<p class="mono" style="overflow-wrap:anywhere">'+esc(o.lotId)+'</p>';
+    if(!review)return base+'<p role="status">Conferindo massa e composição privadas… O aceite será liberado após a conferência.</p>';
+    if(review.error)return base+'<p role="status">'+esc(review.error)+'</p>';
+    const model=review.model;
+    const summary='<p><b>'+esc(review.row.document.lotReference||'Lote')+'</b></p><p>Massa total: <b>'+esc(actorKg(model.total))+'</b></p>'+model.groups.map(x=>'<p><b>'+esc(x.element)+'</b>: '+esc(actorKg(x.mass))+' · '+esc((Number(x.mass*1000000n/model.total)/10000).toLocaleString('pt-BR',{maximumFractionDigits:4}))+'%</p>').join('')+'<p>Restante sem composição especificada: '+esc(actorKg(model.remainder))+'</p>';
+    return base+summary+'<details><summary>Ver componentes do lote</summary>'+e1LotCompositionBody(model,prefix)+'</details>';
+   };
+   el('tokensOrdersTable').innerHTML=rows.length?'<div class="scrollx"><table><thead><tr><th>Lote e quantidades verificadas</th><th>Origem</th><th>Destino</th><th>Estado</th><th>Ações</th></tr></thead><tbody>'+rows.map((entry,i)=>'<tr><td>'+content(entry,'order-history-'+i)+'</td><td>'+esc(name(entry.o.sender))+'</td><td>'+esc(name(entry.o.recipient))+'</td><td>'+esc(labels[Number(entry.o.status)]||'Estado desconhecido')+'</td><td>'+actions(entry)+'</td></tr>').join('')+'</tbody></table></div>':'<p>Nenhum envio ou recebimento registrado para esta empresa neste contrato.</p>';
+   const incoming=rows.filter(({o})=>Number(o.status)===1&&igualHex(o.recipient,who));
+   el('tokensIncoming').innerHTML=incoming.length?incoming.map((entry,i)=>'<article class="panel pad"><h3>Recebimento de '+esc(name(entry.o.sender))+'</h3>'+content(entry,'order-incoming-'+i)+actions(entry)+'</article>').join(''):'<p>Nenhum lote aguardando seu aceite.</p>';
+   el('tokensOrderStatus').textContent=count+' pedidos registrados no contrato · '+incoming.length+' recebimentos aguardando aceite.';
+   e1BindCompositionTabs(history);e1BindCompositionTabs(el('tokensIncoming'));
+   for(const button of orderButtons())button.onclick=()=>run(async()=>{
+    const c=await writable();
+    if(button.dataset.method==='acceptOrder'){
+     const review=verifiedOrders.get(button.dataset.order.toLowerCase());
+     if(!review)throw Error('Confira as quantidades privadas verificadas antes de aceitar este lote.');
+     const blockTag=await c.provider.getBlockNumber(),order=await c.lots.getOrder(button.dataset.order,{blockTag});
+     if(Number(order.status)!==1||!igualHex(order.recipient,who)||!igualHex(order.lotId,review.row.id))throw Error('O recebimento mudou. Atualize a lista antes de aceitar.');
+     const lot=await c.lots.getLot(order.lotId,{blockTag});
+     if(!igualHex(lot.commitment,e1OpeningHash(review.row.opening,await c.lots.getAddress())))throw Error('O compromisso do lote diverge das quantidades apresentadas.');
+     await e1VerifiedLotComposition(c,review.row,blockTag);
+    }
+    await send(()=>c.lots[button.dataset.method](button.dataset.order));await load();await actorStockRefresh();
+   });
+  };
+  renderOrders();
+  const blockTag=privateLotsData?.blockTag??await c.provider.getBlockNumber();
+  for(const entry of rows){
+   if(!live())return [];
+   const {id,o}=entry,key=String(id).toLowerCase(),row=privateLotsData?.rows.find(r=>igualHex(r.id,o.lotId));
+   try{
+    if(!row)throw Error('Dados privados deste lote não estão acessíveis. A origem precisa disponibilizar o documento e a prova para esta conta antes do aceite.');
+    const model=await e1VerifiedLotComposition(c,row,blockTag);
+    reviews.set(key,{row,model});
+    if(Number(o.status)===1&&igualHex(o.recipient,who))verifiedOrders.set(key,{row,model});
+   }catch(error){reviews.set(key,{error:'Quantidades indisponíveis: '+(error.shortMessage||error.message)});}
+   renderOrders();
+  }
   return rows;
  }
  async function load(){
   if(!who)return;
+  compositionRequest++;availableLots.clear();verifiedOrders.clear();privateLotsData=null;el('tokensLotComposition').replaceChildren();el('tokensLotComposition').hidden=true;
   const knownCompanies=CLIENT_BALANCE_ACTORS.length?CLIENT_BALANCE_ACTORS:ATORES.map(a=>({actor_id:a.id,display_name:a.nome}));
   const knownRecipients=knownCompanies.filter(a=>!igualHex(a.actor_id,who));
   el('tokensRecipient').replaceChildren(new Option('Selecione uma empresa',''),...knownRecipients.map(a=>new Option(a.display_name,a.actor_id)));el('tokensRecipient').disabled=!knownRecipients.length;
@@ -4637,19 +4696,42 @@ async function productTokenizationRender(){
   try{compatible=Number(await c.lots.CUSTODY_VERSION())===2;}catch(e){if(e.code!=='CALL_EXCEPTION')throw e;}
   if(!live())return;
   if(!compatible){el('tokensLot').replaceChildren(new Option('Contrato de lotes incompatível',''));el('tokensLot').disabled=true;el('tokensStatus').textContent='O contrato configurado ainda usa o fluxo antigo. Para enviar sem prazo e receber por aceite, configure o novo Lots de custódia.';el('tokensOrderStatus').textContent='Histórico de custódia aguardando configuração do contrato compatível.';return;}
+  let warning='';
+  try{privateLotsData=await e1ReadLots(c);if(privateLotsData.warnings.length)warning=' Alguns documentos privados não puderam ser conferidos.';}
+  catch(e){warning=' Dados privados indisponíveis: '+(e.shortMessage||e.message);}
+  if(!live())return;
   const custody=await orders(c),available=new Map();
   // Incoming lots remain discoverable even when the private document is not shared.
   for(const {o} of custody||[]){const lot=await c.lots.getLot(o.lotId);if(igualHex(lot.holder,who)&&Number(lot.state)===1&&await c.lots.requireUsable.staticCall(o.lotId).then(()=>true,()=>false))available.set(o.lotId,{id:o.lotId,label:o.lotId});}
-  let warning='';try{const data=await e1ReadLots(c);for(const r of data.rows)if(igualHex(r.lot.holder,who)&&Number(r.lot.state)===1&&r.usable)available.set(r.id,{id:r.id,label:(r.document.lotReference||r.document.lotId||'Lote')+' · '+r.id});if(data.warnings.length)warning=' Alguns documentos privados não puderam ser conferidos.';}catch(e){warning=' Dados privados indisponíveis: '+(e.shortMessage||e.message);}
+  for(const r of privateLotsData?.rows||[])if(igualHex(r.lot.holder,who)&&Number(r.lot.state)===1&&r.usable)available.set(r.id,{id:r.id,row:r,label:(r.document.lotReference||r.document.lotId||'Lote')+' · '+actorKg(BigInt(r.opening.materialMassMg))+' · '+r.id});
   const companies=CLIENT_BALANCE_ACTORS.length?CLIENT_BALANCE_ACTORS:ATORES.map(a=>({actor_id:a.id,display_name:a.nome})),recipients=[];
   for(const a of companies)if(!igualHex(a.actor_id,who)&&await c.registry.actorActive(a.actor_id))recipients.push(a);
   if(!live())return;
   el('tokensLot').replaceChildren(new Option(available.size?'Selecione um lote':'Nenhum lote disponível',''),...[...available.values()].map(r=>new Option(r.label,r.id)));el('tokensLot').disabled=!available.size;
   el('tokensRecipient').replaceChildren(new Option('Selecione uma empresa',''),...recipients.map(a=>new Option(a.display_name,a.actor_id)));el('tokensRecipient').disabled=!recipients.length;
+  for(const [id,item]of available)availableLots.set(id.toLowerCase(),item);
   el('tokensStatus').textContent=available.size+' lotes disponíveis.'+warning;
  }
  el('tokensConnect').onclick=()=>run(async()=>{await writable();el('tokensStatus').textContent='Carteira conectada.';});
- el('tokensRefresh').onclick=()=>run(load);el('tokensLot').onchange=ready;el('tokensRecipient').onchange=ready;
+ el('tokensRefresh').onclick=()=>run(load);
+ el('tokensLot').onchange=async()=>{
+  ready();const request=++compositionRequest,id=el('tokensLot').value,panel=el('tokensLotComposition');panel.replaceChildren();panel.hidden=!id;if(!id)return;
+  const item=availableLots.get(id.toLowerCase());
+  if(!item?.row){panel.textContent='A composição privada deste lote não está disponível para esta sessão.';return;}
+  panel.textContent='Conferindo a composição privada do lote…';
+  try{
+   const c=await newLotsContext(false),blockTag=await c.provider.getBlockNumber();
+   const data=await e1LoadElemental(c,{evidenceId:item.row.lot.evidenceId,elementalProofId:item.row.lot.elementalProofId},blockTag);
+   const model=e1LotComposition(item.row,data.doc);
+   if(live()&&request===compositionRequest&&el('tokensLot').value===id){
+    panel.innerHTML=e1LotCompositionBody(model);
+    const tabs=[...panel.querySelectorAll('[data-lot-view]')];
+    const activate=tab=>{for(const t of tabs){const selected=t===tab;t.setAttribute('aria-selected',String(selected));t.tabIndex=selected?0:-1;panel.querySelector('#'+t.getAttribute('aria-controls')).hidden=!selected;}};
+    tabs.forEach((tab,index)=>{tab.onclick=()=>activate(tab);tab.onkeydown=event=>{if(!['ArrowLeft','ArrowRight','Home','End'].includes(event.key))return;event.preventDefault();const next=event.key==='Home'?0:event.key==='End'?tabs.length-1:(index+(event.key==='ArrowRight'?1:-1)+tabs.length)%tabs.length;activate(tabs[next]);tabs[next].focus();};});
+   }
+  }catch(error){if(live()&&request===compositionRequest)panel.textContent='Composição indisponível: '+(error.shortMessage||error.message);}
+ };
+ el('tokensRecipient').onchange=ready;
  el('tokensCreateOrder').onclick=()=>run(async()=>{const c=await writable(),requestId=ethers.hexlify(ethers.randomBytes(32)),lotId=checkedHash(el('tokensLot').value),recipient=checkedHash(el('tokensRecipient').value);
  const reference=JSON.stringify({schema:'ExploreChem/CustodyRequest/v2',sender:who,recipient,lotId,requestId,chainId:11155111,lots:await c.lots.getAddress()});
  await send(()=>c.lots.createOrder(who,requestId,recipient,lotId,ethers.keccak256(ethers.toUtf8Bytes(reference)),0));await load();await actorStockRefresh();});
@@ -5168,6 +5250,7 @@ function loadStockMuf(c,row,blockTag){
  return cache.get(key);
 }
 async function fetchStockMuf(c,row,blockTag){
+ if(!row.lot.mufProofId||igualHex(row.lot.mufProofId,ethers.ZeroHash))throw Error('Ainda não existe prova MUF para esta evidência.');
  const proof=await c.registry.getProof(row.lot.mufProofId,{blockTag});if(!igualHex(proof.proofId,row.lot.mufProofId)||!igualHex(proof.evidenceId,row.lot.evidenceId)||Number(proof.proofType)!==1)throw Error('Prova MUF incompatível com o lote.');
    const path='muf-results/'+row.lot.evidenceId.slice(2).toLowerCase()+'/'+row.lot.mufProofId.slice(2).toLowerCase()+'.json',signed=await supabaseClient.storage.from(EVIDENCE_BUCKET).createSignedUrl(path,900);if(signed.error)throw signed.error;const response=await fetch(signed.data.signedUrl,{cache:'no-store'});if(!response.ok)throw Error('Documento privado MUF indisponível.');const bytes=new Uint8Array(await response.arrayBuffer());if(!igualHex(ethers.keccak256(bytes),proof.committedHash))throw Error('Hash do documento MUF divergente.');const doc=JSON.parse(new TextDecoder().decode(bytes));if(doc.schema!=='ExploreChem/PrivateMUFResult/v1'||!igualHex(doc.result?.evidenceId,row.lot.evidenceId))throw Error('Documento MUF incompatível.');return {proof,result:doc.result,bytes};
 }
@@ -5232,14 +5315,8 @@ function renderStockProofs(c,rows,blockTag,active){
    for(const [label,kind,record]of items){if(!active())return;const box=document.createElement('section');const title=document.createElement('h4');title.textContent=label;box.append(title);for(const name of ['evidenceHash','committedHash','inputCommitmentHash','methodologyHash','status','createdAt']){if(record[name]===undefined)continue;const line=document.createElement('p');line.textContent=name+': '+record[name];line.style.overflowWrap='anywhere';box.append(line);}details.append(box);try{const tx=await productFindProofTransaction(c.provider,EXPLORERCHEM_CONTRACT_ADDRESS,kind,record,active);if(active())box.append(productExplorerAnchor('Abrir transação '+tx,tx));}catch(e){if(active()){const line=document.createElement('p');line.textContent='Link indisponível: '+(e.shortMessage||e.message);box.append(line);}}}
   });
   action('Consultar / baixar JSON ELEMENTAL',async()=>{
- const proof=await c.registry.getProof(r.lot.elementalProofId,{blockTag});
- if(!igualHex(proof.proofId,r.lot.elementalProofId)||!igualHex(proof.evidenceId,r.lot.evidenceId)||Number(proof.proofType)!==3)throw Error('Prova ELEMENTAL incompatível.');
- const path='elemental-results/'+r.lot.evidenceId.slice(2).toLowerCase()+'/'+r.lot.elementalProofId.slice(2).toLowerCase()+'.json';
- const signed=await supabaseClient.storage.from(EVIDENCE_BUCKET).createSignedUrl(path,300);if(signed.error)throw signed.error;
- const response=await fetch(signed.data.signedUrl,{cache:'no-store'});if(!response.ok)throw Error('JSON ELEMENTAL indisponível.');
- const bytes=new Uint8Array(await response.arrayBuffer());if(!igualHex(ethers.keccak256(bytes),proof.committedHash))throw Error('Hash do JSON ELEMENTAL divergente.');
- const doc=JSON.parse(new TextDecoder().decode(bytes));if(doc.schema!=='ExploreChem/PrivateElementalResult/v2'||!igualHex(doc.evidenceId,r.lot.evidenceId))throw Error('Documento ELEMENTAL incompatível com E1.');
- if(!active())return;const pre=document.createElement('pre');pre.style.cssText='white-space:pre-wrap;overflow-wrap:anywhere';pre.textContent=JSON.stringify(doc,null,2);details.replaceChildren(pre);stockDownload(bytes,'elemental-'+r.lot.elementalProofId+'.json');
+ const data=await e1LoadElemental(c,{evidenceId:r.lot.evidenceId,elementalProofId:r.lot.elementalProofId},blockTag);
+ if(!active())return;const pre=document.createElement('pre');pre.style.cssText='white-space:pre-wrap;overflow-wrap:anywhere';pre.textContent=JSON.stringify(data.doc,null,2);details.replaceChildren(pre);stockDownload(data.bytes,'elemental-'+data.proof.proofId+'.json');
  });
   action('Baixar JSON original',async()=>{
  const row=await supabaseClient.from('explorerchem_evidences').select('storage_bucket,storage_path').eq('evidence_id',r.lot.evidenceId).single();if(row.error)throw row.error;
@@ -5421,21 +5498,170 @@ function bindStockHistory(c,actorId,currentRows,blockTag,active){
  if(!host.hidden)host.historyLoad();
 }
 
+
+// E1 private proofs: bytes are checked before any calculation is displayed.
+async function e1LoadElemental(c,ref,blockTag){
+ const evidence=await c.registry.getEvidence(ref.evidenceId,{blockTag});
+ const id=ref.elementalProofId&&!igualHex(ref.elementalProofId,ethers.ZeroHash)?ref.elementalProofId:String(await c.registry.latestProofId(ref.evidenceId,3,{blockTag}));
+ if(igualHex(id,ethers.ZeroHash))throw Error('Ainda não existe prova ELEMENTAL para esta evidência.');
+ const proof=await c.registry.getProof(id,{blockTag});
+ if(!igualHex(proof.proofId,id)||!igualHex(proof.evidenceId,ref.evidenceId)||!igualHex(proof.evidenceHash,evidence.evidenceHash)||Number(proof.proofType)!==3)throw Error('Prova ELEMENTAL incompatível com a evidência.');
+ const path='elemental-results/'+ref.evidenceId.slice(2).toLowerCase()+'/'+id.slice(2).toLowerCase()+'.json';
+ const signed=await supabaseClient.storage.from(EVIDENCE_BUCKET).createSignedUrl(path,300);if(signed.error)throw signed.error;
+ const response=await fetch(signed.data.signedUrl,{cache:'no-store'});if(!response.ok)throw Error('JSON ELEMENTAL: HTTP '+response.status);
+ const bytes=new Uint8Array(await response.arrayBuffer());
+ if(!igualHex(ethers.keccak256(bytes),proof.committedHash))throw Error('Hash do JSON ELEMENTAL diverge da prova on-chain.');
+ const doc=JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(bytes));
+ if(!['ExploreChem/PrivateElementalResult/v1','ExploreChem/PrivateElementalResult/v2'].includes(doc.schema))throw Error('Formato do documento ELEMENTAL não suportado.');
+ const result=doc.schema.endsWith('/v1')?doc.result:doc;
+ if(!result||!igualHex(result.evidenceId,ref.evidenceId))throw Error('Documento ELEMENTAL pertence a outra evidência.');
+ for(const value of [doc.actorId,doc.result?.actorId])if(value&&!igualHex(value,evidence.actorId))throw Error('Ator do resultado ELEMENTAL divergente.');
+ for(const value of [doc.expectedEvidenceHash,doc.result?.expectedEvidenceHash])if(value&&!igualHex(value,evidence.evidenceHash))throw Error('Hash de origem do resultado ELEMENTAL divergente.');
+ // The MUF dependency belongs to the verified result, not to the E1 Lot tuple.
+ const mufProofId=doc.mufProofId||doc.result?.mufProofId;
+ if(mufProofId){
+  const muf=await c.registry.getProof(mufProofId,{blockTag});
+  if(!igualHex(muf.proofId,mufProofId)||!igualHex(muf.evidenceId,ref.evidenceId)||Number(muf.proofType)!==1)throw Error('Dependência MUF incompatível.');
+  const expected=doc.expectedMufHash||doc.result?.expectedMufHash;
+  if(expected&&!igualHex(expected,muf.committedHash))throw Error('Hash da dependência MUF divergente.');
+ }
+ return {proof,doc,bytes,path,mufProofId};
+}
+function e1ElementalCalculations(doc){
+ const found=[];
+ const visit=(value,path,element)=>{
+  if(!value||typeof value!=='object')return;
+  element=typeof value.element==='string'?value.element:element;
+  if(!Array.isArray(value)&&('availableElementMassMg' in value||'accountedElementMassMg' in value)){
+   found.push({calculation:value,element:element||null,path});return;
+  }
+  for(const [key,child]of Object.entries(value))if(child&&typeof child==='object')visit(child,path?path+'.'+key:key,element);
+ };
+ visit(doc,'',null);
+ // The legacy single calculation aliases the first item in elements[].
+ // Prefer the explicit collection, keeping every distinct element.
+ const listed=found.filter(x=>/(^|\.)(elements|calculations)\.\d+(\.|$)/.test(x.path));
+ const normalize=e=>typeof e==='string'?e.trim().toUpperCase():null;
+ const primary=listed.length?listed.concat(found.filter(x=>!listed.includes(x)&&!listed.some(y=>normalize(y.element)&&normalize(y.element)===normalize(x.element)))):found;
+ const canonical=v=>Array.isArray(v)?v.map(canonical):v&&typeof v==='object'?Object.fromEntries(Object.keys(v).sort().map(k=>[k,canonical(v[k])])):v;
+ const seen=new Set();return primary.filter(x=>{const key=JSON.stringify([normalize(x.element),canonical(x.calculation)]);if(seen.has(key))return false;seen.add(key);return true;});
+}
+function e1LotComposition(row,doc){
+ const output=row.document.e1.outputs.find(x=>igualHex(x.opening.lotId,row.id));
+ if(!output)throw Error('Corrente de origem do lote não encontrada.');
+ const groups=new Map();
+ for(const {calculation,element}of e1ElementalCalculations(doc)){
+  const matches=(calculation.streams||[]).filter(x=>x.streamId===output.streamId);
+  if(matches.length!==1)throw Error('Corrente do lote ausente ou ambígua no resultado elemental.');
+  const stream=matches[0],name=element||stream.element;
+  if(!name||!/^\d+$/.test(String(stream.containedElementMassMg)))throw Error('Composição elemental incompleta.');
+  if(String(stream.dryMassMg)!==String(row.opening.materialMassMg))throw Error('Massa da corrente difere da abertura do lote.');
+  if(groups.has(name))throw Error('Elemento repetido na composição do lote.');
+  groups.set(name,BigInt(stream.containedElementMassMg));
+ }
+ if(!groups.size)throw Error('O resultado não contém a composição desta corrente.');
+ const total=BigInt(row.opening.materialMassMg),tracked=[...groups.values()].reduce((a,b)=>a+b,0n);
+ if(tracked>total)throw Error('Composição excede a massa do lote.');
+ // Quantities must agree with the already verified E1 opening, including zeros omitted by E1.
+ const expected=row.opening.elements.map(x=>x.basisHash.toLowerCase()+':'+BigInt(x.massMg)).sort();
+ const actual=[...groups].filter(([,mass])=>mass>0n).map(([element,mass])=>ethers.id('ExploreChem/Element/'+element+'/dry/mg/v1').toLowerCase()+':'+mass).sort();
+ if(JSON.stringify(expected)!==JSON.stringify(actual))throw Error('Quantidades elementais diferem da abertura privada do lote.');
+ return {total,tracked,groups:[...groups].map(([element,mass])=>({element,mass})),remainder:total-tracked};
+}
+function e1LotCompositionBody(model,prefix='tokensLot'){
+ prefix=String(prefix).replace(/[^a-zA-Z0-9_-]/g,'');
+ const esc=escaparHtml,palette=['#2dd4bf','#60a5fa','#c084fc','#fbbf24','#fb7185','#a3e635'];
+ const items=model.groups.filter(x=>x.mass>0n).map((x,i)=>({...x,color:palette[i%palette.length]}));
+ if(model.remainder>0n)items.push({element:'Massa sem composição especificada',mass:model.remainder,color:'#365951'});
+ let consumed=0n;const stops=items.map(x=>{const begin=model.total?Number(consumed*1000000n/model.total)/10000:0;consumed+=x.mass;const end=model.total?Number(consumed*1000000n/model.total)/10000:0;return x.color+' '+begin+'% '+end+'%';});
+ const percent=n=>model.total?(Number(n*1000000n/model.total)/10000).toLocaleString('pt-BR',{maximumFractionDigits:4})+'%':'Sem massa';
+ return '<section class="panel pad"><nav class="product-nav" role="tablist" aria-label="Lote selecionado"><button type="button" role="tab" data-lot-view="summary" aria-selected="false" aria-controls="'+prefix+'Summary" tabindex="-1">Lote</button><button type="button" role="tab" data-lot-view="components" aria-selected="true" aria-controls="'+prefix+'Components">Componentes</button></nav><div id="'+prefix+'Summary" role="tabpanel" hidden><h3>Lote selecionado</h3><p>Massa seca: <b>'+esc(actorKg(model.total))+'</b></p><p>Massa dos elementos rastreados: <b>'+esc(actorKg(model.tracked))+'</b></p><p>Elementos: '+esc(model.groups.map(x=>x.element).join(', '))+'</p></div><div id="'+prefix+'Components" role="tabpanel"><span class="section-eyebrow">COMPOSIÇÃO DO LOTE SELECIONADO</span><h3>Material e elementos</h3><div class="e1-lot-composition"><div class="e1-lot-ring" role="img" aria-label="'+esc(items.map(x=>x.element+': '+actorKg(x.mass)+' ('+percent(x.mass)+')').join('; '))+'" style="background:conic-gradient('+stops.join(',')+')"><div><strong>'+esc(actorKg(model.total))+'</strong><small>massa seca do lote</small></div></div><div class="e1-lot-legend">'+items.map(x=>'<div><i style="background:'+x.color+'"></i><b>'+esc(x.element)+'</b><span>'+esc(actorKg(x.mass))+'</span><small>'+esc(percent(x.mass))+'</small></div>').join('')+'</div></div><p class="ec-note">As fatias representam a massa deste lote. Os elementos já estão incluídos na massa total. A massa restante não tem composição especificada.</p></div></section>';
+}
+function e1BindCompositionTabs(root){
+ for(const section of root.querySelectorAll('[aria-label="Lote selecionado"]')){
+  const panel=section.parentElement,tabs=[...section.querySelectorAll('[data-lot-view]')];
+  const activate=tab=>{for(const t of tabs){const selected=t===tab;t.setAttribute('aria-selected',String(selected));t.tabIndex=selected?0:-1;const content=panel.querySelector('#'+t.getAttribute('aria-controls'));if(content)content.hidden=!selected;}};
+  tabs.forEach((tab,index)=>{tab.onclick=()=>activate(tab);tab.onkeydown=event=>{if(!['ArrowLeft','ArrowRight','Home','End'].includes(event.key))return;event.preventDefault();const next=event.key==='Home'?0:event.key==='End'?tabs.length-1:(index+(event.key==='ArrowRight'?1:-1)+tabs.length)%tabs.length;activate(tabs[next]);tabs[next].focus();};});
+ }
+}
+async function e1VerifiedLotComposition(c,row,blockTag){
+ const data=await e1LoadElemental(c,{evidenceId:row.lot.evidenceId,elementalProofId:row.lot.elementalProofId},blockTag);
+ if(Number(data.proof.status)!==2)throw Error('A prova ELEMENTAL deste lote não está CALCULATED.');
+ return e1LotComposition(row,data.doc);
+}
+function e1ElementalBody(data){
+ const esc=escaparHtml,metric=(label,value)=>'<div class="product-metric"><span>'+esc(label)+'</span><strong>'+esc(value)+'</strong></div>';
+ const mass=value=>{if(!/^-?\d+$/.test(String(value)))throw Error('Massa elemental inválida no documento.');const n=BigInt(value);return (n<0n?'−':'')+actorKg(n<0n?-n:n);};
+ const pct=value=>{if(!/^\d+$/.test(String(value)))throw Error('Percentual elemental inválido no documento.');const n=BigInt(value);return (n/1000000n).toString()+','+(n%1000000n).toString().padStart(6,'0')+'%';};
+ const cards=e1ElementalCalculations(data.doc).map(({calculation:c,element,path})=>{
+  let html='<section class="panel pad"><h3>'+esc(element||path)+'</h3><div class="product-metrics">';
+  for(const [key,label]of [['availableElementMassMg','Elemento disponível'],['accountedElementMassMg','Elemento contabilizado'],['absoluteElementalDifferenceMg','Diferença absoluta'],['signedElementalDifferenceMg','Diferença com sinal']])if(c[key]!=null)html+=metric(label,mass(c[key]));
+  for(const [key,label]of [['absoluteElementalDifferencePercentScaled6','Diferença percentual'],['elementalRecoveryPercentScaled6','Recuperação elemental']])if(c[key]!=null)html+=metric(label,pct(c[key]));
+  html+='</div>';
+  if(Array.isArray(c.streams)&&c.streams.length){
+   const keys=['streamId','streamType','side','dryMassMg','containedElementMassMg'];
+   html+='<div class="scrollx"><table><thead><tr>'+['Corrente','Tipo','Lado do balanço','Massa seca','Elemento contido'].map(k=>'<th>'+k+'</th>').join('')+'</tr></thead><tbody>'+c.streams.map(row=>'<tr>'+keys.map(k=>'<td>'+esc(row[k]==null?'Campo ausente no JSON':k.endsWith('Mg')?mass(row[k]):row[k])+'</td>').join('')+'</tr>').join('')+'</tbody></table></div>';
+  }
+  if(c.formula)html+='<p>'+esc(c.formula)+'</p>';
+  return html+'</section>';
+ }).join('');
+ const status=Number(data.proof.status)===2?'CALCULATED':clientProofStatus(data.proof.status);
+ return '<section class="panel pad"><h2>Balanço elemental</h2><p>Hash do JSON conferido com a prova na Sepolia · '+esc(status)+'</p><p>As quantidades elementais estão contidas na massa do material.</p></section>'+cards+'<details class="product-details"'+(cards?'':' open')+'><summary>JSON ELEMENTAL verificado e dados da prova</summary><p class="mono" style="overflow-wrap:anywhere">Prova '+esc(data.proof.proofId)+'<br>Hash '+esc(data.proof.committedHash)+'</p><pre class="json-code" style="white-space:pre-wrap;overflow-wrap:anywhere">'+esc(JSON.stringify(data.doc,null,2))+'</pre></details><button class="btn ghost" data-e1-elemental-download>Baixar JSON ELEMENTAL verificado</button>';
+}
+function e1RenderElemental(c,rows,registrations,actorId,blockTag,active){
+ const host=document.getElementById('productElement');if(!host)return;
+ const refs=new Map();
+ for(const registration of registrations)if(igualHex(registration.actorId,actorId))refs.set(registration.evidenceId.toLowerCase(),{evidenceId:registration.evidenceId,reference:registration.reference});
+ for(const row of rows)refs.set(row.lot.evidenceId.toLowerCase(),{evidenceId:row.lot.evidenceId,elementalProofId:row.lot.elementalProofId,reference:row.document.lotReference||row.lot.evidenceId});
+ host.replaceChildren();
+ const pane=document.createElement('section');pane.className='panel pad';
+ const label=document.createElement('label');label.textContent='Evidência / operação';const select=document.createElement('select');select.setAttribute('aria-label','Selecionar balanço elemental');label.append(select);pane.append(label);host.append(pane);
+ const content=document.createElement('div');content.setAttribute('aria-live','polite');host.append(content);
+ for(const ref of refs.values()){const option=document.createElement('option');option.value=ref.evidenceId;option.textContent=ref.reference;select.append(option);}
+ if(!refs.size){select.disabled=true;content.textContent='Nenhuma evidência E1 disponível para esta empresa.';return;}
+ let request=0;const cache=new Map();
+ const load=async()=>{
+  const token=++request,ref=refs.get(select.value.toLowerCase());content.textContent='Conferindo a prova ELEMENTAL e o JSON privado…';
+  try{
+   let data=cache.get(ref.evidenceId);if(!data){data=await e1LoadElemental(c,ref,blockTag);cache.set(ref.evidenceId,data);}
+   if(!active()||!host.isConnected||token!==request)return;
+   content.innerHTML=e1ElementalBody(data);
+   content.querySelector('[data-e1-elemental-download]').onclick=()=>stockDownload(data.bytes,'elemental-'+data.proof.proofId+'.json');
+  }catch(error){if(active()&&host.isConnected&&token===request){content.textContent='Balanço elemental indisponível: '+(error.shortMessage||error.message);}}
+ };
+ select.onchange=load;load();
+}
+
+function e1BindStockLotDetails(host,c,rows,blockTag,active){
+ for(const button of host.querySelectorAll('[data-stock-lot]'))button.onclick=async()=>{
+  const row=rows.find(r=>igualHex(r.id,button.dataset.stockLot));if(!row)return;
+  const dialog=document.createElement('dialog');dialog.className='panel pad';dialog.style.cssText='max-width:850px;width:calc(100% - 32px);max-height:90vh;overflow:auto';
+  const title=document.createElement('h2');title.textContent=row.document.lotReference||row.id;dialog.append(title);
+  const content=document.createElement('div');content.textContent='Conferindo quantidades do lote…';dialog.append(content);
+  const close=document.createElement('button');close.className='btn ghost';close.textContent='Fechar';close.onclick=()=>dialog.close();dialog.append(close);
+  dialog.addEventListener('close',()=>dialog.remove(),{once:true});document.body.append(dialog);dialog.showModal();
+  try{const model=await e1VerifiedLotComposition(c,row,blockTag);if(!active()||!dialog.isConnected){dialog.close();return;}content.innerHTML=e1LotCompositionBody(model,'stock-lot-detail');e1BindCompositionTabs(content);}
+  catch(error){if(dialog.isConnected)content.textContent='Quantidades indisponíveis: '+(error.shortMessage||error.message);}
+ };
+}
 async function actorStockRefresh(){
  const root=document.querySelector('.product-dashboard');if(!root)return;
  const request=++ACTOR_STOCK_REQUEST,actorId=document.getElementById('clientLiveActorSelect')?.value;
  const active=()=>root.isConnected&&request===ACTOR_STOCK_REQUEST;
- const host=document.getElementById('productOverview');if(!actorId){host.textContent='Entre e selecione uma empresa autorizada.';return;}
+ const host=document.getElementById('productOverview');
+ for(const id of ['productElement','productProofContent','e1RegistrationHistory','e1RegisteredLots'])document.getElementById(id)?.replaceChildren();
+ if(!actorId){host.textContent='Entre e selecione uma empresa autorizada.';return;}
  host.textContent='Consultando lotes E1 e verificando documentos privados…';
  try{
   const c=await newLotsContext(false),data=await e1ReadLots(c);if(!active())return;
   const rows=data.rows.filter(r=>igualHex(r.lot.holder,actorId)),esc=escaparHtml;
   const current=rows.filter(r=>[1,2,3].includes(Number(r.lot.state))),mass=current.reduce((n,r)=>n+BigInt(r.opening.materialMassMg),0n);
   host.innerHTML='<section class="panel pad"><h2>Estoque privado · E1</h2><p>'+current.length+' lotes sob responsabilidade · '+esc(actorKg(mass))+'</p><p>Massas lidas de documentos privados e conferidas contra os compromissos públicos. Componentes já integram a massa total.</p>'+data.warnings.map(w=>'<p>'+esc(w)+'</p>').join('')+(data.warnings.length?'<b>Leitura parcial: valores indisponíveis não foram somados.</b>':'')+'</section><section id="ecMufSection"></section>';
-  const table='<section class="panel pad"><h2>Lotes e compromissos</h2><p>Lista das evidências autorizadas indexadas no Supabase; não é uma varredura de todos os lotes da rede.</p><div style="overflow:auto"><table><thead><tr><th>Lote</th><th>Estado</th><th>Massa privada</th><th>Compromisso</th><th>Provas utilizáveis</th></tr></thead><tbody>'+rows.map(r=>'<tr><td class="mono">'+esc(r.id)+'</td><td>'+E1_STATES[Number(r.lot.state)]+'</td><td>'+esc(actorKg(BigInt(r.opening.materialMassMg)))+'</td><td class="mono">'+esc(r.lot.commitment)+'</td><td>'+(r.usable?'Sim':'Não')+'</td></tr>').join('')+'</tbody></table></div></section>';
-  const lotPanel=document.getElementById('e1RegisteredLots');if(lotPanel)lotPanel.innerHTML=table;
+  const table='<section class="panel pad"><h2>Lotes e compromissos</h2><p>Lista das evidências autorizadas indexadas no Supabase; não é uma varredura de todos os lotes da rede.</p><div style="overflow:auto"><table><thead><tr><th>Lote</th><th>Estado</th><th>Massa privada</th><th>Compromisso</th><th>Provas utilizáveis</th></tr></thead><tbody>'+rows.map(r=>'<tr><td><button type="button" class="btn ghost" data-stock-lot="'+esc(r.id)+'">'+esc(r.document.lotReference||r.id)+'</button><p class="mono" style="overflow-wrap:anywhere">'+esc(r.id)+'</p></td><td>'+E1_STATES[Number(r.lot.state)]+'</td><td>'+esc(actorKg(BigInt(r.opening.materialMassMg)))+'</td><td class="mono">'+esc(r.lot.commitment)+'</td><td>'+(r.usable?'Sim':'Não')+'</td></tr>').join('')+'</tbody></table></div></section>';
+  const lotPanel=document.getElementById('e1RegisteredLots');if(lotPanel){lotPanel.innerHTML=table;e1BindStockLotDetails(lotPanel,c,rows,data.blockTag,active);}
   renderStockProofs(c,rows,data.blockTag,active);
   const history=document.getElementById('e1RegistrationHistory');if(history)history.innerHTML='<section class="panel pad"><h2>Cadastros por JSON</h2>'+data.registrations.filter(r=>igualHex(r.actorId,actorId)).map(r=>'<p><strong>'+esc(r.reference)+'</strong><br>Evidência '+esc(r.evidenceId)+'<br>'+esc(new Date(Number(r.createdAt)*1000).toLocaleString())+'<br>'+r.outputs.map(id=>{const lot=data.rows.find(x=>igualHex(x.id,id));return esc(id)+' · '+(lot?E1_STATES[Number(lot.lot.state)]:'Aguardando criação on-chain');}).join('<br>')+'</p>').join('')+'</section>';
+  e1RenderElemental(c,rows,data.registrations,actorId,data.blockTag,active);
   renderMufDashboard(c,rows,data.blockTag,active);
   const note=document.getElementById('productPeriodNote');if(note)note.textContent='Sepolia · bloco '+data.blockTag+' · dados privados autorizados';
 
@@ -6342,7 +6568,7 @@ async function e1PrivateJson(bucket,path,hash,algorithm='KECCAK-256'){
 async function e1ReadLots(c){
  await clientBalanceEnsureSession();const blockTag=await c.provider.getBlockNumber(),address=await c.lots.getAddress();
  const metadata=[];for(let offset=0;;offset+=100){const r=await supabaseClient.from('explorerchem_evidences').select('evidence_id,evidence_hash,hash_algorithm,storage_bucket,storage_path').order('id').range(offset,offset+99);if(r.error)throw r.error;metadata.push(...r.data);if(r.data.length<100)break;}
- const rows=new Map(),warnings=[],registrations=[];
+ const rows=new Map(),warnings=[],registrations=[],mufIds=new Map();
  for(const e of metadata){
   let evidence;try{evidence=await c.registry.getEvidence(e.evidence_id,{blockTag});}catch(err){if(err.code==='CALL_EXCEPTION')continue;throw err;}
   try{
@@ -6354,7 +6580,8 @@ async function e1ReadLots(c){
     if(!igualHex(e1OpeningHash(opening,address),lot.commitment))throw Error('Abertura privada não corresponde ao compromisso do lote.');
     const evidenceId=await c.lots.lotEvidence(id,{blockTag});if(!igualHex(evidenceId,e.evidence_id))throw Error('Origem do lote divergente.');
     const usable=await c.lots.requireUsable.staticCall(id,{blockTag}).then(()=>true,()=>false);
-    rows.set(id,{id,lot:{...lot.toObject(),evidenceId,elementalProofId:lot.proofId},opening,usable,document:doc});
+    if(!mufIds.has(evidenceId))mufIds.set(evidenceId,String(await c.registry.latestProofId(evidenceId,1,{blockTag})));
+    rows.set(id,{id,lot:{...lot.toObject(),evidenceId,mufProofId:mufIds.get(evidenceId),elementalProofId:lot.proofId},opening,usable,document:doc});
    }
   }catch(err){warnings.push(e.evidence_id+': '+(err.shortMessage||err.message));}
  }
@@ -6373,9 +6600,9 @@ function e1BindClient(){
  const lots=document.getElementById('productLots'),history=document.getElementById('productHistory');
  let transfer=document.getElementById('productTokenization');if(!transfer){transfer=document.createElement('section');transfer.id='productTokenization';}lots.append(transfer);transfer.hidden=false;
  history.innerHTML='<div id="e1RegistrationHistory"></div><div id="e1OrdersPanel"></div><div id="e1RegisteredLots"></div>';
- const panels={lots:'productLots',history:'productHistory',proof:'productProof',overview:'productOverview'},labels={lots:'Lotes',history:'Histórico',proof:'Comprovação',overview:'Consolidado'};
- nav.replaceChildren();function activate(key){for(const [k,id] of Object.entries(panels)){const n=document.getElementById(id);if(n){n.hidden=k!==key;n.classList.remove('client-live-hidden');}}for(const b of nav.children){b.setAttribute('aria-selected',String(b.dataset.productTab===key));b.tabIndex=b.dataset.productTab===key?0:-1;}}
- for(const key of Object.keys(panels)){const b=document.createElement('button');b.type='button';b.dataset.productTab=key;b.setAttribute('role','tab');b.textContent=labels[key];b.onclick=()=>activate(key);nav.append(b);}activate('lots');
+ const panels={lots:'productLots',element:'productElement',history:'productHistory',proof:'productProof',overview:'productOverview'},labels={lots:'Lotes',element:'Elemental',history:'Histórico',proof:'Comprovação',overview:'Consolidado'};
+ nav.replaceChildren();function activate(key){for(const [k,id] of Object.entries(panels)){const n=document.getElementById(id);if(n){n.hidden=k!==key;n.classList.remove('client-live-hidden');}}root.dataset.activeTab=key;for(const b of nav.children){b.setAttribute('aria-selected',String(b.dataset.productTab===key));b.tabIndex=b.dataset.productTab===key?0:-1;}}
+ for(const key of Object.keys(panels)){const b=document.createElement('button');b.type='button';b.dataset.productTab=key;b.id='tab-'+key;b.setAttribute('role','tab');b.setAttribute('aria-controls',panels[key]);b.textContent=labels[key];b.onclick=()=>activate(key);nav.append(b);}activate('lots');
  const actor=document.getElementById('clientLiveActorSelect');actor.onchange=()=>{productTokenizationRender();actorStockRefresh();};document.getElementById('clientLiveRefresh').onclick=()=>{productTokenizationRender();actorStockRefresh();};productTokenizationRender();
 }
 const E1_STATES=['INEXISTENTE','ATIVO','EM CUSTÓDIA','GRAVADO','CONSUMIDO'];
