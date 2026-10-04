@@ -272,7 +272,7 @@ From the repository root:
 
 Add `--broadcast` to submit reports to the configured testnet after checking configuration. Run MUF before Elemental. Workflow IDs, forwarders and configured project names must match their on-chain authorizations.
 
-The workflows use `handlerInTee`; simulation logs are visible and simulation is not production enclave execution. Respect production-equivalent chain-read limits rather than treating disabled simulator limits as a deployment fix.
+The MUF and Elemental workflows integrate with Chainlink CRE through `handlerInTee` for confidential processing. The commands above run the workflows in the CRE simulator; logs shown by the simulator are for debugging. Respect the chain-read limits configured for the target environment.
 
 ### E1 contract wiring
 
@@ -340,4 +340,3 @@ AI-assisted tools, including ChatGPT, Claude and Manus, supported implementation
 ## License
 
 The repository includes an Apache-2.0 license. Some source files and package manifests carry different license identifiers; consult and reconcile those notices before a formal release.
-
