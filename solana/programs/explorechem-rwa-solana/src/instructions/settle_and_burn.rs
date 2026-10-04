@@ -1,5 +1,7 @@
+use crate::state::{RedemptionAuthority, RedemptionQuote};
 use crate::instructions::lineage::LineageRegistry;
 use anchor_lang::prelude::*;
+use anchor_lang::system_program::{self, Transfer};
 
 use anchor_spl::{
     token_2022::{
@@ -45,14 +47,20 @@ pub struct SettleAndBurn<'info> {
     )]
     pub config: Account<'info, Config>,
 
-    // ============================================================
-    // TRUSTED ATTESTOR
-    // ============================================================
-    //
-    // Backend / CRE / TEE confirma que o pagamento
-    // realmente ocorreu antes desta instrução.
-    //
-    pub trusted_attestor: Signer<'info>,
+    // Qualquer carteira pode financiar o pagamento integral solicitado.
+    // O titular recebe SOL; o pagador não recebe o token nem o direito.
+    #[account(mut, owner = system_program::ID)]
+    pub issuer_payer: Signer<'info>,
+
+    #[account(seeds=[b"redemption-authority", series.series_id.as_ref()], bump=redemption_authority.bump,
+        constraint=redemption_authority.series_id == series.series_id @ ExploreChemRwaError::WrongRedemptionSeries)]
+    pub redemption_authority: Account<'info, RedemptionAuthority>,
+
+    #[account(seeds=[b"redemption-quote", series.series_id.as_ref()], bump=redemption_quote.bump,
+        constraint=redemption_quote.series_id == series.series_id @ ExploreChemRwaError::WrongRedemptionSeries)]
+    pub redemption_quote: Account<'info, RedemptionQuote>,
+
+    pub system_program: Program<'info, System>,
 
     // ============================================================
     // SERIES
@@ -188,6 +196,7 @@ pub struct SettleAndBurn<'info> {
 pub fn handle_settle_and_burn(
     ctx: Context<SettleAndBurn>,
     settlement_hash: [u8; 32],
+    redemption_lamports: u64,
 ) -> Result<()> {
     // ============================================================
     // CONFIG
@@ -196,16 +205,6 @@ pub fn handle_settle_and_burn(
     require!(
         !ctx.accounts.config.paused,
         ExploreChemRwaError::ProgramPaused
-    );
-
-    // ============================================================
-    // SOMENTE TRUSTED ATTESTOR
-    // ============================================================
-
-    require_keys_eq!(
-        ctx.accounts.trusted_attestor.key(),
-        ctx.accounts.config.trusted_attestor,
-        ExploreChemRwaError::UnauthorizedAttestor
     );
 
     // ============================================================
@@ -226,6 +225,28 @@ pub fn handle_settle_and_burn(
         settlement_hash != [0u8; 32],
         ExploreChemRwaError::ZeroSettlementHash
     );
+
+    require!(redemption_lamports == ctx.accounts.redemption_quote.lamports, ExploreChemRwaError::RedemptionAmountChanged);
+    require!(redemption_lamports > 0, ExploreChemRwaError::InvalidRedemptionAmount);
+    require_keys_neq!(
+        ctx.accounts.issuer_payer.key(),
+        ctx.accounts.holder.key(),
+        ExploreChemRwaError::SelfRedemptionPayment
+    );
+
+    // SOL nativo: valor proposto pelo titular e aceito pela emissora, nunca
+    // o preco da Listing do mercado secundario. Qualquer erro posterior
+    // reverte o pagamento junto com burn, estados e liberacao da reserva.
+    system_program::transfer(
+        CpiContext::new(
+            ctx.accounts.system_program.key(),
+            Transfer {
+                from: ctx.accounts.issuer_payer.to_account_info(),
+                to: ctx.accounts.holder.to_account_info(),
+            },
+        ),
+        redemption_lamports,
+    )?;
 
     // ============================================================
     // PDA SIGNER DO ESCROW
@@ -352,6 +373,8 @@ pub fn handle_settle_and_burn(
 
     emit!(RedemptionSettled {
         series_id,
+        issuer_payer: ctx.accounts.issuer_payer.key(),
+        redemption_lamports,
 
         mint:
             ctx.accounts.mint.key(),
@@ -373,6 +396,8 @@ pub fn handle_settle_and_burn(
 
 #[event]
 pub struct RedemptionSettled {
+    pub issuer_payer: Pubkey,
+    pub redemption_lamports: u64,
     pub series_id: [u8; 32],
 
     pub mint: Pubkey,
@@ -384,4 +409,39 @@ pub struct RedemptionSettled {
     pub settlement_hash: [u8; 32],
 
     pub settled_at: i64,
+}
+
+// Rotacao por serie, inclusive enquanto um resgate esta pendente.
+// As duas carteiras assinam; nao exige attestor nem altera termos/issuer.
+#[derive(Accounts)]
+pub struct RotateRedemptionAuthority<'info> {
+    pub current_issuer_wallet: Signer<'info>,
+    #[account(owner = system_program::ID)]
+    pub new_issuer_wallet: Signer<'info>,
+    #[account(mut,
+        seeds=[b"redemption-authority", redemption_authority.series_id.as_ref()],
+        bump=redemption_authority.bump,
+        constraint=redemption_authority.issuer_wallet == current_issuer_wallet.key()
+            @ ExploreChemRwaError::UnauthorizedRedemptionIssuer)]
+    pub redemption_authority: Account<'info, RedemptionAuthority>,
+}
+
+pub fn handle_rotate_redemption_authority(ctx: Context<RotateRedemptionAuthority>) -> Result<()> {
+    let previous_wallet = ctx.accounts.redemption_authority.issuer_wallet;
+    let new_wallet = ctx.accounts.new_issuer_wallet.key();
+    require_keys_neq!(previous_wallet, new_wallet, ExploreChemRwaError::SameRedemptionWallet);
+    ctx.accounts.redemption_authority.issuer_wallet = new_wallet;
+    emit!(RedemptionAuthorityRotated {
+        series_id: ctx.accounts.redemption_authority.series_id,
+        previous_wallet,
+        new_wallet,
+    });
+    Ok(())
+}
+
+#[event]
+pub struct RedemptionAuthorityRotated {
+    pub series_id: [u8; 32],
+    pub previous_wallet: Pubkey,
+    pub new_wallet: Pubkey,
 }

@@ -1,3 +1,4 @@
+use crate::state::RedemptionQuote;
 use anchor_lang::prelude::*;
 
 use anchor_spl::{
@@ -41,6 +42,9 @@ pub struct RequestRedemption<'info> {
     //
     #[account(mut)]
     pub holder: Signer<'info>,
+    #[account(init, payer=holder, space=8+RedemptionQuote::INIT_SPACE,
+        seeds=[b"redemption-quote", series.series_id.as_ref()], bump)]
+    pub redemption_quote: Account<'info, RedemptionQuote>,
 
     // ============================================================
     // CONFIG
@@ -180,6 +184,7 @@ pub struct RequestRedemption<'info> {
 pub fn handle_request_redemption(
     ctx: Context<RequestRedemption>,
     holder_actor_id: [u8; 32],
+    redemption_lamports: u64,
 ) -> Result<()> {
     // ============================================================
     // CONFIG
@@ -212,6 +217,11 @@ pub fn handle_request_redemption(
     // ============================================================
     // TRANSFERE 1 RWA DO HOLDER PARA O ESCROW
     // ============================================================
+
+    require!(redemption_lamports > 0, ExploreChemRwaError::InvalidRedemptionAmount);
+    ctx.accounts.redemption_quote.series_id = ctx.accounts.series.series_id;
+    ctx.accounts.redemption_quote.lamports = redemption_lamports;
+    ctx.accounts.redemption_quote.bump = ctx.bumps.redemption_quote;
 
     token_2022::transfer_checked(
         CpiContext::new(
@@ -312,4 +322,23 @@ pub struct RedemptionRequested {
     pub holder_actor_id: [u8; 32],
 
     pub requested_at: i64,
+}
+
+// O titular pode ajustar a proposta enquanto aguarda aceite da emissora.
+#[derive(Accounts)]
+pub struct UpdateRedemptionQuote<'info> {
+    pub holder: Signer<'info>,
+    #[account(seeds=[b"redemption", redemption.series_id.as_ref()], bump=redemption.bump,
+        constraint=redemption.holder_wallet == holder.key() @ ExploreChemRwaError::WrongRedemptionHolder,
+        constraint=redemption.status == REDEMPTION_STATUS_REQUESTED @ ExploreChemRwaError::InvalidRedemptionStatus)]
+    pub redemption: Account<'info, Redemption>,
+    #[account(mut, seeds=[b"redemption-quote", redemption.series_id.as_ref()], bump=redemption_quote.bump,
+        constraint=redemption_quote.series_id == redemption.series_id @ ExploreChemRwaError::WrongRedemptionSeries)]
+    pub redemption_quote: Account<'info, RedemptionQuote>,
+}
+
+pub fn handle_update_redemption_quote(ctx: Context<UpdateRedemptionQuote>, lamports: u64) -> Result<()> {
+    require!(lamports > 0, ExploreChemRwaError::InvalidRedemptionAmount);
+    ctx.accounts.redemption_quote.lamports = lamports;
+    Ok(())
 }

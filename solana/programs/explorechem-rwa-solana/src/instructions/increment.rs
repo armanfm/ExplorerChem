@@ -1,3 +1,4 @@
+use crate::state::RedemptionAuthority;
 use crate::state::CreditLock;
 use crate::instructions::lineage::{LineageRegistry, LineageError};
 use anchor_lang::prelude::*;
@@ -28,6 +29,12 @@ pub struct CreateSeries<'info> {
     pub config: Account<'info, Config>,
 
     pub trusted_attestor: Signer<'info>,
+
+    // A emissora confirma na emissao a carteira que aceitara os resgates.
+    pub issuer_wallet: Signer<'info>,
+    #[account(init, payer=payer, space=8+RedemptionAuthority::INIT_SPACE,
+        seeds=[b"redemption-authority", args.series_id.as_ref()], bump)]
+    pub redemption_authority: Account<'info, RedemptionAuthority>,
 
     #[account(
         init,
@@ -143,6 +150,11 @@ pub fn handle_create_series(
     credit.series_id = args.series_id;
     credit.source_lot_id = args.source_lot_id;
     credit.bump = ctx.bumps.credit_lock;
+
+    let authority = &mut ctx.accounts.redemption_authority;
+    authority.series_id = args.series_id;
+    authority.issuer_wallet = ctx.accounts.issuer_wallet.key();
+    authority.bump = ctx.bumps.redemption_authority;
 
     let series = &mut ctx.accounts.series;
 

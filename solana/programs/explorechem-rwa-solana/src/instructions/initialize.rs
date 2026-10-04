@@ -67,3 +67,39 @@ pub struct ConfigInitialized {
     pub source_chain_id: u64,
     pub source_lots_contract: [u8; 20],
 }
+
+#[derive(Accounts)]
+pub struct UpdateSourceConfig<'info> {
+    pub authority: Signer<'info>,
+    #[account(mut, seeds = [b"config"], bump = config.bump, has_one = authority)]
+    pub config: Account<'info, Config>,
+}
+
+pub fn handle_update_source_config(
+    ctx: Context<UpdateSourceConfig>,
+    source_chain_id: u64,
+    source_lots_contract: [u8; 20],
+) -> Result<()> {
+    require!(source_chain_id != 0, ExploreChemRwaError::InvalidSource);
+    require!(source_lots_contract != [0u8; 20], ExploreChemRwaError::InvalidSource);
+    let config = &mut ctx.accounts.config;
+    emit!(SourceConfigUpdated {
+        authority: config.authority,
+        previous_chain_id: config.source_chain_id,
+        previous_lots_contract: config.source_lots_contract,
+        source_chain_id,
+        source_lots_contract,
+    });
+    config.source_chain_id = source_chain_id;
+    config.source_lots_contract = source_lots_contract;
+    Ok(())
+}
+
+#[event]
+pub struct SourceConfigUpdated {
+    pub authority: Pubkey,
+    pub previous_chain_id: u64,
+    pub previous_lots_contract: [u8; 20],
+    pub source_chain_id: u64,
+    pub source_lots_contract: [u8; 20],
+}
