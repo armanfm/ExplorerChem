@@ -656,7 +656,7 @@ Open `http://127.0.0.1:8000/` in a browser with the required wallets.
 
 ```bash
 cd workflows/muf/muf-worflow
-bun install
+bun install --frozen-lockfile
 bun run typecheck
 ```
 
@@ -802,3 +802,4 @@ PYLICENSE
 ```
 
 These metadata changes take effect in the repository when the command is applied and committed. Changing source-license metadata does not require redeploying the program or changing application state.
+
