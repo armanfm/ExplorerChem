@@ -1,3 +1,4 @@
+import { buildOperation, inputIds, operationHash, emptyOperation, E1Error, REPORT_V3_ABI, type Operation, type ExpectedStream, type Context } from './e1';
 import {
   CronCapability,
   EVMClient,
@@ -40,7 +41,7 @@ import { z } from "zod";
  * ExploreChem — specialized ELEMENTAL workflow.
  *
  * Eligibility is deliberately sequential:
- *   mufStatus       === COMPLIANT
+ *   mufStatus       === CALCULATED
  *   elementalStatus === PENDING
  *
  * The workflow verifies both the original evidence and the private MUF result.
@@ -53,11 +54,11 @@ const DEFAULT_SCHEDULE = "0 0 0 * * 0";
 const PROOF_TYPE_MUF = 1;
 const PROOF_TYPE_ELEMENTAL = 3;
 const CHECK_STATUS_PENDING = 1;
-const CHECK_STATUS_COMPLIANT = 2;
+const CHECK_STATUS_CALCULATED = 2;
 const CHECK_STATUS_DIVERGENT = 3;
 const CHECK_STATUS_NOT_ATTESTED = 4;
 
-type ElementalStatus = "COMPLIANT" | "DIVERGENT" | "NOT_ATTESTED";
+type ElementalStatus = "CALCULATED" | "DIVERGENT" | "NOT_ATTESTED";
 
 const bytes32Schema = z
   .string()
@@ -239,6 +240,7 @@ type ProofCommitment = {
  */
 
 const ABI = [
+  {type:"function",name:"registryVersion",stateMutability:"view",inputs:[],outputs:[{name:"",type:"uint8"}]},
   {
     type: "function",
     name: "expectedWorkflowId",
@@ -369,7 +371,7 @@ function decimalString(value: unknown): string | null {
   if (value === null || value === undefined) return null;
 
   if (typeof value === "number") {
-    if (!Number.isFinite(value) || value < 0) return null;
+    if (!Number.isFinite(value) || value < 0 || value > Number.MAX_SAFE_INTEGER / 1_000_000) return null;
     const rendered = value.toString();
     return /^\d+(?:\.\d+)?$/.test(rendered) ? rendered : null;
   }
@@ -430,12 +432,15 @@ function bigintOrNull(value: unknown): bigint | null {
 }
 
 function statusCode(status: ElementalStatus): number {
-  if (status === "COMPLIANT") return CHECK_STATUS_COMPLIANT;
+  if (status === "CALCULATED") return CHECK_STATUS_CALCULATED;
   if (status === "DIVERGENT") return CHECK_STATUS_DIVERGENT;
   return CHECK_STATUS_NOT_ATTESTED;
 }
 
 const ELEMENTAL_METHODOLOGY = {
+  operationReportVersion: 3,
+  lotCommitmentDomain: "ExploreChem/LotCommitment/v1",
+  operationCommitmentDomain: "ExploreChem/OperationCommitment/v1",
   domain: "ExploreChem/ElementalMethodology/v1",
   calculationVersion: 1,
   massUnit: "mg",
@@ -631,11 +636,14 @@ const PROOF_EVENT_DATA = parseAbiParameters(
   "bytes32 committedHash, uint8 status, uint32 revision, bytes32 previousProofId, bytes32 inputCommitmentHash, bytes32 methodologyHash, bytes32 workflowId, uint64 createdAt",
 );
 const CHAIN_READ_LIMIT = 15;
+// Keep headroom for capability reads outside these explicit wrappers.
+const CHAIN_READ_SAFETY_MARGIN = 2;
+const EXPLICIT_CHAIN_READ_LIMIT = CHAIN_READ_LIMIT - CHAIN_READ_SAFETY_MARGIN;
 const chainReads = new WeakMap<object, number>();
 function reserveChainReads(runtime: TeeRuntime<Config>, count: number) {
   const used = chainReads.get(runtime) ?? 0;
-  if (used + count > CHAIN_READ_LIMIT) {
-    throw new Error(`CHAIN_READ_BUDGET: ${used} usadas; ${count} necessarias; limite 15. Nenhuma nova escrita autorizada por esta verificacao.`);
+  if (used + count > EXPLICIT_CHAIN_READ_LIMIT) {
+    throw new Error(`CHAIN_READ_BUDGET: ${used} usadas; ${count} necessarias; limite explicito ${EXPLICIT_CHAIN_READ_LIMIT}, com margem ${CHAIN_READ_SAFETY_MARGIN} do limite CRE ${CHAIN_READ_LIMIT}. Nenhuma nova escrita autorizada por esta verificacao.`);
   }
 }
 function countChainRead(runtime: TeeRuntime<Config>) {
@@ -666,7 +674,7 @@ function discoverEvidenceIds(runtime: TeeRuntime<Config>) {
   });
   // Newest proof event for each evidence/type wins within this interval.
   // An ELEMENTAL proof already anchored is not a pending root proof.
-  const muf = new Map<string, {id: Hex; status: number}>();
+  const muf = new Map<string, {id: Hex; proofId: Hex; status: number}>();
   const elemental = new Set<string>();
   for (const log of logs) {
     if (lower(bytesToHex(log.address)) !== lower(runtime.config.contractAddress) ||
@@ -677,15 +685,17 @@ function discoverEvidenceIds(runtime: TeeRuntime<Config>) {
     if (proofType === BigInt(PROOF_TYPE_ELEMENTAL)) elemental.add(lower(id));
     if (proofType === BigInt(PROOF_TYPE_MUF) && !muf.has(lower(id))) {
       const decoded = decodeAbiParameters(PROOF_EVENT_DATA, bytesToHex(log.data) as Hex);
-      muf.set(lower(id), {id, status: Number(decoded[1])});
+      const proofId = bytesToHex(log.topics[1]) as Hex;
+      if (lower(proofId) === lower(zeroHash)) throw new Error("Evento MUF sem proofId");
+      muf.set(lower(id), {id, proofId, status: Number(decoded[1])});
     }
   }
   const ids = [...muf.values()]
-    .filter(item => !elemental.has(lower(item.id)) && item.status === CHECK_STATUS_COMPLIANT)
+    .filter(item => !elemental.has(lower(item.id)) && item.status === CHECK_STATUS_CALCULATED)
     .map(item => item.id);
   const offset = runtime.config.onchainCandidateOffset ?? 0;
   runtime.log(`ONCHAIN_FIRST: Registry=${runtime.config.contractAddress}; blocos=${from}-${to}; candidatosElemental=${ids.length}; offset=${offset}; origem=PROOF_ANCHORED`);
-  return {ids: ids.slice(offset), offset, from: from.toString(), to: to.toString()};
+  return {ids: ids.slice(offset), mufProofIds: new Map([...muf].map(([id, item]) => [id, item.proofId])), offset, from: from.toString(), to: to.toString()};
 }
 function loadEvidenceById(runtime: TeeRuntime<Config>, key: string, evidenceId: Hex): EvidenceRow | null {
   const path = `/rest/v1/explorerchem_evidences?select=${EVIDENCE_SELECT}` +
@@ -767,9 +777,9 @@ function savePrivateResult(
 
 function callContract(
   runtime: TeeRuntime<Config>,
-  functionName: "getEvidence" | "getCurrentProofState" | "latestProofId" | "getProof" | "expectedWorkflowId",
+  functionName: "registryVersion" | "getEvidence" | "getCurrentProofState" | "latestProofId" | "getProof" | "expectedWorkflowId",
   args: readonly unknown[],
-) {
+): unknown {
   countChainRead(runtime);
   const callData = encodeFunctionData({
     abi: ABI,
@@ -848,20 +858,19 @@ function readLatestElementalProofId(
 }
 
 function selectEligibleEvidence(runtime: TeeRuntime<Config>, key: string): SelectedEvidence | null {
-  chainReads.set(runtime, 0);
   const scan = discoverEvidenceIds(runtime);
   let checked = 0;
   for (const evidenceId of scan.ids) {
     // Leave enough reads to process and confirm the next eligible evidence.
-    if ((chainReads.get(runtime) ?? 0) + 12 > CHAIN_READ_LIMIT) break;
+    if ((chainReads.get(runtime) ?? 0) + 11 > EXPLICIT_CHAIN_READ_LIMIT) break;
     const current = readCurrentElementalState(runtime, evidenceId);
     checked += 1;
     if (current.elementalStatus !== CHECK_STATUS_PENDING) {
       runtime.log(`ONCHAIN_SKIP: evidenceId=${evidenceId}; motivo=ELEMENTAL_NAO_PENDENTE`);
       continue;
     }
-    if (current.mufStatus !== CHECK_STATUS_COMPLIANT) {
-      runtime.log(`ONCHAIN_SKIP: evidenceId=${evidenceId}; motivo=MUF_NAO_COMPLIANT`);
+    if (current.mufStatus !== CHECK_STATUS_CALCULATED) {
+      runtime.log(`ONCHAIN_SKIP: evidenceId=${evidenceId}; motivo=MUF_NAO_CALCULATED`);
       continue;
     }
     const onchain = readEvidence(runtime, evidenceId);
@@ -874,7 +883,11 @@ function selectEligibleEvidence(runtime: TeeRuntime<Config>, key: string): Selec
       runtime.log(`ONCHAIN_SKIP: evidenceId=${evidenceId}; motivo=ATOR_PRIVADO_AUSENTE_INATIVO_OU_DIVERGENTE; nenhuma prova calculada ou enviada`);
       continue;
     }
-    const latestMufProofId = readLatestMufProofId(runtime, evidenceId);
+    // The on-chain event already identifies the immutable private MUF result.
+    // buildResult verifies its bytes against current.mufHash; the final gate
+    // independently checks latestProofId before submitting any report.
+    const latestMufProofId = scan.mufProofIds.get(lower(evidenceId));
+    if (!latestMufProofId) throw new Error(`${evidenceId}: evento MUF sem prova`);
     if (lower(latestMufProofId) === lower(zeroHash)) throw new Error(`${evidenceId}: MUF finalizado sem prova`);
     runtime.log(`ONCHAIN_SELECTED: evidenceId=${evidenceId}; mufStatus=${current.mufStatus}`);
     return {row, actor, onchain, current, latestMufProofId};
@@ -968,13 +981,13 @@ function calculateAllElements(document: Record<string,unknown>, muf:MufCalculati
   const result=calculateElemental(projected,muf,selected);
   // Explicit zero in every counted stream is absence, not a missing measurement.
   const allZero=assaysByStream.every(m=>decimalToScaled(m.get(element)?.value,6)===0n);
-  if(allZero&&result.reasonCodes.length===1&&result.reasonCodes[0]==='ZERO_AVAILABLE_ELEMENT_MASS')elements.push({element,status:'COMPLIANT',reasonCodes:['EXPLICIT_ZERO_NO_ISSUANCE'],calculation:null});
+  if(allZero&&result.reasonCodes.length===1&&result.reasonCodes[0]==='ZERO_AVAILABLE_ELEMENT_MASS')elements.push({element,status:'CALCULATED',reasonCodes:['EXPLICIT_ZERO_NO_ISSUANCE'],calculation:null});
   else elements.push({element,...result});
  }
  // Rounding cannot create more elemental mass than the carrier stream.
  for(const stream of counted){const results=elements.flatMap(e=>e.calculation?.streams.filter(s=>s.streamId===stream.streamId)??[]);if(results.length&&results.reduce((sum,s)=>sum+BigInt(s.containedElementMassMg),0n)>BigInt(results[0].dryMassMg))errors.push('ROUNDED_ELEMENTS_EXCEED_STREAM_MASS:'+String(stream.streamId));}
- const reasonCodes=[...errors,...elements.filter(e=>e.status!=='COMPLIANT').flatMap(e=>e.reasonCodes.map(r=>e.element+':'+r))];
- return {status:reasonCodes.length?'NOT_ATTESTED':'COMPLIANT',reasonCodes,elements};
+ const reasonCodes=[...errors,...elements.filter(e=>e.status!=='CALCULATED').flatMap(e=>e.reasonCodes.map(r=>e.element+':'+r))];
+ return {status:reasonCodes.length?'NOT_ATTESTED':'CALCULATED',reasonCodes,elements};
 }
 
 function calculateElemental(
@@ -1152,7 +1165,7 @@ function calculateElemental(
   );
 
   return {
-    status: "COMPLIANT",
+    status: "CALCULATED",
     reasonCodes: [],
     calculation: {
       element,
@@ -1251,7 +1264,7 @@ function buildResult(
   } catch {
     return finish(base, "NOT_ATTESTED", ["INVALID_PRIVATE_MUF_JSON"], null, "ELEMENTAL_NOT_ATTESTED");
   }
-  if (privateMuf?.result?.status !== "COMPLIANT" || !privateMuf.result.calculation) {
+  if (privateMuf?.result?.status !== "CALCULATED" || !privateMuf.result.calculation) {
     return finish(base, "NOT_ATTESTED", ["MUF_CALCULATION_NOT_ATTESTED"], null, "ELEMENTAL_NOT_ATTESTED");
   }
 
@@ -1259,7 +1272,7 @@ function buildResult(
   const calculated = {status:multi.status,reasonCodes:multi.reasonCodes,calculation:multi.elements.length===1?multi.elements[0].calculation:null};
   const completed = finish(
     base, calculated.status, calculated.reasonCodes, calculated.calculation,
-    calculated.status === "COMPLIANT"
+    calculated.status === "CALCULATED"
       ? "ELEMENTAL_CALCULATION_ATTESTED_NO_TOLERANCE_APPLIED"
       : "ELEMENTAL_NOT_ATTESTED",
   );
@@ -1275,8 +1288,10 @@ function buildProofCommitment(
   selected: SelectedEvidence,
   result: ElementalResult,
   committedHash: Hex,
+  operationInputHash?: Hex,
 ): ProofCommitment {
-  const inputCommitmentHash = hashObject({
+  const inputCommitmentHash = operationInputHash ?? hashObject({
+    committedHash,
     domain: "ExploreChem/ElementalInputCommitment/v1",
     evidenceId: selected.onchain.evidenceId,
     expectedEvidenceHash: selected.onchain.evidenceHash,
@@ -1315,19 +1330,11 @@ function buildProofCommitment(
   };
 }
 
-type TokenInput = { lotId: bigint; quantity: bigint };
-type TokenOutput = { streamId: Hex; basisHash: Hex; metadataHash: Hex; quantity: bigint; components:{basisHash:Hex;quantity:bigint}[]; recipientActorId:Hex };
-type TokenAction = { kind: number; operationId: Hex; mufProofId: Hex; inputs: TokenInput[]; outputs: TokenOutput[]; consumedComponents:{basisHash:Hex;quantity:bigint}[][] };
-const ACTION_ABI = parseAbiParameters('(uint8 kind,bytes32 operationId,bytes32 mufProofId,(uint256 lotId,uint256 quantity)[] inputs,(bytes32 streamId,bytes32 basisHash,bytes32 metadataHash,uint256 quantity,(bytes32 basisHash,uint256 quantity)[] components,bytes32 recipientActorId)[] outputs,(bytes32 basisHash,uint256 quantity)[][] consumedComponents)' as string);
-const REPORT_V2_ABI = parseAbiParameters('(uint8 version,uint256 chainId,address registry,(uint8 proofType,bytes32 evidenceId,bytes32 evidenceHash,bytes32 proofId,bytes32 committedHash,bytes32 inputCommitmentHash,bytes32 methodologyHash,bytes32 previousProofId,uint8 status,uint32 revision) proof,(uint8 kind,bytes32 operationId,bytes32 mufProofId,(uint256 lotId,uint256 quantity)[] inputs,(bytes32 streamId,bytes32 basisHash,bytes32 metadataHash,uint256 quantity,(bytes32 basisHash,uint256 quantity)[] components,bytes32 recipientActorId)[] outputs,(bytes32 basisHash,uint256 quantity)[][] consumedComponents) action)' as string);
 const TOKEN_READ_ABI = parseAbi([
  'function lotsContract() view returns (address)',
  'function registry() view returns (address)',
- 'function evidenceTokenized(bytes32) view returns (bool)',
- 'function balanceOf(bytes32,uint256) view returns (uint256)',
- 'function getLot(uint256) view returns ((bytes32 evidenceId,bytes32 elementalProofId,bytes32 mufProofId,bytes32 basisHash,bytes32 metadataHash,bytes32 streamId,bytes32 operationId,uint256 issued,uint256 supply))',
- 'function getConsumptionContext(bytes32 actorId,(uint256 lotId,uint256 quantity)[] inputs) view returns (((uint256 lotId,uint256 quantity)[] inputs,bytes32[] inputBases,(bytes32 basisHash,uint256 quantity)[][] inputComponents,uint256[] inputIssued,uint256[] inputBalances))',
- 'function getOperationLots(bytes32) view returns (uint256[])',
+ 'function getConsumptionContext(bytes32[] inputLotIds) view returns ((bytes32[] inputLotIds,bytes32[] inputCommitments,bytes32[] holders,uint8[] states))',
+ 'function getOperationLots(bytes32) view returns (bytes32[])',
 ]);
 function tokenRead(runtime: TeeRuntime<Config>, address: Address, functionName: string, args: readonly unknown[]): any {
  countChainRead(runtime);
@@ -1335,132 +1342,23 @@ function tokenRead(runtime: TeeRuntime<Config>, address: Address, functionName: 
  const response=new EVMClient(network(runtime).chainSelector.selector).callContract(runtime.usingTheDons(),{call:encodeCallMsg({from:zeroAddress,to:address,data}),blockNumber:LATEST_BLOCK_NUMBER}).result();
  return decodeFunctionResult({abi:TOKEN_READ_ABI,functionName,data:bytesToHex(response.data)} as any);
 }
-function uintToken(v: unknown): bigint {
- if(typeof v!=='string'||!/^\d+$/.test(v)||BigInt(v)<=0n||BigInt(v)>=(1n<<256n))throw Error('Token: quantidade e lotId devem ser strings inteiras positivas uint256.');
- return BigInt(v);
-}
-function serialAction(action: TokenAction) {
- return {...action,consumedComponents:action.consumedComponents.map(cs=>cs.map(c=>({...c,quantity:c.quantity.toString()}))),inputs:action.inputs.map(x=>({lotId:x.lotId.toString(),quantity:x.quantity.toString()})),outputs:action.outputs.map(x=>({...x,quantity:x.quantity.toString(),components:x.components.map(c=>({...c,quantity:c.quantity.toString()}))}))};
-}
-const MATERIAL_BASIS=keccak256(toHex('ExploreChem/MaterialMass/dry/mg/v1'));
-const MAX_MATERIAL_MASS=(1n<<96n)-1n;
-function buildTokenAction(selected: SelectedEvidence, result: ElementalResult, spec: Record<string,unknown>): TokenAction {
- if(result.status!=='COMPLIANT')return {kind:0,operationId:zeroHash,mufProofId:zeroHash,inputs:[],outputs:[],consumedComponents:[]};
- if(selected.current.mufStatus!==CHECK_STATUS_COMPLIANT)throw Error('MUF vigente deve estar COMPLIANT.');
- if(spec.mode!=='INITIAL'&&spec.mode!=='TRANSFORM')throw Error('Modo de material inválido.');
- const kind=spec.mode==='INITIAL'?1:2;
+function expectedStreams(result:ElementalResult,side:'AVAILABLE'|'ACCOUNTED'):ExpectedStream[]{
  const calculations=result.elements?.map(e=>e.calculation).filter((c):c is ElementalCalculation=>!!c)??(result.calculation?[result.calculation]:[]);
- if(!calculations.length||calculations.length>17)throw Error('Análise elemental ausente ou acima de 17 elementos.');
- const symbols=new Set(calculations.map(c=>c.element));if(symbols.size!==calculations.length)throw Error('Elemento duplicado.');
- const raw=spec.inputs??[];if(!Array.isArray(raw))throw Error('Entradas inválidas.');
- const inputs=raw.map(v=>{const x=recordOf(v);return {lotId:uintToken(x.lotId),quantity:uintToken(x.quantity)};});
- if(inputs.length>32||new Set(inputs.map(i=>String(i.lotId))).size!==inputs.length||kind===1&&inputs.length||kind===2&&!inputs.length)throw Error('Entradas materiais inválidas.');
- const allowed=new Set(kind===1?['INPUT','COLLECTED','OPENING_INVENTORY']:['OUTPUT','PRODUCT','SCRAP','REJECT','OTHER_OUTPUT','CLOSING_INVENTORY','DELIVERED']);
- const side=kind===1?'AVAILABLE':'ACCOUNTED';
- const streams=calculations[0].streams.filter(x=>x.side===side&&allowed.has(x.streamType)&&BigInt(x.dryMassMg)>0n);
- if(!streams.length||streams.length>32||new Set(streams.map(x=>x.streamId)).size!==streams.length)throw Error('Correntes materiais ausentes, duplicadas ou acima de 32.');
- const outputs:TokenOutput[]=streams.map(stream=>{
-  const quantity=uintToken(stream.dryMassMg);if(quantity>MAX_MATERIAL_MASS)throw Error('Massa acima do limite uint96.');
-  const assays=calculations.map(calc=>{
-   const matches=calc.streams.filter(x=>x.streamId===stream.streamId);
-   if(matches.length!==1||matches[0].dryMassMg!==stream.dryMassMg||matches[0].side!==side)throw Error('Corrente material incompatível entre análises.');
-   return {element:calc.element,stream:matches[0]};
-  });
-  const components=assays.filter(a=>BigInt(a.stream.containedElementMassMg)>0n).map(a=>({basisHash:hashObject({domain:'ExploreChem/ElementMassBasis/v1',element:a.element,unit:'mg'}),quantity:uintToken(a.stream.containedElementMassMg)}));
-  if(components.reduce((n,c)=>n+c.quantity,0n)>quantity)throw Error('Composição excede a massa do material.');
-  const destinations=recordOf(spec.recipients??{});
-  const recipientActorId=(destinations[stream.streamId]??spec.recipientActorId??selected.onchain.actorId) as Hex;
-  if(typeof recipientActorId!=='string'||!/^0x[0-9a-fA-F]{64}$/.test(recipientActorId)||lower(recipientActorId)===lower(zeroHash))throw Error('Destinatário deve ser actorId bytes32 válido.');
-  if(kind===1&&lower(recipientActorId)!==lower(selected.onchain.actorId))throw Error('Emissão inicial pertence à empresa da evidência.');
-  return {recipientActorId,streamId:hashObject({domain:'ExploreChem/MaterialStream/v1',evidenceId:result.evidenceId,streamId:stream.streamId}),basisHash:MATERIAL_BASIS,metadataHash:hashObject({domain:'ExploreChem/MaterialMetadata/v1',evidenceId:result.evidenceId,evidenceHash:result.expectedEvidenceHash,unit:'mg',massBasis:'DRY',streamId:stream.streamId,assays}),quantity,components};
+ if(!calculations.length)throw new E1Error('ELEMENTAL_CALCULATIONS_UNAVAILABLE');
+ return calculations[0].streams.filter(s=>s.side===side).map(stream=>{
+  const elements=calculations.map(calc=>{
+   const matches=calc.streams.filter(s=>s.streamId===stream.streamId&&s.side===side);
+   if(matches.length!==1||matches[0].dryMassMg!==stream.dryMassMg)throw new E1Error('INCONSISTENT_ELEMENT_STREAMS');
+   return {basisHash:keccak256(toHex(`ExploreChem/Element/${calc.element}/dry/mg/v1`)),massMg:BigInt(matches[0].containedElementMassMg)};
+  }).filter(e=>e.massMg>0n).sort((a,b)=>a.basisHash.localeCompare(b.basisHash));
+  return {streamId:stream.streamId,sourceLotId:stream.sourceLotId,materialMassMg:BigInt(stream.dryMassMg),elements};
  });
- const action={kind,operationId:hashObject({domain:'ExploreChem/MaterialOperation/v1',evidenceId:result.evidenceId,evidenceHash:result.expectedEvidenceHash}),mufProofId:selected.latestMufProofId,inputs,outputs,consumedComponents:[] as {basisHash:Hex;quantity:bigint}[][]};
- if(kind===2){
-  const ctx=spec.context as any;if(!ctx)throw Error('Contexto on-chain das origens obrigatório.');
-  // Each measured AVAILABLE stream belongs to an exact source lot.
-  // A single input is unambiguous; multiple lots require sourceLotId in the signed document.
-  const sourceOf=(stream:ElementalStreamResult)=>{
-   if(stream.sourceLotId!==undefined)return uintToken(stream.sourceLotId).toString();
-   if(inputs.length===1)return inputs[0].lotId.toString();
-   throw Error('Cada corrente de entrada exige sourceLotId quando há vários lotes de origem.');
-  };
-  const known=new Set(inputs.map(i=>String(i.lotId)));
-  for(const calc of calculations)for(const stream of calc.streams.filter(x=>x.side==='AVAILABLE'))
-   if(!known.has(sourceOf(stream)))throw Error('Corrente aponta para lote não declarado.');
-  action.consumedComponents=inputs.map(input=>{
-   const measured: {basisHash:Hex;quantity:bigint}[]=[];
-   for(const calc of calculations){
-    const streams=calc.streams.filter(x=>x.side==='AVAILABLE'&&sourceOf(x)===String(input.lotId));
-    if(!streams.length||streams.reduce((n,x)=>n+BigInt(x.dryMassMg),0n)!==input.quantity)throw Error('Massa analisada não corresponde à quantidade declarada do lote '+input.lotId);
-    const quantity=streams.reduce((n,x)=>n+BigInt(x.containedElementMassMg),0n);
-    if(quantity>0n)measured.push({basisHash:hashObject({domain:'ExploreChem/ElementMassBasis/v1',element:calc.element,unit:'mg'}),quantity});
-   }
-   return measured;
-  });
-  // An omitted analysis is not a measured zero: all recorded source bases must be assessed.
-  const declared=new Set(calculations.map(calc=>lower(hashObject({domain:'ExploreChem/ElementMassBasis/v1',element:calc.element,unit:'mg'}))));
-  for(const cs of ctx.inputComponents)for(const c of cs)if(BigInt(c.quantity)>0n&&!declared.has(lower(c.basisHash)))throw Error('Falta análise de um elemento registrado no lote de origem.');
-  validateMaterialConsumption(ctx,action);
- }
- return action;
 }
-function materialInputComponents(ctx:any):Map<string,bigint> {
- const totals=new Map<string,bigint>();
- if(ctx.inputComponents?.length!==ctx.inputs.length||ctx.inputIssued?.length!==ctx.inputs.length)throw Error('Composição on-chain incompleta.');
- for(let i=0;i<ctx.inputs.length;i++){
-  if(lower(ctx.inputBases[i])!==lower(MATERIAL_BASIS))throw Error('Lote de origem não usa massa material seca.');
-  for(const c of ctx.inputComponents[i]){const key=lower(c.basisHash);totals.set(key,(totals.get(key)??0n)+BigInt(c.quantity));}
- }
- return totals;
-}
-function validateMaterialConsumption(ctx:any,action:TokenAction) {
- if(ctx.inputs.length!==action.inputs.length||ctx.inputs.some((x:any,i:number)=>BigInt(x.lotId)!==action.inputs[i].lotId||BigInt(x.quantity)!==action.inputs[i].quantity))throw Error('Entradas diferem do documento.');
- materialInputComponents(ctx);
- if(action.consumedComponents.length!==action.inputs.length)throw Error('Composição medida de cada entrada obrigatória.');
- const consumed=new Map<string,bigint>(),produced=new Map<string,bigint>();let mass=0n;
- for(let i=0;i<action.inputs.length;i++){
-  const available=new Map<string,bigint>(ctx.inputComponents[i].map((c:any)=>[lower(c.basisHash),BigInt(c.quantity)]));
-  const q=action.inputs[i].quantity,supply=BigInt(ctx.inputIssued[i]),seen=new Set<string>();let removed=0n;
-  if(q<=0n||q>supply||q>BigInt(ctx.inputBalances[i])||action.consumedComponents[i].length>17)throw Error('Consumo material inválido.');
-  for(const c of action.consumedComponents[i]){
-   const basis=lower(c.basisHash);
-   if(seen.has(basis)||c.quantity<=0n||c.quantity>(available.get(basis)??0n))throw Error('Consumo elemental excede o saldo atual da origem ou repete elemento.');
-   seen.add(basis);removed+=c.quantity;consumed.set(basis,(consumed.get(basis)??0n)+c.quantity);
-  }
-  const stock=[...available.values()].reduce((n,q)=>n+q,0n);
-  if(removed>q||stock-removed>supply-q)throw Error('Composição medida ou saldo remanescente incompatível com a massa.');
- }
- for(const out of action.outputs){
-  if(lower(out.basisHash)!==lower(MATERIAL_BASIS)||out.quantity<=0n||out.quantity>MAX_MATERIAL_MASS||out.components.length>17)throw Error('Saída material inválida.');
-  const seen=new Set<string>();let contained=0n;mass+=out.quantity;
-  for(const c of out.components){const key=lower(c.basisHash);if(seen.has(key)||c.quantity<=0n)throw Error('Componente inválido ou repetido.');seen.add(key);contained+=c.quantity;produced.set(key,(produced.get(key)??0n)+c.quantity);}
-  if(contained>out.quantity)throw Error('Elementos excedem a massa do produto.');
- }
- if(mass>ctx.inputs.reduce((n:bigint,x:any)=>n+BigInt(x.quantity),0n))throw Error('Massa produzida excede a massa consumida.');
- for(const [basis,q]of produced)if(q>(consumed.get(basis)??0n))throw Error('Elemento produzido excede o conteúdo medido consumido.');
+function encodeProofReport(runtime:TeeRuntime<Config>,proof:ProofCommitment,op:Operation):Hex {
+ return encodeAbiParameters(REPORT_V3_ABI,[{version:3,chainId:BigInt(network(runtime).chainId),registry:runtime.config.contractAddress as Address,proof,op}]);
 }
 
-function checkTokenAction(runtime:TeeRuntime<Config>,selected:SelectedEvidence,action:TokenAction,prepared?:{lots:Address,ctx:any}):Address|null {
- if(action.kind===0)return null;
- const registry=runtime.config.contractAddress as Address;
- const lots=prepared?.lots??tokenRead(runtime,registry,'lotsContract',[]) as Address;
- if(lower(lots)===lower(zeroAddress))throw Error('Registry ainda não vinculado ao Lots.');
- if(!prepared&&lower(tokenRead(runtime,lots,'registry',[]))!==lower(registry))throw Error('Vínculo Registry/Lots inválido.');
- // The final root-proof gate and Lots.processTokenAction reject repeated issuance.
- // Keep the post-write evidenceTokenized confirmation; avoid a duplicate pre-read.
- if(action.kind===2){
-  const ctx=prepared?.ctx??tokenRead(runtime,registry,'getConsumptionContext',[selected.onchain.actorId,action.inputs]);
-  validateMaterialConsumption(ctx,action);
- }
-
- return lots;
-}
-
-function encodeProofReport(runtime:TeeRuntime<Config>,proof:ProofCommitment,action:TokenAction):Hex {
- return encodeAbiParameters(REPORT_V2_ABI,[{version:2,chainId:BigInt(network(runtime).chainId),registry:runtime.config.contractAddress as Address,proof,action}]);
-}
-
-function writeProof(runtime: TeeRuntime<Config>, proof: ProofCommitment, action: TokenAction): Hex {
+function writeProof(runtime: TeeRuntime<Config>, proof: ProofCommitment, action: Operation): Hex {
   const don = runtime.usingTheDons();
   const report = don
     .report({
@@ -1548,6 +1446,15 @@ function confirmWrittenProof(
   if (Number(anchored.proofType) !== proof.proofType) mismatches.push("proofType");
   if (Number(anchored.status) !== proof.status) mismatches.push("status");
   if (Number(anchored.revision) !== proof.revision) mismatches.push("revision");
+  // An all-zero response means this read has not observed the submitted
+  // proof. It is not evidence that writeReport failed. Do not retry the write.
+  const notObserved = hashFields.every(field => lower(anchored[field]) === lower(zeroHash)) &&
+    Number(anchored.proofType) === 0 && Number(anchored.status) === 0 &&
+    Number(anchored.revision) === 0;
+  if (notObserved) {
+    runtime.log(`ELEMENTAL: transacao enviada=${txHash}; confirmacao pendente para proofId=${proof.proofId}`);
+    return null;
+  }
   if (mismatches.length > 0) {
     throw new Error(JSON.stringify({
       message: "ELEMENTAL: getProof nao confirmou a prova enviada; causa da rejeicao ou atraso ainda nao determinada",
@@ -1571,7 +1478,9 @@ function confirmWrittenProof(
  */
 
 function run(runtime: TeeRuntime<Config>): string {
+  chainReads.set(runtime, 0);
   const { key } = secrets(runtime);
+  if(Number(callContract(runtime,"registryVersion",[]))!==3)throw Error("Registry configurado não é E1/ReportV3; nenhuma prova enviada.");
   const selected = selectEligibleEvidence(runtime, key);
 
   if (selected === null) {
@@ -1580,50 +1489,54 @@ function run(runtime: TeeRuntime<Config>): string {
       proofType: "ELEMENTAL",
       selectionSource: "ONCHAIN_EVENTS_CHAIN_STATUS",
       message:
-        "nenhuma evidencia utilizavel com ELEMENTAL PENDING e MUF COMPLIANT entre as provas on-chain do intervalo consultado",
+        "nenhuma evidencia utilizavel com ELEMENTAL PENDING e MUF CALCULATED entre as provas on-chain do intervalo consultado",
     });
   }
 
-  const result = buildResult(runtime, key, selected);
+  let result = buildResult(runtime, key, selected);
   let configuredLots:Address|null=null;
+  let action:Operation=emptyOperation();
+  let bindingHash:Hex|undefined;
+  let difference:unknown=null;
+  // Derive a private deterministic salt from a secret for all verdicts, including
+  // missing/invalid documents. Never put the API key itself in saved results/logs.
+  const proofSalt=hashObject({domain:'ExploreChem/PrivateResultSalt/v1',key,evidenceId:selected.onchain.evidenceId,mufProofId:selected.latestMufProofId});
   const document=verifiedDocuments.get(selected);
-  let actionSpec:Record<string,unknown>={mode:'INITIAL'};
-  let processingContext:any=null;
-  if(result.status==='COMPLIANT'){
-    if(!document)throw Error('Documento verificado ausente.');
+  if(result.status==='CALCULATED'){
     configuredLots=tokenRead(runtime,runtime.config.contractAddress as Address,'lotsContract',[]) as Address;
-    if(lower(configuredLots)===lower(zeroAddress))throw Error('Registry ainda não vinculado ao Lots.');
+    if(lower(configuredLots)===lower(zeroAddress))throw Error('Registry ainda não vinculado ao Lots E1.');
     if(lower(tokenRead(runtime,configuredLots,'registry',[]))!==lower(runtime.config.contractAddress))throw Error('Vínculo Registry/Lots inválido.');
-    if(document.tokenization!==undefined)actionSpec=recordOf(document.tokenization);
-    else if(JSON.stringify(document).includes('"sourceLotId"'))throw Error('Documento com origem exige tokenization.mode TRANSFORM e inputs.');
-    if(runtime.config.tokenActionMode!==undefined && runtime.config.tokenActionMode!==actionSpec.mode)throw Error('tokenActionMode da configuração difere do modo declarado no documento verificado.');
-    if(actionSpec.mode==='TRANSFORM'){
-      if(!Array.isArray(actionSpec.inputs)||!actionSpec.inputs.length||actionSpec.inputs.length>32)throw Error('Informe de 1 a 32 lotes de origem em tokenization.inputs.');
-      const inputs=actionSpec.inputs.map((raw:any)=>({lotId:uintToken(raw.lotId),quantity:uintToken(raw.quantity)}));
-      processingContext=tokenRead(runtime,runtime.config.contractAddress as Address,'getConsumptionContext',[selected.onchain.actorId,inputs]);
-      actionSpec={...actionSpec,context:processingContext};
+    try {
+      if(!document?.e1)throw new E1Error('PRIVATE_E1_OPENINGS_UNAVAILABLE');
+      const spec=recordOf(document.e1);
+      if(runtime.config.tokenActionMode!==undefined&&runtime.config.tokenActionMode!==spec.mode)throw new E1Error('CONFIG_MODE_MISMATCH');
+      const ids=inputIds(spec);
+      const context=ids.length?tokenRead(runtime,runtime.config.contractAddress as Address,'getConsumptionContext',[ids]) as Context:null;
+      const prepared=buildOperation({spec,holder:selected.onchain.actorId,chainId:BigInt(network(runtime).chainId),lots:configuredLots,context,available:expectedStreams(result,'AVAILABLE'),accounted:expectedStreams(result,'ACCOUNTED')});
+      action=prepared.op;
+      difference=prepared.difference;
+      bindingHash=operationHash(BigInt(network(runtime).chainId),runtime.config.contractAddress as Address,configuredLots,selected.onchain.evidenceId,selected.latestMufProofId,action,prepared.inputCommitments);
+    } catch(error) {
+      // RPC/internal failures abort; only classified validation failures become verdicts.
+      if(!(error instanceof E1Error))throw error;
+      result={...result,status:error.status,statusCode:statusCode(error.status),reasonCodes:[...result.reasonCodes,error.reason],interpretation:'E1_OPERATION_NOT_ATTESTED'};
+      action=emptyOperation();
     }
   }
-
-  const action = buildTokenAction(selected,result,actionSpec);
-  const privateResultDocument = {
-    evidenceId: selected.onchain.evidenceId,
-    action: serialAction(action),
-    materialAccounting: { unit:'mg', massBasis:'DRY', componentsAreContained:true },
-    schema: "ExploreChem/PrivateElementalResult/v1",
-    calculationVersion: 1,
-    result,
-    methodology: ELEMENTAL_METHODOLOGY,
-  } as const;
-  const canonicalResultJson = stableJson(privateResultDocument);
-  const elementalHash = keccak256(toHex(canonicalResultJson));
-  const proof = buildProofCommitment(selected, result, elementalHash);
+  const privateResultDocument={
+    schema:'ExploreChem/PrivateElementalResult/v2',calculationVersion:2,
+    evidenceId:selected.onchain.evidenceId,proofSalt,operation:action,
+    processingDifference:difference,result,methodology:ELEMENTAL_METHODOLOGY,
+  };
+  const canonicalResultJson=stableJson(privateResultDocument);
+  const elementalHash=keccak256(toHex(canonicalResultJson));
+  const proof=buildProofCommitment(selected,result,elementalHash,bindingHash);
   const resultPath = privateResultPath(proof.evidenceId, proof.proofId);
 
   // Remaining reads: final proof gates (3), workflow authorization (1),
-  // proof confirmation (1), and token confirmation (2 when applicable).
+  // proof confirmation (1), and operation-lot confirmation (1 when applicable).
   // Registry/Lots linkage and consumption context have already been read.
-  reserveChainReads(runtime, action.kind === 0 ? 5 : 7);
+  reserveChainReads(runtime, action.kind === 0 ? 5 : 6);
 
   // Persist the immutable canonical ELEMENTAL JSON before anchoring. The exact bytes
   // saved here are the bytes whose keccak256 is sent as committedHash/elementalHash.
@@ -1640,7 +1553,7 @@ function run(runtime: TeeRuntime<Config>): string {
   const mufProofBeforeWrite = readLatestMufProofId(runtime, proof.evidenceId);
   const latestBeforeWrite = readLatestElementalProofId(runtime, proof.evidenceId);
   if (
-    beforeWrite.mufStatus !== CHECK_STATUS_COMPLIANT ||
+    beforeWrite.mufStatus !== CHECK_STATUS_CALCULATED ||
     beforeWrite.elementalStatus !== CHECK_STATUS_PENDING ||
     lower(beforeWrite.mufHash) !== lower(selected.current.mufHash) ||
     lower(mufProofBeforeWrite) !== lower(selected.latestMufProofId) ||
@@ -1657,11 +1570,46 @@ function run(runtime: TeeRuntime<Config>): string {
     });
   }
 
-  const lotsAddress = checkTokenAction(runtime, selected, action,configuredLots?{lots:configuredLots,ctx:processingContext}:undefined);
+  const lotsAddress = action.kind === 0 ? null : configuredLots;
   const txHash = writeProof(runtime, proof, action);
+  const pendingConfirmation = (reason: string) => JSON.stringify({
+    workflow: "ELEMENTAL_WORKFLOW",
+    proofType: "ELEMENTAL",
+    evidenceId: proof.evidenceId,
+    actorId: result.actorId,
+    lotReference: result.lotReference,
+    status: result.status,
+    reasonCodes: result.reasonCodes,
+    message: "Transacao enviada; confirmacao on-chain pendente. Consulte esta transacao antes de reenviar.",
+    commitment: { proofId: proof.proofId, elementalHash: proof.committedHash },
+    privateResult: { bucket: selected.row.storage_bucket, path: resultPath },
+    tokenization: {
+      operationId: action.operationId,
+      lotsAddress,
+      expectedLotIds: action.outputs.map(output => output.lotId),
+      confirmationStatus: "PENDING",
+    },
+    onchain: {
+      contractAddress: runtime.config.contractAddress,
+      txHash,
+      submissionStatus: "SENT",
+      confirmationStatus: "PENDING",
+      confirmationReason: reason,
+    },
+  });
   const anchoredProof = confirmWrittenProof(runtime, proof, txHash);
-  const mintedLotIds = lotsAddress ? tokenRead(runtime,lotsAddress,"getOperationLots",[action.operationId]) as bigint[] : [];
-  if(lotsAddress && (!tokenRead(runtime,lotsAddress,"evidenceTokenized",[proof.evidenceId]) || mintedLotIds.length!==action.outputs.length))throw Error("Prova enviada; confirmação de mint pendente. Consulte on-chain antes de reexecutar.");
+  if (anchoredProof === null) return pendingConfirmation("PROOF_NOT_OBSERVED");
+  const mintedLotIds = lotsAddress ? tokenRead(runtime,lotsAddress,"getOperationLots",[action.operationId]) as Hex[] : [];
+  if (lotsAddress && mintedLotIds.length === 0) {
+    return pendingConfirmation("OPERATION_LOTS_NOT_OBSERVED");
+  }
+  // ReportV3 anchors the proof and executes its operation atomically.
+  // Confirm the exact output IDs rather than making a second boolean query.
+  if (lotsAddress && (
+    mintedLotIds.length !== action.outputs.length ||
+    new Set(mintedLotIds.map(id => lower(id))).size !== mintedLotIds.length ||
+    action.outputs.some(output => !mintedLotIds.some(id => lower(id) === lower(output.lotId)))
+  )) throw Error("Prova enviada; confirmação dos lotes da operação divergente. Consulte on-chain antes de reexecutar.");
 
   return JSON.stringify({
     workflow: "ELEMENTAL_WORKFLOW",
@@ -1698,6 +1646,8 @@ function run(runtime: TeeRuntime<Config>): string {
     onchain: {
       contractAddress: runtime.config.contractAddress,
       txHash,
+      submissionStatus: "SENT",
+      confirmationStatus: "CONFIRMED",
       confirmationSource: "GET_PROOF",
       confirmedProofId: anchoredProof.proofId,
       confirmedElementalStatus: Number(anchoredProof.status),
