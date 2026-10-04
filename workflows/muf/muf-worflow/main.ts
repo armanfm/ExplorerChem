@@ -44,7 +44,7 @@ import { z } from "zod";
  *   because the calculation is not applicable, an operand is absent/invalid,
  *   the reference input is zero, or |MUF| exceeds 100% of input + opening
  *   inventory.
- * - COMPLIANT: integrity matches and the MUF calculation is valid. This does
+ * - CALCULATED: integrity matches and the MUF calculation is valid. This does
  *   not mean that the value is within a regulatory tolerance. Tolerance is
  *   evaluated by its own separately authorized workflow.
  */
@@ -54,11 +54,11 @@ const CANDIDATE_LIMIT = 8;
 
 const PROOF_TYPE_MUF = 1;
 const CHECK_STATUS_PENDING = 1;
-const CHECK_STATUS_COMPLIANT = 2;
+const CHECK_STATUS_CALCULATED = 2;
 const CHECK_STATUS_DIVERGENT = 3;
 const CHECK_STATUS_NOT_ATTESTED = 4;
 
-type MufStatus = "COMPLIANT" | "DIVERGENT" | "NOT_ATTESTED";
+type MufStatus = "CALCULATED" | "DIVERGENT" | "NOT_ATTESTED";
 
 const bytes32Schema = z
   .string()
@@ -198,6 +198,8 @@ type ProofCommitment = {
  */
 
 const ABI = [
+{"type": "function", "name": "getProof", "stateMutability": "view", "inputs": [{"name": "proofId", "type": "bytes32"}], "outputs": [{"name": "", "type": "tuple", "components": [{"name": "proofId", "type": "bytes32"}, {"name": "evidenceId", "type": "bytes32"}, {"name": "evidenceHash", "type": "bytes32"}, {"name": "proofType", "type": "uint8"}, {"name": "committedHash", "type": "bytes32"}, {"name": "inputCommitmentHash", "type": "bytes32"}, {"name": "methodologyHash", "type": "bytes32"}, {"name": "previousProofId", "type": "bytes32"}, {"name": "status", "type": "uint8"}, {"name": "revision", "type": "uint32"}, {"name": "workflowId", "type": "bytes32"}, {"name": "createdAt", "type": "uint64"}]}]},
+  {type:"function",name:"registryVersion",stateMutability:"view",inputs:[],outputs:[{name:"",type:"uint8"}]},
   {
     type: "function",
     name: "getEvidence",
@@ -301,7 +303,7 @@ function decimalString(value: unknown): string | null {
   if (value === null || value === undefined) return null;
 
   if (typeof value === "number") {
-    if (!Number.isFinite(value) || value < 0) return null;
+    if (!Number.isFinite(value) || value < 0 || value > Number.MAX_SAFE_INTEGER / 1_000_000) return null;
     const rendered = value.toString();
     return /^\d+(?:\.\d+)?$/.test(rendered) ? rendered : null;
   }
@@ -359,7 +361,7 @@ function operandValue(value: MassOperand): string | null {
 }
 
 function statusCode(status: MufStatus): number {
-  if (status === "COMPLIANT") return CHECK_STATUS_COMPLIANT;
+  if (status === "CALCULATED") return CHECK_STATUS_CALCULATED;
   if (status === "DIVERGENT") return CHECK_STATUS_DIVERGENT;
   return CHECK_STATUS_NOT_ATTESTED;
 }
@@ -608,9 +610,9 @@ function savePrivateResult(
 
 function callContract(
   runtime: TeeRuntime<Config>,
-  functionName: "getEvidence" | "getCurrentProofState" | "latestProofId",
+  functionName: "getProof" | "registryVersion" | "getEvidence" | "getCurrentProofState" | "latestProofId",
   args: readonly unknown[],
-) {
+): unknown {
   countChainRead(runtime);
   const callData = encodeFunctionData({
     abi: ABI,
@@ -678,7 +680,6 @@ function readLatestMufProofId(
 }
 
 function selectPendingEvidence(runtime: TeeRuntime<Config>, key: string): SelectedEvidence | null {
-  chainReads.set(runtime, 0);
   const scan = discoverEvidenceIds(runtime);
   let checked = 0;
   for (const evidenceId of scan.ids.slice(0, CANDIDATE_LIMIT)) {
@@ -890,7 +891,7 @@ function calculateMuf(
   }
 
   return {
-    status: "COMPLIANT",
+    status: "CALCULATED",
     reasonCodes: [],
     calculation,
   };
@@ -1014,7 +1015,7 @@ function buildResult(
     reasonCodes: calculated.reasonCodes,
     calculation: calculated.calculation,
     interpretation:
-      calculated.status === "COMPLIANT"
+      calculated.status === "CALCULATED"
         ? "MUF_CALCULATION_ATTESTED_TOLERANCE_NOT_EVALUATED"
         : "MUF_NOT_ATTESTED",
   };
@@ -1031,6 +1032,7 @@ function buildProofCommitment(
   committedHash: Hex,
 ): ProofCommitment {
   const inputCommitmentHash = hashObject({
+    committedHash,
     domain: "ExploreChem/MUFInputCommitment/v1",
     evidenceId: selected.onchain.evidenceId,
     expectedEvidenceHash: selected.onchain.evidenceHash,
@@ -1134,7 +1136,9 @@ function privateResultPath(evidenceId: Hex, proofId: Hex): string {
  */
 
 function run(runtime: TeeRuntime<Config>): string {
+  chainReads.set(runtime, 0);
   const { key } = secrets(runtime);
+  if(Number(callContract(runtime,"registryVersion",[]))!==3)throw Error("Registry configurado não é E1/ReportV3; nenhuma prova enviada.");
   const selected = selectPendingEvidence(runtime, key);
 
   if (selected === null) {
@@ -1149,7 +1153,8 @@ function run(runtime: TeeRuntime<Config>): string {
 
   const result = buildResult(runtime, key, selected);
   const privateResultDocument = {
-    schema: "ExploreChem/PrivateMUFResult/v1",
+    schema: "ExploreChem/PrivateMUFResult/v2",
+    proofSalt: hashObject({domain:"ExploreChem/PrivateMufSalt/v1", key, evidenceId:selected.onchain.evidenceId}),
     calculationVersion: 1,
     result,
     methodology: MUF_METHODOLOGY,
@@ -1187,8 +1192,9 @@ function run(runtime: TeeRuntime<Config>): string {
   }
 
   const txHash = writeProof(runtime, proof);
-  const afterWrite = readCurrentMufState(runtime, proof.evidenceId);
-  const anchoredProofId = readLatestMufProofId(runtime, proof.evidenceId);
+  const anchored = callContract(runtime, "getProof", [proof.proofId]) as ProofCommitment;
+  const afterWrite = {mufHash: anchored.committedHash, mufStatus: Number(anchored.status)};
+  const anchoredProofId = anchored.proofId;
 
   if (
     lower(anchoredProofId) !== lower(proof.proofId) ||
@@ -1208,7 +1214,6 @@ function run(runtime: TeeRuntime<Config>): string {
     lotReference: result.lotReference,
     status: result.status,
     reasonCodes: result.reasonCodes,
-    calculation: result.calculation,
     integrity: {
       expectedEvidenceHash: result.expectedEvidenceHash,
       indexedEvidenceHash: result.indexedEvidenceHash,
