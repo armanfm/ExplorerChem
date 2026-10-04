@@ -19,8 +19,10 @@ contract ExploreChemLots is IExploreChemLotsE1 {
     mapping(address => bool) public collateralAgents;
     uint256 public constant MAX_ITEMS = 32;
     uint256 public constant MAX_LINEAGE = 256;
-    uint32 public constant MIN_WINDOW = 1 days;
-    uint32 public constant MAX_WINDOW = 60 days;
+    uint256 public constant CUSTODY_VERSION = 2;
+    mapping(bytes32 => bytes32[]) private actorOrders;
+    uint32 public constant MIN_WINDOW = 0;
+    uint32 public constant MAX_WINDOW = 0;
     mapping(bytes32 => Lot) private lots;
     mapping(bytes32 => bytes32) public lotEvidence;
     mapping(bytes32 => bytes32[]) private parents;
@@ -203,43 +205,31 @@ contract ExploreChemLots is IExploreChemLotsE1 {
     function orderIdFor(bytes32 sender, bytes32 requestId) public view returns (bytes32) {
         return keccak256(abi.encode(block.chainid, address(this), sender, requestId));
     }
+    function getActorOrderCount(bytes32 actor) external view returns (uint256) { return actorOrders[actor].length; }
+    function getActorOrderId(bytes32 actor, uint256 index) external view returns (bytes32) { return actorOrders[actor][index]; }
+
+    // The last argument is retained for ABI compatibility, but must be zero.
+    // Sending reserves the entire lot. Acceptance atomically changes custody.
     function createOrder(bytes32 sender, bytes32 requestId, bytes32 recipient, bytes32 lotId, bytes32 documentHash, uint32 receiptWindow)
         external nonReentrant returns (bytes32 orderId)
     {
         _authorized(sender); _activeActor(recipient);
         if (sender == recipient || requestId == bytes32(0) || documentHash == bytes32(0)) revert InvalidIdentifier();
-        if (receiptWindow < MIN_WINDOW || receiptWindow > MAX_WINDOW) revert InvalidWindow();
+        if (receiptWindow != 0) revert InvalidWindow();
         _activeLot(lotId, sender); _usable(lotId);
         orderId = orderIdFor(sender, requestId);
         if (orders[orderId].status != OrderStatus.NONE) revert OrderAlreadyExists();
-        orders[orderId] = Order(sender, recipient, lotId, documentHash, receiptWindow, 0, OrderStatus.REQUESTED);
+        orders[orderId] = Order(sender, recipient, lotId, documentHash, 0, 0, OrderStatus.REQUESTED);
+        lots[lotId].state = LotState.IN_ESCROW;
+        lockedOrder[lotId] = orderId;
+        actorOrders[sender].push(orderId); actorOrders[recipient].push(orderId);
         emit OrderCreated(orderId, sender, recipient, lotId, documentHash);
+        emit LotStateChanged(lotId, LotState.IN_ESCROW, orderId);
         _orderEvent(orderId);
     }
-    function acceptOrder(bytes32 id) external nonReentrant {
-        Order storage o = orders[id];
-        if (o.status != OrderStatus.REQUESTED) revert InvalidOrderState();
-        _authorized(o.recipient); _activeLot(o.lotId, o.sender); _usable(o.lotId);
-        o.status = OrderStatus.ACCEPTED; _orderEvent(id);
-    }
-    function lockOrder(bytes32 id) external nonReentrant {
-        Order storage o = orders[id];
-        if (o.status != OrderStatus.ACCEPTED) revert InvalidOrderState();
-        _authorized(o.sender); _activeActor(o.recipient); _activeLot(o.lotId, o.sender); _usable(o.lotId);
-        o.status = OrderStatus.LOCKED;
-        o.deadline = uint64(block.timestamp + o.receiptWindow);
-        lots[o.lotId].state = LotState.IN_ESCROW;
-        lockedOrder[o.lotId] = id;
-        emit LotStateChanged(o.lotId, LotState.IN_ESCROW, id);
-        _orderEvent(id);
-    }
-    function finalizeOrder(bytes32 id) external nonReentrant {
-        Order storage o = orders[id];
-        if (o.status != OrderStatus.LOCKED) revert InvalidOrderState();
-        if (block.timestamp < o.deadline) revert DeadlineNotReached();
-        o.status = OrderStatus.EXPIRED; _orderEvent(id);
-    }
-    function confirmReceipt(bytes32 id) external nonReentrant {
+    function acceptOrder(bytes32 id) external nonReentrant { _receive(id); }
+    function confirmReceipt(bytes32 id) external nonReentrant { _receive(id); }
+    function _receive(bytes32 id) internal {
         Order storage o = orders[id];
         _requireEscrow(id, o); _authorized(o.recipient); _usable(o.lotId);
         Lot storage lot = lots[o.lotId];
@@ -250,25 +240,25 @@ contract ExploreChemLots is IExploreChemLotsE1 {
         emit LotStateChanged(o.lotId, LotState.ACTIVE, id);
         _orderEvent(id);
     }
+    // Kept as explicit reverts so old clients cannot silently run the old flow.
+    function lockOrder(bytes32) external pure { revert InvalidOrderState(); }
+    function finalizeOrder(bytes32) external pure { revert InvalidOrderState(); }
     function cancelOrder(bytes32 id) external nonReentrant {
-        Order storage o = orders[id];
-        if (o.status != OrderStatus.REQUESTED && o.status != OrderStatus.ACCEPTED) revert InvalidOrderState();
-        _authorized(o.sender); o.status = OrderStatus.CANCELLED; _orderEvent(id);
+        Order storage o = orders[id]; _authorized(o.sender);
+        _returnLot(id, o, OrderStatus.CANCELLED);
     }
     function rejectOrder(bytes32 id) external nonReentrant {
-        Order storage o = orders[id];
-        _authorized(o.recipient);
-        if (o.status == OrderStatus.LOCKED || o.status == OrderStatus.EXPIRED) {
-            _requireEscrow(id, o);
-            lots[o.lotId].state = LotState.ACTIVE;
-            delete lockedOrder[o.lotId];
-            emit LotStateChanged(o.lotId, LotState.ACTIVE, id);
-        } else if (o.status != OrderStatus.REQUESTED && o.status != OrderStatus.ACCEPTED) revert InvalidOrderState();
-        o.status = OrderStatus.REJECTED; _orderEvent(id);
+        Order storage o = orders[id]; _authorized(o.recipient);
+        _returnLot(id, o, OrderStatus.REJECTED);
+    }
+    function _returnLot(bytes32 id, Order storage o, OrderStatus status) internal {
+        _requireEscrow(id, o);
+        lots[o.lotId].state = LotState.ACTIVE; delete lockedOrder[o.lotId]; o.status = status;
+        emit LotStateChanged(o.lotId, LotState.ACTIVE, id); _orderEvent(id);
     }
     function _requireEscrow(bytes32 id, Order storage o) internal view {
-        if ((o.status != OrderStatus.LOCKED && o.status != OrderStatus.EXPIRED)
-            || lockedOrder[o.lotId] != id || lots[o.lotId].state != LotState.IN_ESCROW) revert InvalidOrderState();
+        if (o.status != OrderStatus.REQUESTED || lockedOrder[o.lotId] != id
+            || lots[o.lotId].state != LotState.IN_ESCROW || lots[o.lotId].holder != o.sender) revert InvalidOrderState();
     }
     function _orderEvent(bytes32 id) internal { Order storage o = orders[id]; emit OrderUpdated(id, o.status, o.deadline); }
     function _lot(bytes32 id) internal view returns (Lot storage lot) {
