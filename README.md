@@ -2,331 +2,342 @@
 
 **Verifiable mineral provenance connected to transferable economic rights.**
 
-ExploreChem is a multichain prototype for critical-mineral supply chains, with an initial focus on rare earths. It combines company identity, private evidence, Chainlink CRE calculations, physical lot traceability on Ethereum Sepolia, and an economic-rights layer built with Solana Token-2022 on Devnet.
+ExploreChem is a multichain MVP for critical-mineral supply chains, initially focused on rare earths. It combines company identity, private industrial evidence, Chainlink CRE calculations, physical lot traceability on Ethereum Sepolia, and transferable economic rights represented by Solana Token-2022 on Devnet.
 
-Physical material and economic rights have separate records and lifecycles. A transfer of a physical lot does not automatically transfer the Solana RWA, and a transfer of the RWA does not transfer ownership or custody of the physical mineral.
+The physical lot and the economic right have separate lifecycles. Buying an RWA does not transfer the mineral or its custody. Selling or transforming the physical material does not automatically extinguish the issuer's existing economic obligation.
 
-> Prototype / pre-pilot. Demonstration companies, documents and quantities are synthetic. Demo rights do not create a real payment obligation. Production adoption requires validated commercial terms, source-data controls, security review and operational validation.
+[Live application](https://armanfm.github.io/ExplorerChem/) · [Source repository](https://github.com/armanfm/ExplorerChem)
 
-- [Live demonstration](https://armanfm.github.io/ExplorerChem/)
-- [Source repository](https://github.com/armanfm/ExplorerChem)
-- Physical layer: Ethereum Sepolia, chain ID `11155111`
-- Economic layer: Solana Devnet
+> Testnet MVP. Demonstration companies, documents and quantities are synthetic. Demonstration tokens do not create real commercial payment obligations. Mainnet use requires commercial, operational and security validation.
 
 ## Architecture
 
-| **Component**            | **Responsibility**                                                                                                                                            |
-| ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| ExploreChemActorRegistry | Company identity, registration approval, controllers, authorized wallets and actor status                                                                     |
-| ExploreChemProofRegistry | Evidence commitments, authorized workflow reports, independent MUF and Elemental proof states, proof history and coordination with the lot contract           |
-| ExploreChemLots          | Salted lot commitments, whole-lot state transitions, parent/child links, custody orders and collateral locks |
-| MUF workflow             | Evidence integrity verification and deterministic total-mass accounting                                                                                       |
-| Elemental workflow       | Verification of the MUF result, stream and assay calculations, and preparation of proof-linked lot operations                                                 |
-| Solana RWA program       | Series creation, Token-2022 issuance, credit/lineage reservations, marketplace escrow, redemption and settlement/burn                                         |
-| Supabase                 | Evidence lookup, controlled document/result storage and application metadata                                                                                  |
-| Frontend                 | Evidence submission, actor navigation, lot/history views and wallet-based RWA operations                                                                      |
+| Component | Responsibility |
+|---|---|
+| `ExploreChemActorRegistry` | Company identity, registration approval, controllers, authorized wallets and actor status |
+| `ExploreChemProofRegistry` | Evidence commitments, independent MUF and Elemental states, authorized reports, proof history and coordination with Lots |
+| `ExploreChemLots` | Opaque lot identifiers, salted commitments, holder/state records, custody and parent/child relationships |
+| MUF workflow | Original-document integrity verification and deterministic total-mass accounting |
+| Elemental workflow | MUF-result integrity verification, elemental calculations and proof-linked physical lot operations |
+| Solana RWA program | Economic series, one-unit Token-2022 issuance, duplicate-issuance controls, marketplace escrow and paid redemption/burn |
+| Supabase | Controlled evidence/result storage, lookup and application metadata |
+| Frontend | Submission, private lot inspection, physical receiving and wallet-based economic operations |
 
-### Why Ethereum and Solana are separate
+### Why two chains?
 
-Ethereum records the physical provenance and accounting layer. Solana records the economic instrument and its holder, listings and redemption lifecycle. This makes the separation between physical material and economic rights explicit in the system design.
+Ethereum records the physical provenance layer. Solana records the economic instrument, its current token holder, offers and redemption lifecycle.
 
-The E1 design links private industrial evidence to public lot commitments. Solana records the economic right through source references, commitments and authorized attestation. E1 defines collateral coordination through the Ethereum lot state and a unique backing reference. The design is not a token bridge or a trustless Ethereum light client on Solana. Correct identity, origin and lineage attestation remain part of the trust model.
+The Solana program does not run an Ethereum light client or independently read Ethereum state. Origin and lineage references are provided through the configured attestation flow. The attestor remains involved in issuance; it is not required to pay a redemption.
 
-Separate chains do not, by themselves, establish legal separation, regulatory compliance or liquidity. The economic right must be defined by its terms and responsible issuer.
+The design is not a token bridge. Using two networks does not itself provide atomic cross-chain execution, legal enforceability or market liquidity.
 
 ## Deployment references
 
-These are the deployment references supplied by the project team on October 3, 2026. Ethereum has **three contracts**, in addition to the separate Solana program. ActorRegistry is retained; the two E1 addresses below are the new ProofRegistry and Lots. Use the network and address references below when configuring the application.
+References used in the October 4, 2026 demonstration:
 
-| **Network**      | **Component**            | **Address**                                                                                                                                       |
-| ---------------- | ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Ethereum Sepolia | ExploreChemActorRegistry | [`0x2fb8a06A929299fEFCAfef63fCf663C0b07016F8`](https://sepolia.etherscan.io/address/0x2fb8a06A929299fEFCAfef63fCf663C0b07016F8)                   |
-| Ethereum Sepolia | ExploreChemProofRegistry | [`0x76Fc76C7d38B44B10f7a6bdC08A7d37CA1a468dB`](https://sepolia.etherscan.io/address/0x76Fc76C7d38B44B10f7a6bdC08A7d37CA1a468dB)                   |
-| Ethereum Sepolia | ExploreChemLots          | [`0xF319d67496302Dd28394874B3c3FBfA5DA6a02Dd`](https://sepolia.etherscan.io/address/0xF319d67496302Dd28394874B3c3FBfA5DA6a02Dd)                   |
-| Solana Devnet    | explorechem_rwa_solana   | [`A2sUfkL18Znfo6A3u9mPHbMm1avm1A9J7NDpvwSTqT79`](https://explorer.solana.com/address/A2sUfkL18Znfo6A3u9mPHbMm1avm1A9J7NDpvwSTqT79?cluster=devnet) |
+| Network | Component | Address |
+|---|---|---|
+| Ethereum Sepolia, chain ID `11155111` | ActorRegistry | `0x2fb8a06A929299fEFCAfef63fCf663C0b07016F8` |
+| Ethereum Sepolia | ProofRegistry E1 | `0x1934305d8FC0a426a0eF5D475E941341d8c9fC1e` |
+| Ethereum Sepolia | Lots E1 | `0x92eFE5Cf48d9e18d2B66F1547D3E6D445b1774a3` |
+| Solana Devnet | RWA program | `A2sUfkL18Znfo6A3u9mPHbMm1avm1A9J7NDpvwSTqT79` |
 
-Source publication is separate from deployment. Before interacting, check the frontend configuration, RPC network, program/contract addresses and deployed version. A GitHub commit alone does not prove that identical bytecode is deployed.
+Verify `ProofRegistry.lotsContract()` and the reverse `Lots.registry()` link. Old lot-contract addresses must not be used for new E1 issuance.
+
+Solana's `Config` records the permitted source chain and Lots address. Upgrading the program does **not** rewrite that account. `update_source_config` updates these references with the signature of the administrator stored in `Config`; it preserves the attestor and the source references of existing series. The frontend provides **Update E1 origin through Phantom** for this operation.
+
+The program upgrade authority and the application Config administrator are separate roles. Deployment success and IDL publication do not prove that every frontend or repository file matches the deployed revision.
 
 ## Repository map
 
-| **Path**                                      | **Contents**                                            |
-| --------------------------------------------- | ------------------------------------------------------- |
-| `contracts/ExploreChemActorRegistry.sol`      | Ethereum company identity contract                      |
-| `contracts/ExploreChemProofRegistry.sol`      | Ethereum evidence and proof registry                    |
-| `contracts/ExploreChemLots.sol`               | Ethereum commitment-based lot registry                        |
-| `workflows/muf/muf-worflow/`                  | Current MUF workflow, configuration and test file       |
-| `workflows/elemental/elemental-worflow/`      | Current Elemental workflow, configuration and test file |
-| `solana/programs/explorechem-rwa-solana/src/` | Rust/Anchor RWA program                                 |
-| `solana/tests/`                               | TypeScript test sources                                 |
-| `solana/Anchor.toml`                          | Anchor project and cluster configuration                |
-| `index.html`                                  | Main web application entry point                        |
+The following paths follow the project layout documented for this MVP:
 
-The directory spelling `worflow` is intentional here because it matches the committed paths. Each CRE project has its own `project.yaml` in its parent directory.
+| Path | Contents |
+|---|---|
+| `contracts/ExploreChemActorRegistry.sol` | Company identity contract |
+| `contracts/ExploreChemProofRegistry.sol` | Evidence/proof registry |
+| `contracts/ExploreChemLots.sol` | Commitment-based physical lots |
+| `workflows/muf/muf-worflow/` | MUF workflow |
+| `workflows/elemental/elemental-worflow/` | Elemental workflow |
+| `solana/programs/explorechem-rwa-solana/src/` | Rust/Anchor RWA program |
+| `solana/tests/` | TypeScript test sources |
+| `solana/Anchor.toml` | Anchor configuration |
+| `index.html` | Main application |
 
-## Companies, evidence and proofs
+The spelling `worflow` follows the existing paths. Each CRE project has its own `project.yaml` in its parent directory. Newly prepared source packages must be synchronized with the repository and deployed before their behavior is treated as live.
 
-Companies have stable actor identifiers, controllers and authorized wallets. The actor registry separates administrative registration decisions from operational evidence submission and supports actor suspension.
+## Evidence, MUF and Elemental
 
-Evidence submission binds an actor and submitter to the hash of the original document. The source JSON is stored off-chain. Workflows retrieve that document and verify its hash against the on-chain commitment before relying on its contents.
+A company submits an original private JSON document. Its hash is anchored with the actor and submitter. Workflows retrieve the document and compare its hash with the on-chain commitment before using its contents.
 
-The proof registry records separate results for the same evidence:
+MUF and Elemental are separate proofs for the same evidence:
 
-| **Proof type** | **Wire code** | **Purpose**                                             |
-| -------------- | ------------- | ------------------------------------------------------- |
-| MUF            | `1`           | Total-mass calculation                                  |
-| Elemental      | `3`           | Elemental calculation and associated lot-operation flow |
+| Proof | Code | Purpose |
+|---|---:|---|
+| MUF | `1` | Total-mass accounting |
+| Elemental | `3` | Elemental accounting and associated lot operations |
 
-The proof registry accepts these two proof types and tracks their states independently.
+| State | Code | Meaning |
+|---|---:|---|
+| NONE | `0` | No recorded state |
+| PENDING | `1` | Awaiting the corresponding proof |
+| CALCULATED | `2` | Supported calculation/checks succeeded |
+| DIVERGENT | `3` | A supported divergence was detected |
+| NOT_ATTESTED | `4` | Available inputs do not support the attestation |
 
-| **Check status** | **Code** | **Interpretation**                                                  |
-| ---------------- | -------- | ------------------------------------------------------------------- |
-| `NONE`           | `0`      | No state                                                            |
-| `PENDING`        | `1`      | Awaiting the corresponding proof                                    |
-| `CALCULATED`      | `2`      | The workflow's implemented checks/calculation succeeded             |
-| `DIVERGENT`      | `3`      | A supported divergence, such as an integrity mismatch, was detected |
-| `NOT_ATTESTED`   | `4`      | The available inputs do not support the required attestation        |
+Interpret each status together with its proof type, methodology and reason codes. `CALCULATED` is not a universal certification of a measurement or company.
 
-Interpret a status together with its proof type, methodology and reason codes. It is not a universal certification of a mineral, a measurement or a business.
-
-Proof records include result, input and methodology commitments, revision information and transaction evidence. Detailed results stay in controlled storage; the chain provides the commitment and authoritative proof state.
-
-## MUF: total-mass accounting
+### Total-mass accounting
 
 For supported non-carrier documents:
 
-```
-MUF = (input + opening inventory)
-    - (product + scrap + other outputs + closing inventory)
-
+```text
+MUF = input + opening inventory
+    - product - scrap - other outputs - closing inventory
 ```
 
 For supported carrier documents:
 
-```
+```text
 difference = collected mass - delivered mass
-
 ```
 
-Decimal kilogram inputs are converted to integer milligrams for deterministic calculation. The result records the operands, accounted output, signed and absolute difference, and relative difference when calculable.
+Decimal kilogram inputs are converted to integer milligrams. Results include operands, signed/absolute differences and relative differences when calculable. A valid calculation does not by itself establish an industrial tolerance or explain the physical cause of a difference.
 
-**MUF `CALCULATED` means a valid supported calculation, not that the difference is within an industrial or regulatory tolerance.** The published MUF implementation separates tolerance evaluation from this calculation.
+### Elemental accounting
 
-The detailed result is stored under:
+Elemental checks the original evidence and committed private MUF result, reconciles the supported streams, and calculates elemental quantities from the declared assays and supported compound conversions. Demonstrations include Nd, Pr and Dy; the presence of a conversion in the implementation is not experimental validation of every process.
 
-```
+For transformations, the workflow resolves the referenced input lots and verifies their private openings against their public commitments. It rejects represented outputs exceeding input material or any tracked elemental quantity. Differences remain part of private accounting and do not become independently tradable lots unless represented by valid outputs.
+
+Detailed results remain in controlled storage:
+
+```text
 muf-results/{evidenceId-without-0x}/{proofId-without-0x}.json
-
-```
-
-## Elemental: streams, composition and lot operations
-
-The Elemental workflow retrieves the committed document and private MUF result and verifies both against their anchored hashes. It checks that the counted streams agree with the MUF accounting and calculates supported elemental quantities from the declared stream/assay data.
-
-The source supports the rare-earth element set and supported compound conversions. Demonstration logs include Pr, Nd and Dy. Support in the code is not a claim that every element, compound and industrial process has been validated experimentally.
-
-Missing or inconsistent assay/stream data can produce `NOT_ATTESTED`; an integrity mismatch can produce `DIVERGENT`. A successful result can carry a lot action, combining proof anchoring and the associated Ethereum lot operation atomically.
-
-The detailed result is stored under:
-
-```
 elemental-results/{evidenceId-without-0x}/{proofId-without-0x}.json
-
 ```
 
-## E1 physical lots and private accounting
+Those braces describe storage-key structure; they are not deployment commands.
 
-`ExploreChemLots` stores opaque `bytes32` lot IDs, salted commitments, holder actor IDs, operation/proof references, creation time, states and parent links. It does **not** store physical masses, elemental quantities or the private openings of those commitments. It is a custom lot registry, not an ERC-20 or ERC-1155 balance of kilograms.
+## E1: private physical accounting
 
-The private evidence contains an `e1` operation with its mode, operation ID, proof salt, input openings and output openings/recipients. Each lot opening contains the lot ID, material mass in integer milligrams, sorted elemental basis hashes and quantities, and a secret salt. Openings and salts must remain in restricted storage.
+E1 lots use opaque `bytes32` identifiers. Ethereum records commitments, actor holders, proof/operation references, timestamps, states and lineage. Physical masses, elemental quantities and commitment openings are not public kilogram balances.
 
-- **INITIAL:** creates the initial lot records from the validated available streams. It has no existing lot inputs and assigns the outputs to the evidence actor.
-- **TRANSFORM:** verifies existing input openings against their on-chain commitments, checks the holder and active state, and validates output masses and elements against the private calculations. The workflow rejects outputs exceeding inputs in total mass or in any tracked element.
-- Inputs are consumed **in full**. Products, residues and retained material that must remain usable are represented by new output lots.
-- A private processing difference is the input minus represented outputs; it is not automatically a physical loss or a tradable lot.
+Private operations carry input/output openings and secret salts. An opening binds the lot identifier, material mass in integer milligrams, sorted elemental basis hashes/quantities and salt.
 
-For example, a synthetic scenario can account for `100 kg → 60 kg product + 39 kg residue + 1 kg difference`. These figures belong to the private calculation. Ethereum records the resulting commitments and lineage, not those quantities. The physical cause of the difference requires evidence.
+- **INITIAL:** creates initial outputs from supported validated streams, assigned to the evidence actor.
+- **TRANSFORM:** verifies existing input openings, holders and usable states, consumes complete inputs and creates new product, residue or retained-material lots.
 
-### Lot states and custody
+Example: a private calculation can represent `100 kg → 60 kg product + 39 kg residue + 1 kg difference`. The chain records resulting commitments and lineage, not those figures. Evidence is needed to establish whether a difference represents processing loss, measurement error or another cause.
+
+### Physical states
 
 | State | Meaning |
-| --- | --- |
-| `NONE` | No lot recorded under that identifier |
-| `ACTIVE` | Available for authorized operations, subject to valid proofs |
-| `IN_ESCROW` | Locked in a custody order |
-| `ENCUMBERED` | Locked by an authorized collateral agent |
-| `CONSUMED` | Used by a transformation and unavailable for reuse |
+|---|---|
+| NONE | Identifier not registered |
+| ACTIVE | Available for supported operations, subject to current proofs |
+| IN_ESCROW | Locked in a physical custody order |
+| ENCUMBERED | Locked through the contract's collateral-agent mechanism |
+| CONSUMED | Used by a transformation; unavailable for reuse |
 
-Custody follows request, recipient acceptance, sender locking and recipient receipt confirmation. Expiry does not automatically transfer the lot or unlock escrow. Recipient rejection can restore the sender's active lot under the supported state rules. There is no automatic arbitration for an unresponsive recipient.
+Physical receipt requires the relevant recipient's acceptance/confirmation under the custody flow. The receiving interface exposes authorized private quantities so the recipient can inspect the lot. Expiry does not itself prove receipt or resolve a dispute.
 
-`encumber` requires an authorized collateral agent, an active usable lot and a fresh encumbrance reference. While encumbered, the lot cannot be transferred or consumed. `release` requires an authorized agent and a nonzero settlement reference. The agent must verify settlement or cancelled issuance off-chain before releasing it.
+The physical contract's encumbrance mechanism is distinct from the current RWA policy. **Issuing an economic right does not automatically require freezing the physical lot.** Selling, receiving or transforming the material can continue under the physical contract's own rules. An explicitly encumbered lot remains subject to that contract's restrictions.
 
-## E1 integrity and duplicate-use controls
+### Integrity controls
 
-These controls have different purposes:
+| Control | Protection |
+|---|---|
+| Salted, domain-separated commitments | Detect modified openings and bind their source domain |
+| Bound operation hashes | Link evidence, proofs, contract/network, operation, inputs and outputs |
+| Duplicate-input rejection | Prevent the same input appearing twice in one operation |
+| Used-operation/evidence tracking | Prevent replay and reuse for another issuance operation |
+| Unique output IDs | Prevent replacing an existing lot |
+| Whole-lot consumption | Prevent consumed inputs being used again |
+| Current ancestry proofs | Require applicable current proofs throughout usable ancestry |
+| Ethereum atomic execution | Anchor the Elemental proof and its physical operation together, or revert both |
+| Integer arithmetic | Avoid floating-point mass accumulation |
 
-| Control | Protection and scope |
-| --- | --- |
-| Salted lot commitment | Detects changes to a lot opening; includes chain and Lots address domain separation |
-| Bound operation hash | Binds evidence, current MUF proof, chain, Registry, Lots, kind, operation ID, holder, inputs, input commitments, outputs and recipients |
-| Duplicate input rejection | Prevents counting the same registered input lot twice in one operation; checked in workflow and contract |
-| Used operation and evidence tracking | Rejects replay of an operation or reuse of the same evidence for another lot issuance |
-| Unique output identifiers | Rejects creation over an existing lot identifier |
-| Whole-lot consumption | Prevents a consumed input from funding another transformation |
-| Current ancestry proofs | Blocks operations requiring usability when a lot or ancestor no longer has the required current proofs |
-| Ethereum atomic execution | Anchors the successful Elemental proof and records its lot operation together, or reverts both |
-| BigInt arithmetic | Keeps integer mass accumulation precise in the workflow |
+Authorized workflows perform the private arithmetic. The contract does not recompute secret mass accounting. Commitments are not zero-knowledge proofs or evidence that a laboratory measurement is true.
 
-The Registry accepts authorized forwarder reports and checks the expected workflow ID for each proof type. Successful Elemental operations use ReportV3, with canonical encoding and chain/registry binding. `registryVersion()` returns `3`; E1 workflows reject an incompatible registry version.
+The E1 report uses canonical encoding and chain/registry binding; the workflows expect registry version `3`. Documented prototype bounds are 32 inputs/outputs and 256 visited ancestry nodes. Source admission and physical verification remain necessary to detect material falsely introduced under unrelated initial identifiers.
 
-The on-chain contract does not recompute private arithmetic. Conservation is checked by the authorized workflow, and the report binds the resulting operation. Hashes are not zero-knowledge proofs or independent proof that a measurement is true.
+## Privacy and access
 
-Duplicate-use protection applies to **registered identifiers and their validated lineage**. It cannot by itself detect the same physical material falsely introduced under a new initial evidence record. Source identity, admission controls and physical verification remain necessary.
+| Information | Visibility |
+|---|---|
+| Actor IDs, controllers and authorized Ethereum wallets | Public |
+| Evidence/proof hashes, states and events | Public |
+| Lot IDs, commitments, holders and lineage | Public |
+| Masses, elemental quantities, purity, inventory and detailed calculations | Restricted off-chain |
+| Private openings, salts and original documents | Restricted off-chain |
+| Solana mints, token balances, transfers, offers and SOL payments | Public |
 
-The implementation bounds operations to 32 inputs/outputs and ancestry traversal to 256 visited nodes. Exceeding supported bounds fails closed and requires an explicit operational policy.
+The intended public elemental display is a **presence indicator**, such as “contains Nd, Pr and Dy”, without mass, percentage or purity. The numerical composition chart belongs in the authorized private company/physical receiving view, not the public RWA catalogue. Availability of public indicators must follow the implemented verified data source.
 
-## Public and private information
+Public metadata can still reveal timing and business relationships. Previously published data cannot be made private retroactively. A hidden tab or an “access private” label is not authorization: storage policies and API responses must enforce the permitted scope. Do not publish openings or salts.
 
-**E1 keeps new lot masses, composition and detailed calculations off-chain. Public commitments and states make those records verifiable without publishing their openings.**
+## RWA: economic rights, not delivery rights
 
-| Data | Visibility |
-| --- | --- |
-| Actor IDs, controllers, authorized wallets and registration state | Public on Ethereum |
-| Evidence hashes, proof commitments, proof states and events | Public on Ethereum |
-| E1 lot IDs, commitments, holder actor IDs, lineage and state changes | Public on Ethereum |
-| Masses, elemental quantities, inventories and calculation details | Restricted off-chain, subject to access configuration |
-| Private lot openings and salts | Restricted off-chain; do not publish real openings |
-| Solana mints, balances, transfers, listings and prices in the existing marketplace | Public on Solana |
-| Original evidence documents and detailed workflow results | Restricted off-chain, subject to access configuration |
+Each series has a Token-2022 mint with **supply 1 and decimals 0**. The current holder owns the token-based economic right. A reference to a 1,000 kg lot does not create 1,000 tokens. Fractional ownership is not implemented.
 
-E1 does not guarantee anonymous companies or unobservable commercial relationships. Public actor records, holders, lineage, timing and transaction metadata can permit correlation. Data already published on a public blockchain cannot be made private retroactively.
+The issuer remains the economic reference party after resale. The token does not transfer physical custody, does not grant mineral delivery through redemption, and does not make the secondary-market seller a replacement issuer.
 
-Use unpredictable salts and protect the complete private evidence, including access through API responses, logs, signed URLs and the frontend. Removing data from a screen is not an access-control mechanism. Salting reduces guessability but does not remove public metadata or protect a leaked opening.
+### Lifecycle
 
-## Solana economic-rights lifecycle
+| Operation | Behavior |
+|---|---|
+| Create series (`increment`) | Bind issuer, source lot, origin/claim commitments and credit/lineage controls |
+| Mint (`mint_rwa`) | Issue the single Token-2022 unit; remove further mint authority |
+| Transfer | Move the economic token without moving the physical material |
+| List (`list_rwa`) | Choose a positive asking price and move the token into sale escrow |
+| Buy (`buy_rwa`) | Pay the seller in native SOL and deliver the escrowed token atomically |
+| Cancel (`cancel_listing`) | Return the same token to the seller and close sale escrow/listing accounts |
+| Request (`request_redemption`) | Set a positive requested SOL amount and move the holder's token into redemption escrow |
+| Update request (`update_redemption_quote`) | Allow the requesting holder to change the amount while pending |
+| Pay and burn (`settle_and_burn`) | Pay the exact current requested amount to the registered holder and burn atomically |
 
-Each current RWA mint represents **one indivisible unit**, with supply `1` and decimals `0`. The physical quantity referenced by a right is not the mint supply: a right linked to a 60 kg lot is not automatically 60 Solana tokens. Fractional economic ownership is not implemented by this one-unit design.
+A seller may set a resale price above or below an earlier price. This price does **not** determine redemption value. To change an active asking price, cancel and relist. `expected_price` protects buyers against an unexpected price change, and the program rejects buying one's own offer.
 
-| **Operation**      | **Behavior**                                                                                                       |
-| ------------------ | ------------------------------------------------------------------------------------------------------------------ |
-| Create series      | Records issuer, source references and origin/claim commitments; applies configured credit and lineage reservations |
-| Mint               | Issues the Token-2022 unit for the series                                                                          |
-| Transfer           | Moves the token to another holder without moving the physical lot                                                  |
-| List               | Sets an asking price and transfers the unit into marketplace escrow                                                |
-| Buy                | Transfers SOL to the seller and the escrowed unit to the buyer in the same Solana transaction                      |
-| Cancel listing     | Returns the escrowed unit to the seller                                                                            |
-| Request redemption | Locks the holder's unit in redemption escrow and starts the redemption lifecycle                                   |
-| Settle and burn    | Requires the configured authority, records a settlement commitment and burns the escrowed token                    |
+Requesting redemption does not immediately pay or burn. The token remains in escrow until a successful payment. There is no implemented automatic interest/inflation adjustment or automatic timeout refund.
 
-**Offer pricing:** the seller chooses a positive price in lamports when listing. To change it, the seller cancels the active listing and lists the same token again at the new price. There is no dedicated direct price-update instruction in the reviewed marketplace code. The buyer supplies `expected_price`, and the program rejects a purchase if it differs from the stored listing price. Changing an asking price does not change the lot commitment or the underlying claim terms.
+### Payment without a wallet allowlist
 
-Series creation is exposed through the Anchor instruction `increment`. Marketplace instructions are `list_rwa`, `buy_rwa` and `cancel_listing`.
+The current payment design lets **any wallet other than the registered redemption holder** fund the pending redemption with its own native SOL. The payer signs to authorize its funds; no prior issuer-wallet permission or attestor signature is required for payment.
 
-**Requesting redemption does not itself burn the token or pay a refund.** Settlement/burn records an authorized settlement hash; it is not independent proof of off-chain payment. In the demonstration, the claim explicitly carries no real payment obligation.
+The contract still checks the pending request, active series, exact current requested amount, registered recipient, mint and escrow. The payer receives neither the token nor ownership of the mineral. Self-payment is rejected so a transfer to oneself cannot count as economic settlement.
 
-The current holder can initiate the supported holder actions. An earlier holder does not retain those token-holder permissions after transferring the unit. While a unit is in escrow, the corresponding program state governs its release or burn.
+Payment, token burn, escrow closure and finalization occur in one Solana transaction. Failure reverts the operation's state changes and transfers; network fees may still apply. A settlement hash accompanies the operation, but payment is executed in SOL rather than merely asserted as an off-chain payment.
 
-Resale does not automatically replace the issuer with the secondary-market seller. The responsible economic party must be established in the claim terms. The trusted attestor is a configured signing authority and is not automatically the issuer's company wallet.
+The per-series `RedemptionAuthority` remains an identity/configuration account. `rotate_redemption_authority` allows the current and new principal wallets to co-sign a rotation; it does not impose a payment allowlist. Multiple-wallet delegation is not part of the current delivered flow.
 
-### Credit and lineage controls
+The manually entered economic-terms field remains in the current frontend and contributes to a fixed-size claim commitment. Removing that field in favor of versioned standard terms is a discussed simplification, not an already completed change. Older rights retain their original commitments.
 
-The program includes issuer-scoped credit locks and lineage reservations. For the same issuer, the reservation logic rejects overlaps on the same lot or its ancestors/descendants. The registry is bounded in this prototype: up to 64 lineage nodes and 32 reservations.
+### Duplicate issuance and subdivision
 
-These are application rules in the ExploreChem program, not an automatic Token-2022 feature. Correct source-lot registration, issuer identity and attestation are required. A different issuer is a different reservation scope; that does not by itself prove an economically independent or valid new obligation.
+A stable issuer-scoped credit lock and lineage reservations protect against duplicate issuance. For the **same issuer**, an active reservation rejects another economic issue on the same lot or a related ancestor/descendant. Sibling lots are not automatically overlapping under this rule.
 
-The lineage registry is configured with the relevant source relationships and series reservations. The program does not independently discover all Ethereum lineage or off-platform obligations.
+Physical subdivision does not release the original economic reservation. The original RWA may continue to trade in the secondary market. A physical transfer to another company does not extinguish the original issuer's obligation.
 
-## Cross-chain security
+Different issuers are distinct reservation scopes. This permits the intended separate-obligation model; it is not a global guarantee against every company creating rights referencing the same material. Correct issuer identity, source registration and attestation remain essential.
 
-### Cross-chain collateral coordination
+The prototype registry supports up to **64 lineage nodes and 32 reservations**. It does not discover unrelated Ethereum lots or off-platform obligations independently. Increasing capacity requires implementation work.
 
-Linking an RWA to a lot is not sufficient to prevent duplicate economic issuance. The E1 issuance policy requires a confirmed Ethereum collateral lock and a stable, non-reusable backing identifier in Solana. Changing an issuer, wallet or issuance ID must not bypass the selected backing policy.
+## Transaction costs and optimizations
 
-Ethereum and Solana do not execute one atomic transaction. A failed or uncertain Solana issuance after Ethereum locking requires reconciliation before release. Timeout alone does not prove that no RWA was issued. Recovery must also prevent a delayed or replayed issuance after release.
+Issuance allocates multiple accounts: series, uniqueness records, mint records, issuer references, the Token-2022 mint and marketplace/token accounts. Their storage deposits are different from the network transaction fee. Public wallet estimates may combine these balance changes.
 
-The Lots owner can revoke and replace collateral agents. This provides key replacement, not an automatic cross-chain rollback. Owners, agents and attestors remain trusted roles. The current release reference is not independently verified as Solana settlement or payment by the Ethereum contract.
+Prepared optimizations include:
 
-Validation must include failed issuance, replacement of an agent, safe release, duplicate issuance attempts, and old-holder/unauthorized settlement rejection. The existing redemption flow requires the configured settlement authority; this README does not claim an automatic redemption timeout or refund mechanism.
+- A compute limit based on simulated consumption, with a 20% margin plus 10,000 units and a 1,400,000-unit ceiling; the adjusted transaction is simulated again before signing.
+- Batched catalogue reads, one RPC connection, serialized RPC requests, coalesced refreshes and a pause after HTTP 429.
+- In the optimized Rust package, closing the source token account after listing or requesting redemption, once its unit has moved to escrow, and returning the deposit to its owner when the account has the default close authority.
 
-## Local setup
+Buy/cancel already close sale escrow and listing accounts. Settlement closes redemption escrow. Permanent origin, credit and lineage records are preserved; removing uniqueness records would undermine the controls.
+
+Publishing the HTML does not deploy the Rust optimizations. Confirm the relevant program build/upgrade before claiming reduced deposits. Accounts with an explicit close authority are left open by the source-account optimization. Exact costs depend on the actual transaction, account sizes and wallet priority settings; Devnet SOL is test currency.
+
+## Setup
 
 ### Frontend and Ethereum
 
-The live demonstration is the easiest way to inspect the UI. For development, serve the frontend over HTTP and configure Ethereum Sepolia, the three contract addresses, Solana Devnet and the required Supabase resources.
+Serve the HTML over localhost or HTTPS for Phantom integration. Configure Ethereum Sepolia, the contract set above, Solana Devnet and the required private-storage resources.
 
-Public frontend configuration must never contain service-role keys, wallet private keys or private storage credentials. Supabase access policies remain responsible for protecting off-chain data.
+Do not include wallet secrets, service-role keys or private storage credentials in public HTML. Provision storage access policies separately.
+
+For a simple local preview from the repository root:
+
+```bash
+python3 -m http.server 8000 --bind 127.0.0.1
+```
+
+Open `http://127.0.0.1:8000/` in a browser with the required wallets.
 
 ### CRE workflows
 
-Install the workflow dependencies using Bun in each workflow folder:
-
-```
+```bash
 cd workflows/muf/muf-worflow
 bun install
 bun run typecheck
 ```
 
-Run the equivalent installation/typecheck from `workflows/elemental/elemental-worflow` for Elemental.
+Perform the equivalent dependency installation and typecheck in `workflows/elemental/elemental-worflow/`. Provision local secrets and mappings; the workflows request `SUPABASE_SERVICE_ROLE_KEY`. Do not commit `.env` or `secrets.yaml`.
 
-Configure local credentials and secret mappings in each CRE project. The code requests `SUPABASE_SERVICE_ROLE_KEY` from the configured secret namespace. `.env` and `secrets.yaml` are intentionally excluded from publication and must be provisioned locally. The repository does not supply access to private demonstration storage.
+From the repository root:
 
-From the repository root, run each project in its own subshell:
-
-```
+```bash
 (cd workflows/muf && cre workflow simulate ./muf-worflow --target staging-settings)
 (cd workflows/elemental && cre workflow simulate ./elemental-worflow --target staging-settings)
 ```
 
-To submit the generated reports to the configured chain, add `--broadcast` after reviewing the network, contract, workflow authorization and signing configuration. Broadcasting changes testnet state.
+Add `--broadcast` to submit reports to the configured testnet after checking configuration. Run MUF before Elemental. Workflow IDs, forwarders and configured project names must match their on-chain authorizations.
 
-The workflow code uses `handlerInTee`. **The CRE simulator is not a real TEE:** debug logs are visible. A successful simulation or broadcast does not attest production enclave execution.
+The workflows use `handlerInTee`; simulation logs are visible and simulation is not production enclave execution. Respect production-equivalent chain-read limits rather than treating disabled simulator limits as a deployment fix.
 
-The committed workflow configuration uses `massa-worflow-*` names. Ensure the configured names and on-chain workflow IDs match before deployment. A `production-settings` label is not evidence of a production deployment.
+### E1 contract wiring
 
-### E1 deployment wiring
+1. Retain the existing ActorRegistry when deploying the ProofRegistry.
+2. Deploy Lots with the correct ProofRegistry reference.
+3. Configure the one-time ProofRegistry-to-Lots binding and verify the reverse link.
+4. Configure MUF/Elemental forwarders and expected workflow IDs.
+5. Point both workflows to the current ProofRegistry and check version `3`.
+6. Submit fresh E1 evidence with complete private openings; run MUF, then Elemental.
+7. Update Solana Config's source references with its administrator where necessary.
 
-1. Use the retained ActorRegistry when deploying ProofRegistry.
-2. Deploy Lots with the new ProofRegistry address.
-3. From the ProofRegistry owner, call `configureLots` with the new Lots address. This binding is one-time; `Lots.registry()` must point back to that ProofRegistry.
-4. Configure the appropriate forwarder and expected workflow IDs for MUF (`1`) and Elemental (`3`). Simulation identifiers are not production authorizations.
-5. Set both workflow configurations to the new ProofRegistry and verify registry version `3`. Check the reverse Lots link before submitting evidence.
-6. Register fresh E1 evidence with complete private openings. Run MUF before Elemental. Existing actor registration remains valid; the new proof and lot registries begin without the old records.
-
-The Elemental package includes `e1.ts` plus local helpers for preparing private identifiers/salts and checking deployment configuration. If `tokenActionMode` is explicitly configured, it must match the private evidence operation (`INITIAL` or `TRANSFORM`). Never regenerate a committed input opening when preparing a transformation.
+Do not regenerate an existing committed input opening during transformation.
 
 ### Solana
 
-The Anchor project is in `solana/`. Review its toolchain configuration and install its JavaScript dependencies before building:
+Keep the existing project dependency/toolchain versions that compile together. From the repository's Anchor project:
 
-```
+```bash
 cd solana
 yarn install
-anchor build
+anchor build --arch v0
 ```
 
-`Anchor.toml` currently defaults to `localnet`. Use explicit Devnet settings when interacting with the published demonstration program. Do not deploy automatically as part of README setup, and never commit wallet or program keypairs.
+`--arch v0` matches the binary architecture successfully used in the demonstrated toolchain. Review `Anchor.toml`; localnet defaults do not select the published Devnet program automatically.
 
-Test files in `solana/tests/` must be checked against the current program accounts and instruction arguments before reporting results. Initialization, the configured attestor and lineage setup are prerequisites for the economic flow.
+Program upgrades, IDL updates and Config-origin updates are separate operations. The CLI wallet used for an upgrade may differ from the Phantom administrator of Config. Never commit keypair files.
+
+The current account interfaces differ from the older redemption implementation. Legacy series without the required issuer-reference account, and pending legacy requests without a quote account, require an explicit migration before the current flow can use them. Publishing a new IDL does not create those missing accounts.
+
+## Validation status
+
+The demonstrated work includes the private physical workflow, lot transformation/receipt views, and creation/listing of an E1-linked RWA in the current UI. Local frontend checks cover instruction encoding, exact lamport parsing, third-party payment construction, signature collection and RPC throttling. These checks use mocks and are not on-chain end-to-end payment tests.
+
+Before marking the economic cycle fully demonstrated, complete and record:
+
+- Purchase from a different wallet.
+- Secondary resale and purchase by another holder.
+- Redemption request and requested-amount update.
+- Full payment from a different payer, recipient balance verification and mint supply becoming zero.
+- Failed/insufficient payment preserving the pending request and token.
+- Duplicate same-issuer issuance and ancestor/descendant attempts being rejected.
+- Physical subdivision/transfer preserving the existing economic reservation.
+- Optimized program deployment and actual storage-deposit refunds.
+
+Historical test counts must not be presented as validation of a later revision. Rust changes prepared during this update require compilation and Devnet verification with the project's real dependencies. An MVP demonstration is distinct from production readiness or an independent security audit.
 
 ## Trust boundaries
 
-- Source measurements and business declarations still depend on the companies, laboratories and authorities producing them. Blockchain integrity does not establish physical truth.
-- Administrators, authorized workflows and the Solana attestor have distinct trusted roles.
-- Public lineage, actor links and transaction metadata can reveal relationships even when quantities remain private.
-- Cross-chain consistency depends on correct attestation and synchronization; it is not provided solely by using two networks.
-- Prototype capacities, permissions, key management, storage policies and recovery procedures require production review.
-- Validation claims must identify the tested revision and environment; local checks are not an independent security audit or proof of production readiness.
+- Industrial measurements and declarations depend on the companies and laboratories producing them.
+- Authorized workflows, Config administration and issuance attestation are distinct roles.
+- The current physical/economic linkage relies on correct attestation and lineage registration, not trustless cross-chain verification.
+- Public metadata can reveal commercial relationships despite private quantities.
+- Access control, key recovery, prototype capacity and real commercial terms need production validation.
 
 ## Use of AI tools
 
-AI-assisted tools, including ChatGPT, Claude and Manus, supported implementation, debugging, tests, research, interface work, documentation and synthetic demonstration inputs. Armando Freire led the architecture, technical decisions, integration, deployment and validation. AI-generated output is not an independent audit or proof of correctness.
+AI-assisted tools, including ChatGPT, Claude and Manus, supported implementation, debugging, tests, research, interface work, documentation and synthetic demonstration inputs. Armando Freire led architecture, technical decisions, integration, deployment and validation. AI-generated output is not an independent audit.
 
 ## Team
 
 - **Armando Freire — Technical Lead:** architecture, Solidity contracts, Rust/Anchor program, Chainlink CRE workflows, integration, testing and technical documentation.
 - **Jéssica — Product Lead:** product direction, requirements, refinement, documentation, positioning and presentation.
-- **Adriana Tourinho — Technical & Business Mentor:** technical and business guidance, hands-on support across the project, Solidity smart contract development, internal code auditing and support for team coordination using Scrum practices.
+- **Adriana Tourinho — Technical & Business Mentor:** technical/business guidance, hands-on support, Solidity development, internal code review and Scrum coordination support.
 
 ## License
 
-The repository includes an [Apache-2.0 LICENSE](https://github.com/armanfm/ExplorerChem/blob/main/LICENSE). Some individual source files and package manifests carry different license identifiers; consult those notices and reconcile them before a formal release.
+The repository includes an Apache-2.0 license. Some source files and package manifests carry different license identifiers; consult and reconcile those notices before a formal release.
 
