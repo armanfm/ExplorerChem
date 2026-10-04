@@ -5900,13 +5900,50 @@ async function rwaBuildIssuanceContext(actor,lot,holderAddress){
   const program=rwaPk(RWA_SOLANA_PROGRAM_ID),payer=rwaPk(rwaSolanaWalletAddress),holder=rwaPk(holderAddress),config=rwaPda([rwaText("config")],program),series=rwaPda([rwaText("series"),seriesId],program),originLock=rwaPda([rwaText("origin"),origin],program),nonceRecord=rwaPda([rwaText("nonce"),rwaU64(nonce)],program),mintRecord=rwaPda([rwaText("rwa-mint"),seriesId],program),mint=rwaPda([rwaText("mint"),seriesId],program),tokenProgram=rwaPk(RWA_TOKEN_2022_PROGRAM_ID),ataProgram=rwaPk(RWA_ASSOCIATED_TOKEN_PROGRAM_ID),holderAta=rwaPda([holder.toBytes(),tokenProgram.toBytes(),mint.toBytes()],ataProgram);
   return {issuerWallet:payer,authority:rwaPda([rwaText("redemption-authority"),seriesId]),creditId,creditLock,creditReference,creditTerms,program,payer,holder,config,series,originLock,nonceRecord,mintRecord,mint,holderAta,tokenProgram,ataProgram,sourceChainId,sourceContract,actorId,lotId,origin,seriesId,claim,nonce,expiresAt:BigInt(Math.floor(Date.now()/1000)+3600)};
 }
+async function rwaUpdateSourceConfig(button){
+  if(rwaActionBusy)return;
+  rwaActionBusy=true;button.disabled=true;
+  const node=document.getElementById('rwaConfigUpdateStatus');
+  const status=t=>{if(node)node.textContent=t;};
+  try{
+    if(!rwaSolanaWalletAddress)throw Error('Conecte a Phantom com a carteira administradora.');
+    status('Conferindo a configuração e o Lots na Sepolia…');
+    const source=await newLotsContext(false);
+    const address=await source.lots.getAddress(),contract=rwaEth20(address),chain=11155111n;
+    const config=rwaPda([rwaText('config')]);
+    const connection=new solanaWeb3.Connection(RWA_SOLANA_RPC,'confirmed');
+    const data=await rwaDecode(await connection.getAccountInfo(config,'confirmed'),'Config',102);
+    const admin=new solanaWeb3.PublicKey(data.slice(8,40));
+    if(!admin.equals(rwaPk(rwaSolanaWalletAddress)))throw Error('Conecte a carteira administradora: '+admin.toBase58());
+    if(rwaReadU64(data,72)===chain&&rwaHex(data.slice(80,100)).toLowerCase()===rwaHex(contract).toLowerCase()){
+      status('A configuração já aponta para o Lots atual.');return;
+    }
+    if(!confirm('Atualizar a origem das novas emissões RWA para Sepolia, Lots '+address+'? Os RWAs existentes mantêm suas origens.')){status('Atualização cancelada.');return;}
+    const ix=await rwaMarketIx('update_source_config',[
+      {pubkey:admin,isSigner:true,isWritable:false},
+      {pubkey:config,isSigner:false,isWritable:true}
+    ],rwaBytes(rwaU64(chain),contract));
+    status('Confira e assine a atualização na Phantom…');
+    const signature=await rwaSendIx([ix],'Atualização da origem E1');
+    const updated=await rwaDecode(await connection.getAccountInfo(config,'confirmed'),'Config',102);
+    if(rwaReadU64(updated,72)!==chain||rwaHex(updated.slice(80,100)).toLowerCase()!==rwaHex(contract).toLowerCase())throw Error('Atualização enviada, mas a leitura ainda não confirmou. Transação: '+signature);
+    status('Configuração atualizada e conferida. Transação: '+signature);
+    toast('Origem E1 atualizada. Você pode tentar emitir o RWA.');
+  }catch(error){status(error.message||String(error));toast(error.message||String(error));}
+  finally{rwaActionBusy=false;button.disabled=false;renderWallet();}
+}
+document.addEventListener('click',event=>{
+  const button=event.target.closest('#rwaUpdateSourceConfig');
+  if(button)rwaUpdateSourceConfig(button);
+});
+
 async function rwaEnsureConfig(ctx,status){
   const connection=new solanaWeb3.Connection(RWA_SOLANA_RPC,"confirmed"),info=await connection.getAccountInfo(ctx.config,"confirmed");
   if(info){
     const data=await rwaDecode(info,"Config",102);
     const trusted=new solanaWeb3.PublicKey(data.slice(40,72));ctx.attestor=trusted;
     const chain=rwaReadU64(data,72);if(chain!==ctx.sourceChainId)throw new Error("A Config RWA aponta para outra source chain.");
-    const contract=data.slice(80,100);if(rwaHex(contract).toLowerCase()!==rwaHex(ctx.sourceContract).toLowerCase())throw new Error("A configuração Solana ainda aponta para o contrato Lots anterior. O upgrade do programa preservou essa configuração. É necessária uma migração autorizada da origem antes de emitir RWAs E1; nenhuma emissão foi enviada.");
+    const contract=data.slice(80,100);if(rwaHex(contract).toLowerCase()!==rwaHex(ctx.sourceContract).toLowerCase())throw new Error("A configuração Solana ainda aponta para o contrato Lots anterior. O upgrade do programa preservou essa configuração. Use Atualizar origem E1 pela Phantom com a carteira administradora antes de emitir; nenhuma emissão foi enviada.");
     if(data[100])throw Error("Programa Solana pausado.");
     return;
   }
@@ -6027,7 +6064,10 @@ function rwaRenderWallet(area){
   const b=area.querySelector("#disconnectRwaWallet");if(b)b.onclick=rwaDisconnectWallet;
 }
 async function rwaConnectWallet(){
-  const provider=rwaSolanaProvider();if(!provider){toast("Carteira Solana compatível não detectada. Instale/abra Phantom.");return;}
+  const provider=rwaSolanaProvider();if(!provider){
+ const message=location.protocol==='file:'?'O HTML foi aberto como arquivo local. Abra por localhost ou HTTPS para conectar a Phantom.':'A conexão Solana não foi disponibilizada nesta página. Confira se a Phantom está habilitada para este site, desbloqueie a carteira e recarregue.';
+ toast(message);const host=document.getElementById('rwaIssueStatus');if(host)host.textContent=message;return;
+}
   try{
     const result=await provider.connect();rwaSolanaWalletAddress=String(result?.publicKey||provider.publicKey||"");
     if(!rwaSolanaWalletAddress)throw new Error("A carteira não retornou uma public key Solana.");
@@ -6058,7 +6098,8 @@ function rwaBaseHtml(){
     '<section id="rwaSupplierPanel">'+rwaSupplierPanelHtml(actor)+'</section><section id="rwaClientPanel" hidden>'+rwaClientPanelHtml()+'</section></div>';
 }
 function rwaSupplierPanelHtml(actor){
-  return '<div class="rwa-grid"><div class="stack"><section class="panel rwa-card"><div class="rwa-panel-title"><div><span class="section-eyebrow">FORNECEDOR RWA</span><h2>Empresa emissora</h2><p>Escolha uma empresa já reconhecida pelo ExploreChem. O mesmo actorId identifica a origem do RWA.</p></div></div><div class="field"><label for="rwaSupplierActor">Fornecedor / empresa</label><select id="rwaSupplierActor">'+rwaActorOptions(actor?.id)+'</select></div><div id="rwaSupplierSummary">'+rwaSupplierSummaryHtml(actor)+'</div><div class="field" style="margin-top:16px"><label for="rwaHolderPubkey">Public key Solana do holder inicial</label><input id="rwaHolderPubkey" class="mono" placeholder="Cole a public key Solana" autocomplete="off" spellcheck="false" value="'+escaparHtml(rwaActorWallets()[actor?.id]||rwaSolanaWalletAddress||"")+'"></div><div class="actions"><button type="button" class="btn ghost sm" id="rwaUseConnectedWallet">Usar carteira conectada</button><button type="button" class="btn ghost sm" id="rwaConnectHere">Conectar Solana para assinar</button></div><p class="rwa-form-note">A carteira conectada da empresa será o titular inicial e a carteira autorizada para resgates. O attestor participa somente da emissão; o aceite de resgate é direto com a empresa.</p></section>'+
+  return '<div class="rwa-grid"><div class="stack"><section class="panel rwa-card"><div class="rwa-panel-title"><div><span class="section-eyebrow">FORNECEDOR RWA</span><h2>Empresa emissora</h2><p>Escolha uma empresa já reconhecida pelo ExploreChem. O mesmo actorId identifica a origem do RWA.</p></div></div><div class="field"><label for="rwaSupplierActor">Fornecedor / empresa</label><select id="rwaSupplierActor">'+rwaActorOptions(actor?.id)+'</select></div><div id="rwaSupplierSummary">'+rwaSupplierSummaryHtml(actor)+'</div><div class="field" style="margin-top:16px"><label for="rwaHolderPubkey">Public key Solana do holder inicial</label><input id="rwaHolderPubkey" class="mono" placeholder="Cole a public key Solana" autocomplete="off" spellcheck="false" value="'+escaparHtml(rwaActorWallets()[actor?.id]||rwaSolanaWalletAddress||"")+'"></div><div class="actions"><button type="button" class="btn ghost sm" id="rwaUseConnectedWallet">Usar carteira conectada</button><button type="button" class="btn ghost sm" id="rwaConnectHere">Conectar Solana para assinar</button></div><p class="rwa-form-note">A carteira conectada da empresa será o titular inicial. Qualquer outra carteira pode pagar o resgate solicitado com seus próprios SOL. O attestor participa somente da emissão.</p></section>'+
+  '<section class="panel rwa-card"><h3>Configuração da origem E1</h3><p>A carteira administradora pode atualizar o Lots autorizado para novas emissões.</p><button type="button" class="btn ghost" id="rwaUpdateSourceConfig">Atualizar origem E1 pela Phantom</button><p id="rwaConfigUpdateStatus" class="rwa-form-note" role="status" aria-live="polite"></p></section>'+
   '<section class="panel rwa-card"><span class="section-eyebrow">ORIGEM DO RWA</span><h2>Escolher lote</h2><p class="sub">Selecione um lote da empresa para conferir sua composição privada e emitir o direito econômico.</p>'+
     '<div class="rwa-lot-picker"><div class="rwa-lot-picker-head"><div><h3>Meus lotes</h3><p>O lote selecionado fica ligado ao actorId como origem econômica do RWA.</p></div><button type="button" class="btn ghost sm" id="rwaLoadLots">Atualizar lotes</button></div>'+
     '<div class="field"><label for="rwaSourceLot">Lote de origem</label><select id="rwaSourceLot"><option value="">Carregando lotes da empresa…</option></select></div>'+
@@ -6081,7 +6122,7 @@ function rwaSupplierPanelHtml(actor){
   '<aside class="stack"><section class="panel rwa-card"><span class="section-eyebrow">REGRA ECONÔMICA</span><h3>Quem possui a unidade possui o direito</h3><div class="rwa-ok">A carteira que tiver <b>amount = 1</b> do mint Token-2022 é a titular atual do direito econômico. Holder anterior não mantém direito residual.</div></section><section class="panel rwa-card"><span class="section-eyebrow">PRIVACIDADE DO ATIVO</span><h3>Oferta com números verificáveis</h3><div class="rwa-ok">Massas, composição e laudos permanecem privados. O RWA representa um direito econômico, sem transferir a mercadoria. Carteiras, ofertas e pagamentos SOL são públicos na Solana.</div></section><section class="panel rwa-card"><span class="section-eyebrow">MERCADO</span><h3>Marketplace Solana Devnet</h3><div class="rwa-marketplace-lock"><i>⌁</i><div><b>Compra, venda e cancelamento on-chain</b><p>Publicar envia o token ao escrow; comprar transfere SOL e token na mesma transação. A simulação interrompe instruções não disponíveis.</p></div></div></section></aside></div><section class="panel rwa-card" style="margin-top:16px"><div class="rwa-panel-title"><div><span class="section-eyebrow">MEUS RWAs</span><h2>RWAs do fornecedor selecionado</h2><p>Cada RWA permanece ligado ao actorId, ao identificador do lote de origem e ao Mint. Supply e posse são consultados na Devnet.</p></div><button type="button" class="btn ghost" id="rwaRefreshSupplier">Atualizar Solana</button></div><div class="scrollx rwa-market" id="rwaSupplierTable"></div></section>';
 }
 function rwaClientPanelHtml(){
-  return '<section class="panel rwa-card"><div class="rwa-panel-title"><div><span class="section-eyebrow">CLIENTE RWA</span><h2>Mercado e direitos econômicos</h2><p>O mercado exibe emissora, referência do lote E1, direito econômico, Mint e preço da oferta.</p></div><button type="button" class="btn ghost" id="rwaRefreshClient">Atualizar Solana</button></div><div class="rwa-warning" style="margin:14px 0"><b>Direito econômico:</b> comprar ou revender o RWA não transfere a mercadoria. O titular solicita um valor de resgate à emissora; ela aceita e paga, queimando o token na mesma transação. O preço do mercado secundário não determina o valor de resgate.</div><div class="scrollx rwa-market" id="rwaMarketTable"></div></section><section class="panel rwa-card rwa-assets" style="margin-top:16px"><span class="section-eyebrow">MEUS ATIVOS</span><h2>Direitos econômicos da carteira conectada</h2><p class="sub">Exibe tokens na carteira, ofertas desta carteira e seus pedidos de resgate, consultados na Devnet.</p><div class="scrollx" id="rwaAssetsTable"></div></section>';
+  return '<section class="panel rwa-card"><div class="rwa-panel-title"><div><span class="section-eyebrow">CLIENTE RWA</span><h2>Mercado e direitos econômicos</h2><p>O mercado exibe emissora, referência do lote E1, direito econômico, Mint e preço da oferta.</p></div><button type="button" class="btn ghost" id="rwaRefreshClient">Atualizar Solana</button></div><div class="rwa-warning" style="margin:14px 0"><b>Direito econômico:</b> comprar ou revender o RWA não transfere a mercadoria. O titular solicita um valor de resgate à emissora; qualquer carteira pagadora pode quitar o valor solicitado, queimando o token na mesma transação. O preço do mercado secundário não determina o valor de resgate.</div><div class="scrollx rwa-market" id="rwaMarketTable"></div></section><section class="panel rwa-card rwa-assets" style="margin-top:16px"><span class="section-eyebrow">MEUS ATIVOS</span><h2>Direitos econômicos da carteira conectada</h2><p class="sub">Exibe tokens na carteira, ofertas desta carteira e seus pedidos de resgate, consultados na Devnet.</p><div class="scrollx" id="rwaAssetsTable"></div></section>';
 }
 function rwaPriceRiskHtml(value){
   const risk=String(value||"PENDING").toUpperCase();
@@ -6190,7 +6231,7 @@ function rwaActionButtons(r){
  const rotate=w&&w===r.issuerWallet&&r.economicStatus==='ACTIVE'?b('rotate','Trocar carteira da emissora'):'';
  if(r.redemption?.status===1){
   if(r.needsMigration)return 'Resgate legado: migração necessária';
-  return (w===r.issuerWallet?b('settle','Aceitar e pagar '+rwaSol(r.redemptionLamports)+' SOL'):w===r.redemption.holder?b('quote','Editar valor solicitado'):'Aguardando aceite da emissora')+rotate;
+  return (w&&w!==r.redemption.holder?b('settle','Pagar resgate · '+rwaSol(r.redemptionLamports)+' SOL'):w===r.redemption.holder?b('quote','Editar valor solicitado'):'Conecte uma carteira para pagar o resgate')+rotate;
  }
  if(r.economicStatus!=='ACTIVE')return 'Encerrado';
  let html=r.listing?(r.listing.seller===w?b('cancel','Cancelar venda'):b('buy','Comprar por '+rwaSol(r.listing.price)+' SOL')):own?b('list','Vender / revender')+(r.needsMigration?'Resgate exige migração':b('redeem','Solicitar resgate')):'Sem oferta publicada';
@@ -6220,19 +6261,19 @@ async function rwaAction(action,id){
    if(!r.issuerWallet)throw Error('Série antiga sem carteira emissora registrada: migração necessária.');
    const actor=prompt('ActorId do titular que solicita o resgate (32 bytes hexadecimais):','');if(actor===null)return;const actorBytes=rwaHexBytes(actor,32);if(actorBytes.every(v=>v===0))throw Error('ActorId não pode ser zero.');
    const raw=prompt('Valor solicitado à empresa emissora, em SOL:','');if(raw===null)return;const amount=rwaLamports(raw);
-   if(!confirm('Solicitar '+rwaSol(amount)+' SOL à emissora? O token ficará em escrow, sem venda, até o aceite e pagamento. Solicitar não queima o token.'))return;
+   if(!confirm('Solicitar '+rwaSol(amount)+' SOL à emissora? O token ficará em escrow, sem venda, até o pagamento integral solicitado. Solicitar não queima o token.'))return;
    label='Solicitação de resgate';ixs=[await rwaMarketIx('request_redemption',[m(payer,true,true),m(c.quote,true),...base,m(rwaAta(payer,c.mint),true),m(c.redemption,true),m(rwaAta(c.redemption,c.mint),true),...tail],rwaBytes(actorBytes,rwaU64(amount)))];
   }else if(action==='quote'){
    if(r.redemption?.status!==1||r.redemption.holder!==rwaSolanaWalletAddress||!r.redemptionLamports)throw Error('Somente o titular do pedido pendente pode editar o valor.');
    const raw=prompt('Novo valor solicitado em SOL:',rwaSol(r.redemptionLamports));if(raw===null)return;const amount=rwaLamports(raw);
    label='Atualização do valor solicitado';ixs=[await rwaMarketIx('update_redemption_quote',[m(payer,false,true),m(c.redemption),m(c.quote,true)],rwaU64(amount))];
   }else if(action==='settle'){
-   if(r.issuerWallet!==rwaSolanaWalletAddress)throw Error('Conecte a carteira autorizada da empresa emissora.');
+   if(r.redemption?.holder===rwaSolanaWalletAddress)throw Error('O titular não pode pagar o resgate a si mesmo. Use a carteira que financiará o pagamento.');
    if(r.redemption?.status!==1||!r.redemptionLamports)throw Error('Pedido pendente com valor verificável não encontrado.');
    const amount=BigInt(r.redemptionLamports);
-   if(!confirm('Aceitar resgate e pagar '+rwaSol(amount)+' SOL ao titular '+r.redemption.holder+'? Pagamento e queima acontecem juntos. A carteira também paga taxas. Sem saldo, o pedido continua pendente.'))return;
+   if(!confirm('Pagar resgate de '+rwaSol(amount)+' SOL ao titular '+r.redemption.holder+'? Você paga com seus próprios SOL e não recebe o token. Pagamento e queima acontecem juntos. A carteira também paga taxas. Sem saldo, o pedido continua pendente.'))return;
    const bytes=await rwaSha(rwaText(JSON.stringify({schema:'ExploreChem/SOLRedemption/v1',seriesId:r.seriesId,payer:rwaSolanaWalletAddress,holder:r.redemption.holder,lamports:String(amount),nonce:rwaHex(crypto.getRandomValues(new Uint8Array(32)))})));
-   label='Aceite, pagamento e queima';ixs=[await rwaMarketIx('settle_and_burn',[m(c.config),m(payer,true,true),m(c.authority),m(c.quote),m(c.system),m(c.series,true),m(c.record),m(c.mint,true),m(c.redemption,true),m(rwaPk(r.redemption.holder),true),m(rwaAta(c.redemption,c.mint),true),m(c.token),m(rwaLineagePda(),true)],rwaBytes(bytes,rwaU64(amount)))];
+   label='Pagamento do resgate e queima';ixs=[await rwaMarketIx('settle_and_burn',[m(c.config),m(payer,true,true),m(c.authority),m(c.quote),m(c.system),m(c.series,true),m(c.record),m(c.mint,true),m(c.redemption,true),m(rwaPk(r.redemption.holder),true),m(rwaAta(c.redemption,c.mint),true),m(c.token),m(rwaLineagePda(),true)],rwaBytes(bytes,rwaU64(amount)))];
   }else if(action==='rotate'){
    if(r.issuerWallet!==rwaSolanaWalletAddress)throw Error('Conecte a carteira atual da emissora.');
    const address=prompt('Public key da nova carteira da empresa. As duas carteiras precisam assinar:','');if(address===null)return;const next=rwaPk(address.trim());if(next.equals(payer))throw Error('Informe uma carteira diferente.');
