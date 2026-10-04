@@ -10,7 +10,7 @@ pub use instructions::*;
 pub use state::*;
 
 declare_id!(
-    "A2sUfkL18Znfo6A3u9mPHbMm1avm1A9J7NDpvwSTqT79"
+    "CC5N6Bpht1z6nuR2ReamaYAXG9VagN3w27df4PWxAMFG"
 );
 
 #[program]
@@ -34,16 +34,6 @@ pub mod explorechem_rwa_solana {
                 source_chain_id,
                 source_lots_contract,
             )
-    }
-
-    pub fn update_source_config(
-        ctx: Context<UpdateSourceConfig>,
-        source_chain_id: u64,
-        source_lots_contract: [u8; 20],
-    ) -> Result<()> {
-        crate::instructions::initialize::handle_update_source_config(
-            ctx, source_chain_id, source_lots_contract,
-        )
     }
 
     // ============================================================
@@ -79,13 +69,11 @@ pub mod explorechem_rwa_solana {
     pub fn request_redemption(
         ctx: Context<RequestRedemption>,
         holder_actor_id: [u8; 32],
-        redemption_lamports: u64,
     ) -> Result<()> {
         crate::instructions::request_redemption::
             handle_request_redemption(
                 ctx,
                 holder_actor_id,
-                redemption_lamports,
             )
     }
 
@@ -96,20 +84,12 @@ pub mod explorechem_rwa_solana {
     pub fn settle_and_burn(
         ctx: Context<SettleAndBurn>,
         settlement_hash: [u8; 32],
-        redemption_lamports: u64,
     ) -> Result<()> {
         crate::instructions::settle_and_burn::
             handle_settle_and_burn(
                 ctx,
                 settlement_hash,
-                redemption_lamports,
             )
-    }
-    pub fn rotate_redemption_authority(ctx: Context<RotateRedemptionAuthority>) -> Result<()> {
-        settle_and_burn::handle_rotate_redemption_authority(ctx)
-    }
-    pub fn update_redemption_quote(ctx: Context<UpdateRedemptionQuote>, lamports: u64) -> Result<()> {
-        request_redemption::handle_update_redemption_quote(ctx, lamports)
     }
     pub fn initialize_lineage(ctx: Context<InitializeLineage>) -> Result<()> { lineage::initialize_registry(ctx) }
     pub fn register_lineage_lot(ctx: Context<ManageLineage>, lot_id: [u8;32], parents: Vec<[u8;32]>) -> Result<()> { lineage::register(ctx, lot_id, parents) }

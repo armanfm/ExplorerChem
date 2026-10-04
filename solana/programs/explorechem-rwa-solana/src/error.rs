@@ -75,4 +75,14 @@ pub enum ExploreChemRwaError {
     #[msg("Mercado pausado ou serie inativa")] Inactive,
     #[msg("Preco invalido ou alterado")] Price,
     #[msg("Comprador nao pode ser vendedor")] SelfPurchase,
+    #[msg("Valor de resgate deve ser maior que zero")]
+    InvalidRedemptionAmount,
+    #[msg("Carteira pagadora nao pode ser a carteira beneficiaria")]
+    SelfRedemptionPayment,
+    #[msg("Somente a carteira registrada da emissora pode aceitar o resgate")]
+    UnauthorizedRedemptionIssuer,
+    #[msg("Valor proposto mudou; revise antes de aceitar")]
+    RedemptionAmountChanged,
+    #[msg("Nova carteira deve ser diferente da carteira atual")]
+    SameRedemptionWallet,
 }

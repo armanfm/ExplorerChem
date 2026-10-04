@@ -154,3 +154,20 @@ pub struct CreditLock {
     pub source_lot_id: [u8;32],
     pub bump: u8,
 }
+
+// Contas separadas: preservam o layout das series e pedidos antigos.
+#[account]
+#[derive(InitSpace)]
+pub struct RedemptionAuthority {
+    pub series_id: [u8; 32],
+    pub issuer_wallet: Pubkey,
+    pub bump: u8,
+}
+
+#[account]
+#[derive(InitSpace)]
+pub struct RedemptionQuote {
+    pub series_id: [u8; 32],
+    pub lamports: u64,
+    pub bump: u8,
+}
