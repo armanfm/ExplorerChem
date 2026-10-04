@@ -110,7 +110,7 @@ Run the workflows from the repository root:
 Run MUF before Elemental. Add `--broadcast` to submit reports to the configured testnet. MUF and Elemental integrate with Chainlink CRE through `handlerInTee` for confidential processing; these commands invoke the simulator, whose logs are for debugging.
 
 See [Configuration and operations](docs/operations.md) for dependencies, contract wiring, source updates and the Solana build flow.
-
+Synthetic industrial JSON examples for use with the MUF and Elemental workflows are available in [exemples/](exemples/).
 ## Privacy, costs and operating boundaries
 
 - Masses, elemental quantities, purity, detailed results, openings and salts remain in controlled off-chain storage. Authorized private views expose composition; the public catalogue does not expose numerical composition. Public presence indicators, when displayed, identify elements without quantities.
