@@ -61,19 +61,12 @@ See [Attestation responsibilities and lineage rules](docs/economic-model.md#atte
 ## Economic rules
 
 - Each series issues one indivisible Token-2022 unit with decimals 0. Supply is 1 after mint and 0 after paid redemption and burn.
-
 - A buyer receives the economic right. The original issuer remains associated with it after secondary resale or physical transfer.
-
 - A seller sets the sale price. The current holder proposes the redemption amount and can edit it while pending. The payer accepts it by signing a transaction paying exactly the current quote.
-
 - Payment uses the payer's own native SOL. Any wallet other than the registered redemption holder can fund it without a payment allowlist or attestor signature. The payer receives no token or mineral ownership.
-
 - Payment, burn, escrow closure, final status and release of the active lineage reservation occur atomically. A failed payment preserves the pending request and escrowed unit; transaction fees may still apply.
-
 - For the same issuer, an active reservation blocks another issue on the same lot or a registered ancestor/descendant. Subdivision preserves that reservation. Reselling the existing RWA remains allowed while it is outside redemption escrow.
-
 - Different issuers have separate reservation scopes. Selling the physical lot to another company does not settle the original issuer's series.
-
 - Redemption does not require the physical lot to remain in the issuer's custody. It settles the economic series rather than delivering the mineral.
 
 The requesting holder's quote is separate from the entered terms text and from past sale prices. There is no automatic inflation index or automatic debit. A request alone does not burn the token.
@@ -97,68 +90,12 @@ The issuer must retain and provide the original content. On-chain discovery alon
 
 Solana `Config` specifies the permitted source chain and Lots address. The Config administrator can update that origin through the frontend's Phantom operation. Program upgrades, IDL publication and Config changes are separate operations; existing series retain their original source references.
 
-## Example evidence JSON
-
-This synthetic INITIAL example admits **150 kg dry material containing 12 kg Nd, 4.5 kg Pr and 3 kg Dy**. The elemental quantities are part of the 150 kg. Accounted input and output are equal, so MUF is zero; no previous lot is consumed.
-
-Send it through the private evidence submission flow for the Serra Clara demonstration actor, then run MUF followed by Elemental. To repeat with a new lot, use new operation/output IDs and fresh salts. Existing committed input openings must remain unchanged for TRANSFORM operations.
-
-<details>
-<summary>View the complete 150 kg evidence JSON</summary>
-
-```json
-{
-  "schema": "ExploreChem/PrivateEvidence/E1/demo",
-  "lotReference": "README-E1-INITIAL-150KG-ND-PR-DY",
-  "actorId": "0x2fd9c7823fedcace0fc3060ad815182bde855c9cf88c4cb832c82af37e064f7c",
-  "description": "Synthetic documentation fixture: 150 kg dry material, Nd 8%, Pr 3%, Dy 2%. Independent initial lot; no real material or previous lot is consumed.",
-  "massBalance": {"inputMassKg": "150", "openingInventoryMassKg": "0", "outputMassKg": "150", "scrapMassKg": "0", "otherOutputMassKg": "0", "closingInventoryMassKg": "0"},
-  "calculationContext": {"trackedElements": ["Nd", "Pr", "Dy"]},
-  "streams": [
-    {"streamId": "ENTRADA-ND-PR-DY-001", "streamType": "INPUT", "measuredMassKg": "150", "massBasis": "DRY", "assays": [{"element": "Nd", "basis": "ELEMENT_PCT", "value": "8"}, {"element": "Pr", "basis": "ELEMENT_PCT", "value": "3"}, {"element": "Dy", "basis": "ELEMENT_PCT", "value": "2"}]},
-    {"streamId": "CONFERENCIA-ND-PR-DY-001", "streamType": "PRODUCT", "measuredMassKg": "150", "massBasis": "DRY", "assays": [{"element": "Nd", "basis": "ELEMENT_PCT", "value": "8"}, {"element": "Pr", "basis": "ELEMENT_PCT", "value": "3"}, {"element": "Dy", "basis": "ELEMENT_PCT", "value": "2"}]}
-  ],
-  "e1": {
-    "mode": "INITIAL",
-    "operationId": "0xef260bb53c4560ec25c569f6905208b1759a182060747eda7495f88a6485cf5d",
-    "proofSalt": "0xc11be24279c35b339130aeef301af19dcea15b9bb22ce98b9ccb879ebb771451",
-    "inputs": [],
-    "outputs": [
-      {
-        "streamId": "ENTRADA-ND-PR-DY-001",
-        "recipient": "0x2fd9c7823fedcace0fc3060ad815182bde855c9cf88c4cb832c82af37e064f7c",
-        "opening": {
-          "lotId": "0x9eeb9827922aee547e0065180d3f496a321ce0e9e964def95fb7b3d12cf66a27",
-          "materialMassMg": "150000000",
-          "elements": [
-            {"basisHash": "0x26840443a8398c0f3b91d87605ba114623f577fdb3e8e66f3537348e4766e742", "massMg": "4500000"},
-            {"basisHash": "0x8fe013d1a12762e66efaf560989b1fa4d67febb24546576a60f445fc83016dbc", "massMg": "12000000"},
-            {"basisHash": "0xe29a0102a484995a40c96a4555e78b37cf211bbe179f49bd32dcb805a09bd02b", "massMg": "3000000"}
-          ],
-          "salt": "0xc56d143b9bcd52cb5bd3954390db2660aedb2d9c766a31cb0624537b70c4428a"
-        }
-      }
-    ]
-  },
-  "evidenceType": "OWN_STOCK",
-  "actorType": "OTHER"
-}
-```
-
-</details>
-
-`massBalance` gives total quantities in kilograms. `streams` and `assays` describe the measured material and elemental percentages. The `e1` section supplies the operation, recipient and private lot opening; its mass quantities use integer milligrams as strings. In INITIAL, the created lot references the admitted input stream; the PRODUCT stream completes the matching output accounting.
-
-The remaining 130.5 kg has no specified elemental composition in this fixture. The displayed salts are public synthetic examples; use fresh private salts for confidential evidence.
-
 ## Quick start
 
 From the repository root, serve the frontend locally:
 
 ```bash
-
 python3 -m http.server 8000 --bind 127.0.0.1
-
 ```
 
 Open `http://127.0.0.1:8000/` with the required wallets. Use Ethereum Sepolia for physical operations and Phantom on Solana Devnet for economic operations. Private evidence resources and contract authorizations must be configured for document processing.
@@ -166,11 +103,8 @@ Open `http://127.0.0.1:8000/` with the required wallets. Use Ethereum Sepolia fo
 Run the workflows from the repository root:
 
 ```bash
-
 (cd workflows/muf && cre workflow simulate ./muf-worflow --target staging-settings)
-
 (cd workflows/elemental && cre workflow simulate ./elemental-worflow --target staging-settings)
-
 ```
 
 Run MUF before Elemental. Add `--broadcast` to submit reports to the configured testnet. MUF and Elemental integrate with Chainlink CRE through `handlerInTee` for confidential processing; these commands invoke the simulator, whose logs are for debugging.
@@ -180,13 +114,9 @@ See [Configuration and operations](docs/operations.md) for dependencies, contrac
 ## Privacy, costs and operating boundaries
 
 - Masses, elemental quantities, purity, detailed results, openings and salts remain in controlled off-chain storage. Authorized private views expose composition; the public catalogue does not expose numerical composition. Public presence indicators, when displayed, identify elements without quantities.
-
 - Public actor IDs, commitments, lineage, wallet activity and SOL payments can reveal timing and relationships. Storage/API authorization determines access to private content.
-
 - Issuance creates accounts with storage deposits in addition to transaction fees. Closing eligible empty accounts refunds their deposits. The frontend adjusts compute limits from simulation and batches catalogue reads; [cost and RPC behavior](docs/economic-model.md#transaction-costs-and-optimizations) describes the details.
-
 - Lineage protection covers registered relationships and issuer identities. The registry holds up to 64 nodes and 32 reservations. Ethereum lot operations have their own state and proof requirements.
-
 - Measurements depend on their producers, and origin transfer depends on attestation. Commitments bind data; they do not independently certify laboratory measurements or provide zero-knowledge proofs.
 
 ## Documentation
@@ -204,13 +134,9 @@ AI-assisted tools, including ChatGPT, Claude and Manus, supported implementation
 ## Team
 
 - **Armando Freire — Technical Lead:** architecture, Solidity contracts, Rust/Anchor program, Chainlink CRE workflows, integration, testing and technical documentation.
-
 - **Jéssica — Product Lead:** product direction, requirements, refinement, documentation, positioning and presentation.
-
 - **Adriana Tourinho — Technical & Business Mentor:** technical/business guidance, hands-on support, Solidity development, internal code review and Scrum coordination support.
 
 ## License
 
-ExploreChem is licensed under **Apache License 2.0**. See the repository's [LICENSE](https://github.com/armanfm/ExplorerChem/blob/main/LICENSE) for the full terms. Third-party dependencies retain their own licenses and attribution notices.
-
-
+The repository includes an Apache-2.0 license. Some source files and package manifests carry different license identifiers; consult and reconcile those notices before a formal release.
