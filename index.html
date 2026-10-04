@@ -5797,6 +5797,43 @@ async function rwaSimulateBeforeSigning(tx,label){
     throw new Error(label+" — simulação Devnet falhou: "+JSON.stringify(result.value.err)+(reason?". "+reason:"")+". Nenhuma assinatura foi solicitada.");
   }
 }
+function rwaWalletFeeAdjustmentAllowed(original, returned){
+  if(!returned || !Array.isArray(returned.instructions) ||
+     !returned.feePayer?.equals(original.feePayer) ||
+     returned.recentBlockhash!==original.recentBlockhash ||
+     returned.compileMessage().header.numRequiredSignatures!==1)return false;
+  const budget=solanaWeb3.ComputeBudgetProgram.programId;
+  const business=tx=>tx.instructions.filter(ix=>!ix.programId.equals(budget));
+  const a=business(original),b=business(returned);
+  if(a.length!==b.length)return false;
+  for(let i=0;i<a.length;i++){
+    if(!a[i].programId.equals(b[i].programId)||rwaHex(a[i].data)!==rwaHex(b[i].data)||a[i].keys.length!==b[i].keys.length)return false;
+    for(let k=0;k<a[i].keys.length;k++){
+      const x=a[i].keys[k],y=b[i].keys[k];
+      if(!x.pubkey.equals(y.pubkey)||x.isSigner!==y.isSigner||x.isWritable!==y.isWritable)return false;
+    }
+  }
+  // Only recognized fee/compute instructions without accounts are allowed.
+  const fee=returned.instructions.filter(ix=>ix.programId.equals(budget));
+  const seen=new Set();
+  for(const ix of fee){
+    const d=ix.data,kind=d[0];
+    if(ix.keys.length||seen.has(kind))return false;
+    seen.add(kind);
+    if(kind===2){if(d.length!==5)return false;const units=new DataView(d.buffer,d.byteOffset,d.byteLength).getUint32(1,true);if(!units||units>1400000)return false;}
+    else if(kind===3){if(d.length!==9)return false;}
+    else return false;
+  }
+  const unitsIx=fee.find(ix=>ix.data[0]===2);
+  const priceIx=fee.find(ix=>ix.data[0]===3);
+  if(priceIx){
+    const price=new DataView(priceIx.data.buffer,priceIx.data.byteOffset,9).getBigUint64(1,true);
+    const units=unitsIx?BigInt(new DataView(unitsIx.data.buffer,unitsIx.data.byteOffset,5).getUint32(1,true)):1400000n;
+    if((price*units+999999n)/1000000n>10000000n)return false;
+  }
+  return true;
+}
+
 async function rwaSendIx(ixs,label){
   const provider=rwaSolanaProvider();
   if(!provider||!rwaSolanaWalletAddress)throw Error("Conecte a carteira Solana.");
@@ -5805,9 +5842,9 @@ async function rwaSendIx(ixs,label){
   const payer=rwaPk(rwaSolanaWalletAddress);
   if(!provider.publicKey||!provider.publicKey.equals(payer))throw Error("A carteira mudou. Reconecte antes de continuar.");
   const latest=await connection.getLatestBlockhash("confirmed");
-  const tx=new solanaWeb3.Transaction();tx.feePayer=payer;tx.recentBlockhash=latest.blockhash;tx.add(...ixs);
+  let tx=new solanaWeb3.Transaction();tx.feePayer=payer;tx.recentBlockhash=latest.blockhash;tx.add(...ixs);
   await rwaSimulateBeforeSigning(tx,label);
-  const message=tx.serializeMessage(),required=tx.compileMessage().accountKeys.slice(0,tx.compileMessage().header.numRequiredSignatures);
+  let message=tx.serializeMessage();const required=tx.compileMessage().accountKeys.slice(0,tx.compileMessage().header.numRequiredSignatures);
   for(const key of required){
     if(!provider.publicKey?.equals(key)){
       if(!confirm('É necessária a assinatura da carteira '+key.toBase58()+'. Selecione essa conta na carteira e clique OK para conectá-la.'))throw Error('Coleta de assinaturas cancelada; nada foi enviado.');
@@ -5817,7 +5854,11 @@ async function rwaSendIx(ixs,label){
     }
     if(await connection.getBlockHeight('confirmed')>=latest.lastValidBlockHeight)throw Error('Transação expirou durante a coleta das assinaturas. Nada foi enviado.');
     const part=await provider.signTransaction(tx);
-    if(rwaHex(part.serializeMessage())!==rwaHex(message))throw Error('A carteira alterou a transação. Operação interrompida.');
+    if(rwaHex(part.serializeMessage())!==rwaHex(message)){
+      if(required.length!==1||!rwaWalletFeeAdjustmentAllowed(tx,part))throw Error('A carteira alterou dados da operação ou uma taxa fora do limite. Nada foi enviado.');
+      await rwaSimulateBeforeSigning(part,label+' · taxa ajustada pela carteira');
+      tx=part;message=tx.serializeMessage();
+    }
     const signature=part.signatures.find(x=>x.publicKey.equals(key))?.signature;
     if(!signature)throw Error('A carteira não forneceu a assinatura exigida.');tx.addSignature(key,signature);
   }
