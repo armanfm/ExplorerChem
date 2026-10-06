@@ -36,7 +36,7 @@ python3 -m http.server 8000 --bind 127.0.0.1
 
 Open `http://127.0.0.1:8000/` in a browser with the required wallets.
 
-### CRE workflows
+### CRE/TEE workflows
 
 ```bash
 cd workflows/muf/muf-worflow
@@ -55,7 +55,7 @@ From the repository root:
 
 Add `--broadcast` to submit reports to the configured testnet after checking configuration. Run MUF before Elemental. Workflow IDs, forwarders and configured project names must match their on-chain authorizations.
 
-The MUF and Elemental workflows integrate with Chainlink CRE through `handlerInTee` for confidential processing. The commands above run the workflows in the CRE simulator; logs shown by the simulator are for debugging. Respect the chain-read limits configured for the target environment.
+The MUF and Elemental workflows are configured for confidential processing in a Trusted Execution Environment (TEE), using Chainlink CRE’s `handlerInTee`. The commands above run these workflows in the CRE simulator, whose logs are intended for debugging. Respect the chain-read limits configured for the target environment.
 
 ### E1 contract wiring
 
