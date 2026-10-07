@@ -13,7 +13,7 @@ An internal, limited-scope security review was performed by a dedicated team mem
 - **Integrity of the proof chain.** Proofs form a revision chain per (evidence, proof type). A revision invalidates the lots derived from it.
 - **Actor gating.** Operations require a registered, active actor.
 
-## Trust assumptions (read before relying on this)
+## Trust assumptions 
 
 - **Demo uses a mock forwarder.** Reports in the demo go through `MockKeystoneForwarder`, and the on-chain `workflowId` observed is the placeholder `0x11…11`. With a mock forwarder, report authenticity is not enforced. Production must use the real Chainlink forwarder. (Finding N-1)
 - **Single admin wallet.** One EOA owns all three contracts. No multisig, no timelock. (F-1)
