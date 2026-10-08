@@ -6104,6 +6104,39 @@ async function rwaExecutePlan(ctx,status){
 }
 
 const RWA_STANDARD_CREDIT_TERMS='O token representa um direito econômico perante a empresa emissora, vinculado ao lote identificado na emissão. Não transfere a propriedade nem a custódia da mercadoria. O titular pode revender o direito ou solicitar resgate financeiro. O preço de revenda não define o valor de resgate. A quitação do resgate ocorre com a queima do token. Emissão em rede de testes Solana Devnet.';
+async function rwaCancelledSeriesProof(seriesId,actorId,origin){
+ const sid=rwaHex(seriesId),c=rwaContext({seriesId:sid,mint:rwaPda([rwaText('mint'),seriesId]).toBase58()});
+ const [series,record,mint,authority]=await rwaConnection().getMultipleAccountsInfo([c.series,c.record,c.mint,c.authority],'finalized');
+ const [s,m,a]=await Promise.all([rwaDecode(series,'Series',183),rwaDecode(record,'RwaMintRecord',113),rwaDecode(authority,'RedemptionAuthority',73)]);
+ if(rwaHex(s.slice(8,40))!==sid||rwaHex(m.slice(8,40))!==sid||rwaHex(a.slice(8,40))!==sid||rwaHex(s.slice(40,72))!==rwaHex(actorId)||rwaHex(s.slice(72,104))!==rwaHex(origin)||!rwaPk(m.slice(40,72)).equals(c.mint))throw Error('A emissão anterior não corresponde à origem deste lote.');
+ if(s[180]!==3||s[181]!==0)throw Error('Reemissão exige cancelamento confirmado de um RWA não vendido.');
+ if(!mint||!mint.owner.equals(c.token)||mint.data.length<82||mint.data[44]!==0||rwaReadU64(mint.data,36)!==0n||new DataView(mint.data.buffer,mint.data.byteOffset,4).getUint32(0,true)!==0)throw Error('A queima anterior ainda não está finalizada ou o mint permite nova emissão.');
+ return {c,issuer:rwaPk(a.slice(40,72))};
+}
+async function rwaNextIssuanceIdentity(actorId,initialCreditId,origin){
+ let creditId=initialCreditId;
+ for(;;){
+  const seriesId=await rwaSha(rwaBytes(rwaText('ExploreChem/CreditSeries/v2'),actorId,creditId));
+  const account=await rwaConnection().getAccountInfo(rwaPda([rwaText('series'),seriesId]),'confirmed');
+  if(!account)return {creditId,seriesId};
+  const series=await rwaDecode(account,'Series',183);
+  if(series[180]!==3)return {creditId,seriesId};
+  await rwaCancelledSeriesProof(seriesId,actorId,origin);
+  creditId=await rwaSha(rwaBytes(rwaText('ExploreChem/CreditReissue/v1'),actorId,creditId,seriesId));
+ }
+}
+async function rwaPrepareCancelledOrigin(ctx){
+ const info=await rwaConnection().getAccountInfo(ctx.originLock,'confirmed');
+ if(!info)return;
+ const lock=await rwaDecode(info,'OriginLock',81);
+ if(rwaHex(lock.slice(8,40))!==rwaHex(ctx.origin))throw Error('Bloqueio de origem inválido.');
+ const previous=lock.slice(40,72);
+ const proof=await rwaCancelledSeriesProof(previous,ctx.actorId,ctx.origin);
+ if(!proof.issuer.equals(ctx.issuerWallet))throw Error('Conecte a carteira emissora da emissão cancelada para reutilizar o lote.');
+ const m=rwaMeta;
+ await rwaQueueIx(ctx,[await rwaMarketIx('reopen_cancelled_origin',[m(ctx.issuerWallet,true,true),m(ctx.config),m(ctx.attestor,false,true),m(proof.c.series),m(proof.c.authority),m(proof.c.record),m(proof.c.mint),m(ctx.originLock,true),m(ctx.tokenProgram)])],'Liberar origem do RWA cancelado para nova emissão');
+}
+
 async function rwaBuildIssuanceContext(actor,lot,holderAddress){
  if(!/^0x[0-9a-f]{64}$/i.test(String(lot?.id)))throw Error("Select an E1 lot with a bytes32 identifier.");
   if(!actor||!lot)throw new Error("Select a company and lot.");
@@ -6115,8 +6148,8 @@ async function rwaBuildIssuanceContext(actor,lot,holderAddress){
   const creditReference=["ExploreChem/IssuerLot/v1",String(sourceChainId),sourceAddress.toLowerCase(),actor.id.toLowerCase(),String(lotId)].join(":");
   const terms=RWA_STANDARD_CREDIT_TERMS;
   const creditTerms=JSON.stringify({schema:'ExploreChem/EconomicRight/E1/v2',network:'Solana Devnet',issuerActorId:actor.id.toLowerCase(),issuerWallet:rwaSolanaWalletAddress,sourceChainId:String(sourceChainId),sourceContract:sourceAddress.toLowerCase(),sourceLotId:lotId,lotCommitment:lot.commitment,terms,physicalOwnershipTransferred:false,secondaryPriceSetsRedemption:false});
-  const creditId=await rwaSha(rwaBytes(rwaText("ExploreChem/CreditId/v1"),rwaText(creditReference)));
-  const seriesId=await rwaSha(rwaBytes(rwaText("ExploreChem/CreditSeries/v2"),actorId,creditId));
+  const initialCreditId=await rwaSha(rwaBytes(rwaText("ExploreChem/CreditId/v1"),rwaText(creditReference)));
+  const {creditId,seriesId}=await rwaNextIssuanceIdentity(actorId,initialCreditId,origin);
   const creditLock=rwaPda([rwaText('credit'),actorId,creditId]);
   const claim=await rwaSha(rwaBytes(rwaText("ExploreChem/CreditTerms/v1"),actorId,creditId,rwaText(creditTerms)));
   const nonceHash=await rwaSha(rwaBytes(rwaText("ExploreChem/RWANonce/v2"),seriesId));
@@ -6959,7 +6992,8 @@ async function rwaPrepareLineage(ctx,status){
 async function rwaCreateSeriesIfNeeded(ctx,status){
  await rwaPrepareLineage(ctx,status);
  if(ctx.plan)ctx.coreStart=ctx.plan.length;
- const conn=rwaConnection();const existing=await conn.getAccountInfo(ctx.series,'confirmed');if(existing){const d=await rwaDecode(existing,'Series',183);if(rwaHex(d.slice(40,72))!==rwaHex(ctx.actorId)||rwaHex(d.slice(72,104))!==rwaHex(ctx.origin)||rwaHex(d.slice(104,136))!==rwaHex(ctx.claim))throw Error("This credit identifier is already linked to another lot or different terms.");const a=await conn.getAccountInfo(ctx.authority,'confirmed');if(!a)throw Error("Existing series lacks redemption authority: migration required.");const ad=await rwaDecode(a,'RedemptionAuthority',73);if(!rwaPk(ad.slice(40,72)).equals(ctx.issuerWallet))throw Error("This series' issuer wallet changed. Connect the current wallet.");return;}
+ const conn=rwaConnection();const existing=await conn.getAccountInfo(ctx.series,'confirmed');if(existing){const d=await rwaDecode(existing,'Series',183);if(d[180]!==1)throw Error("Esta emissão está encerrada. Atualize os lotes para preparar uma nova emissão.");if(rwaHex(d.slice(40,72))!==rwaHex(ctx.actorId)||rwaHex(d.slice(72,104))!==rwaHex(ctx.origin)||rwaHex(d.slice(104,136))!==rwaHex(ctx.claim))throw Error("This credit identifier is already linked to another lot or different terms.");const a=await conn.getAccountInfo(ctx.authority,'confirmed');if(!a)throw Error("Existing series lacks redemption authority: migration required.");const ad=await rwaDecode(a,'RedemptionAuthority',73);if(!rwaPk(ad.slice(40,72)).equals(ctx.issuerWallet))throw Error("This series' issuer wallet changed. Connect the current wallet.");return;}
+ await rwaPrepareCancelledOrigin(ctx);
  const body=rwaBytes(new Uint8Array([2]),ctx.seriesId,ctx.actorId,ctx.origin,ctx.claim,rwaU64(ctx.sourceChainId),ctx.sourceContract,rwaU64(ctx.nonce),rwaI64(ctx.expiresAt),rwaHexBytes(ctx.lotId,32),ctx.creditId);
  const m=rwaMeta;await rwaQueueIx(ctx,[rwaInstruction('increment',[m(ctx.payer,true,true),m(ctx.config),m(ctx.attestor,false,true),m(ctx.issuerWallet,false,true),m(ctx.authority,true),m(ctx.series,true),m(ctx.originLock,true),m(ctx.nonceRecord,true),m(solanaWeb3.SystemProgram.programId),m(rwaLineagePda(),true),m(ctx.creditLock,true)],body)],"Create series with coverage reservation");
 }
