@@ -4749,9 +4749,6 @@ async function productTokenizationRender(){
  };
  el('tokensRecipient').onchange=ready;
  el('tokensCreateOrder').onclick=()=>run(async()=>{const c=await writable(),requestId=ethers.hexlify(ethers.randomBytes(32)),lotId=checkedHash(el('tokensLot').value),recipient=checkedHash(el('tokensRecipient').value);
- const currentLot=await c.lots.getLot(lotId);
- if(Number(currentLot.state)!==1)throw Error(Number(currentLot.state)===3?'Lote travado como garantia. Transferência bloqueada até a quitação.':'Lote indisponível. Atualize a lista.');
- if(!igualHex(currentLot.holder,who))throw Error('O lote já não pertence à empresa selecionada. Atualize a lista.');
  const reference=JSON.stringify({schema:'ExploreChem/CustodyRequest/v2',sender:who,recipient,lotId,requestId,chainId:11155111,lots:await c.lots.getAddress()});
  await send(()=>c.lots.createOrder(who,requestId,recipient,lotId,ethers.keccak256(ethers.toUtf8Bytes(reference)),0));await load();await actorStockRefresh();});
  await run(load);
@@ -5733,55 +5730,29 @@ async function e1RenderTransferTimeline(c,data,actorId,active){
  const name=id=>(typeof CLIENT_BALANCE_ACTORS==='undefined'?[]:CLIENT_BALANCE_ACTORS).find(a=>igualHex(a.actor_id,id))?.display_name||id;
  const labels=['NOT FOUND','AWAITING RECEIPT','ACCEPTED','IN CUSTODY','RECEIVED','EXPIRED','CANCELLED','REJECTED'];
  try{
-  const orders=await (data.companyOrders||e1CompanyOrders(c,data,actorId,active));
+  const count=Number(await c.lots.getActorOrderCount(actorId,{blockTag:data.blockTag})),orders=[];
+  for(let i=0;i<count;i++){if(!active()||!host.isConnected)return;const id=await c.lots.getActorOrderId(actorId,i,{blockTag:data.blockTag}),order=await c.lots.getOrder(id,{blockTag:data.blockTag});orders.push({id,order});}
   if(!active()||!host.isConnected)return;
   const esc=escaparHtml;
   host.innerHTML='<section class="panel pad"><span class="section-eyebrow">PHYSICAL TRANSFER HISTORY</span><h2>Transfers and receipts</h2><p>Current transfer states at the same stock snapshot. Manage receipt, rejection or cancellation in Lots and History.</p>'+(orders.length?'<div class="scrollx"><table><thead><tr><th>Lot / verified mass</th><th>Sender</th><th>Recipient</th><th>State</th></tr></thead><tbody>'+orders.map(({order:o})=>{const row=data.rows.find(r=>igualHex(r.id,o.lotId));return '<tr><td><span class="mono">'+esc(o.lotId)+'</span>'+(row?'<br>'+esc(row.document.lotReference||'')+'<br><b>'+esc(actorKg(BigInt(row.opening.materialMassMg)))+'</b>':'<br>Private quantity unavailable')+'</td><td>'+esc(name(o.sender))+'</td><td>'+esc(name(o.recipient))+'</td><td>'+esc(labels[Number(o.status)]||'UNKNOWN')+'</td></tr>';}).join('')+'</tbody></table></div>':'<p>No transfers are registered for this company.</p>')+'</section>';
  }catch(error){if(active()&&host.isConnected)host.innerHTML='<section class="panel pad"><h2>Transfers and receipts</h2><p role="status">Transfer history unavailable: '+escaparHtml(error.shortMessage||error.message)+'</p></section>';}
 }
 
-function e1CurrentCompanyLots(rows,actorId){
- return rows.filter(r=>igualHex(r.lot.holder,actorId)&&[1,2,3].includes(Number(r.lot.state)));
-}
-function e1PartitionCompanyLots(data,actorId,orders=[]){
- const current=e1CurrentCompanyLots(data.rows,actorId),currentIds=new Set(current.map(r=>r.id.toLowerCase()));
- const related=new Set(orders.map(x=>String(x.order.lotId).toLowerCase()));
- for(const reg of data.registrations)if(igualHex(reg.actorId,actorId))for(const id of reg.outputs)related.add(id.toLowerCase());
- const history=data.rows.filter(r=>!currentIds.has(r.id.toLowerCase())&&Number(r.lot.state)>0&&(igualHex(r.lot.holder,actorId)||related.has(r.id.toLowerCase())));
- return {current,history};
-}
-async function e1CompanyOrders(c,data,actorId,active){
- const count=Number(await c.lots.getActorOrderCount(actorId,{blockTag:data.blockTag})),orders=[];
- for(let i=0;i<count;i++){
-  if(!active())return [];
-  const id=await c.lots.getActorOrderId(actorId,i,{blockTag:data.blockTag});
-  orders.push({id,order:await c.lots.getOrder(id,{blockTag:data.blockTag})});
- }
- return orders;
-}
-function e1StockTable(rows,title,actorId,empty){
- const esc=escaparHtml;
- return '<section class="panel pad"><h2>'+esc(title)+' · '+rows.length+'</h2>'+(rows.length?'<div style="overflow:auto"><table><thead><tr><th>Lote</th><th>Situação</th><th>Massa privada do lote</th><th>Compromisso</th></tr></thead><tbody>'+rows.map(r=>'<tr><td><button type="button" class="btn ghost" data-stock-lot="'+esc(r.id)+'">'+esc(r.document.lotReference||r.id)+'</button><p class="mono" style="overflow-wrap:anywhere">'+esc(r.id)+'</p></td><td>'+esc(!igualHex(r.lot.holder,actorId)?'Transferido · fora do estoque':E1_STATES[Number(r.lot.state)])+'</td><td>'+esc(actorKg(BigInt(r.opening.materialMassMg)))+'</td><td class="mono" style="overflow-wrap:anywhere">'+esc(r.lot.commitment)+'</td></tr>').join('')+'</tbody></table></div>':'<p>'+esc(empty)+'</p>')+'</section>';
-}
 async function actorStockRefresh(){
  const root=document.querySelector('.product-dashboard');if(!root)return;
  const request=++ACTOR_STOCK_REQUEST,actorId=document.getElementById('clientLiveActorSelect')?.value;
  const active=()=>root.isConnected&&request===ACTOR_STOCK_REQUEST;
  const host=document.getElementById('productOverview');
- for(const id of ['productElement','productProofContent','e1RegistrationHistory','e1RegisteredLots','e1HistoricalLots','e1OperationTimeline','e1TransferTimeline'])document.getElementById(id)?.replaceChildren();
+ for(const id of ['productElement','productProofContent','e1RegistrationHistory','e1RegisteredLots'])document.getElementById(id)?.replaceChildren();
  if(!actorId){host.textContent="Sign in and select an authorized company.";return;}
  host.textContent="Querying E1 lots and checking private documents…";
  try{
   const c=await newLotsContext(false),data=await e1ReadLots(c);if(!active())return;
   const rows=data.rows.filter(r=>igualHex(r.lot.holder,actorId)),esc=escaparHtml;
-  const current=e1CurrentCompanyLots(data.rows,actorId);
-  host.innerHTML=e1StockOverview(current,data.warnings,data.blockTag);
-  const lotPanel=document.getElementById('e1RegisteredLots');if(lotPanel){lotPanel.innerHTML=e1StockTable(current,'Estoque atual',actorId,'Esta empresa não possui lotes atuais nesta consulta.')+'<p class="ec-note">Lotes em custódia ou travados permanecem identificados no estoque, mas não ficam disponíveis para envio. Lotes consumidos e transferidos estão em Histórico.</p>';e1BindStockLotDetails(lotPanel,c,current,data.blockTag,active);}
-  const historical=document.getElementById('e1HistoricalLots');
-  const renderHistory=orders=>{if(!active()||!historical?.isConnected)return;const partition=e1PartitionCompanyLots(data,actorId,orders);historical.innerHTML=e1StockTable(partition.history,'Lotes anteriores',actorId,'Nenhum lote anterior encontrado para esta empresa.')+'<p class="ec-note">Quantidades históricas não são somadas ao estoque atual. Uma transferência não significa necessariamente uma venda.</p>';e1BindStockLotDetails(historical,c,partition.history,data.blockTag,active);};
-  renderHistory([]);
-  data.companyOrders=e1CompanyOrders(c,data,actorId,active);
-  data.companyOrders.then(renderHistory).catch(error=>{if(active()&&historical?.isConnected){const note=document.createElement('p');note.setAttribute('role','status');note.textContent='Histórico parcial: não foi possível consultar as transferências. '+(error.shortMessage||error.message);historical.append(note);}});
+  const current=rows.filter(r=>[1,2,3].includes(Number(r.lot.state)));
+  host.innerHTML=e1StockOverview(current,data.warnings,data.blockTag)+'<section id="e1OperationTimeline" aria-live="polite"></section><section id="e1TransferTimeline" aria-live="polite"></section>';
+  const table="<section class=\"panel pad\"><h2>Lots and commitments</h2><p>Authorized evidence indexed in Supabase; this is not a scan of all lots on the network.</p><div style=\"overflow:auto\"><table><thead><tr><th>Lot</th><th>State</th><th>Private mass</th><th>Compromisso</th><th>Usable proofs</th></tr></thead><tbody>"+rows.map(r=>'<tr><td><button type="button" class="btn ghost" data-stock-lot="'+esc(r.id)+'">'+esc(r.document.lotReference||r.id)+'</button><p class="mono" style="overflow-wrap:anywhere">'+esc(r.id)+'</p></td><td>'+E1_STATES[Number(r.lot.state)]+'</td><td>'+esc(actorKg(BigInt(r.opening.materialMassMg)))+'</td><td class="mono">'+esc(r.lot.commitment)+'</td><td>'+(r.usable?'Sim':'Não')+'</td></tr>').join('')+'</tbody></table></div></section>';
+  const lotPanel=document.getElementById('e1RegisteredLots');if(lotPanel){lotPanel.innerHTML=table;e1BindStockLotDetails(lotPanel,c,rows,data.blockTag,active);}
   renderStockProofs(c,rows,data.blockTag,active);
   const history=document.getElementById('e1RegistrationHistory');if(history)history.innerHTML="<section class=\"panel pad\"><h2>JSON registrations</h2>"+data.registrations.filter(r=>igualHex(r.actorId,actorId)).map(r=>'<p><strong>'+esc(r.reference)+"</strong><br>Evidence "+esc(r.evidenceId)+'<br>'+esc(new Date(Number(r.createdAt)*1000).toLocaleString('en-US'))+'<br>'+r.outputs.map(id=>{const lot=data.rows.find(x=>igualHex(x.id,id));return esc(id)+' · '+(lot?E1_STATES[Number(lot.lot.state)]:"Awaiting on-chain creation");}).join('<br>')+'</p>').join('')+'</section>';
   e1RenderElemental(c,rows,data.registrations,actorId,data.blockTag,active);
@@ -6103,7 +6074,6 @@ async function rwaExecutePlan(ctx,status){
   return batches.length;
 }
 
-const RWA_STANDARD_CREDIT_TERMS='O token representa um direito econômico perante a empresa emissora, vinculado ao lote identificado na emissão. Não transfere a propriedade nem a custódia da mercadoria. O titular pode revender o direito ou solicitar resgate financeiro. O preço de revenda não define o valor de resgate. A quitação do resgate ocorre com a queima do token. Emissão em rede de testes Solana Devnet.';
 async function rwaBuildIssuanceContext(actor,lot,holderAddress){
  if(!/^0x[0-9a-f]{64}$/i.test(String(lot?.id)))throw Error("Select an E1 lot with a bytes32 identifier.");
   if(!actor||!lot)throw new Error("Select a company and lot.");
@@ -6113,7 +6083,8 @@ async function rwaBuildIssuanceContext(actor,lot,holderAddress){
   const sourceChainId=11155111n,sourceContract=rwaEth20(sourceAddress),actorId=rwaHexBytes(actor.id,32),lotId=lot.id.toLowerCase();
   const origin=await rwaSha(rwaBytes(rwaText("ExploreChem/RWAOrigin/E1/v2"),rwaU64(sourceChainId),sourceContract,actorId,rwaHexBytes(lotId,32),rwaHexBytes(lot.commitment,32)));
   const creditReference=["ExploreChem/IssuerLot/v1",String(sourceChainId),sourceAddress.toLowerCase(),actor.id.toLowerCase(),String(lotId)].join(":");
-  const terms=RWA_STANDARD_CREDIT_TERMS;
+  const terms=String(document.getElementById('rwaCreditTerms')?.value||'').trim();
+  if(!terms)throw Error("Enter the economic right and redemption terms.");
   const creditTerms=JSON.stringify({schema:'ExploreChem/EconomicRight/E1/v2',network:'Solana Devnet',issuerActorId:actor.id.toLowerCase(),issuerWallet:rwaSolanaWalletAddress,sourceChainId:String(sourceChainId),sourceContract:sourceAddress.toLowerCase(),sourceLotId:lotId,lotCommitment:lot.commitment,terms,physicalOwnershipTransferred:false,secondaryPriceSetsRedemption:false});
   const creditId=await rwaSha(rwaBytes(rwaText("ExploreChem/CreditId/v1"),rwaText(creditReference)));
   const seriesId=await rwaSha(rwaBytes(rwaText("ExploreChem/CreditSeries/v2"),actorId,creditId));
@@ -6187,33 +6158,12 @@ async function rwaMintIfNeeded(ctx,status){
   ]);
   await rwaQueueIx(ctx,[ix],"Mint RWA");
 }
-async function rwaPrepareAutomaticLock(record,say){
- say('Conecte a MetaMask em Sepolia para conferir a trava automática…');
- const c=await newLotsContext(true);
- if(!await c.lots.collateralAgents(c.account))throw Error('A carteira MetaMask não está autorizada como agente de trava. Autorize o agente Ethereum antes de criar o RWA.');
- const collateral=await rwaReadCollateral(record,c);await rwaAssertCollateralOrigin(record,collateral);
- if(!collateral.matches&&collateral.state!==1)throw Error('Este lote não está livre para esta emissão. Atualize os lotes.');
- return c;
-}
-async function rwaCompleteAutomaticLock(record,c,say){
- const rows=await rwaCatalogRowsWithChain(),r=rows.find(x=>igualHex(x.seriesId,record.seriesId));
- if(!r||r.economicStatus!=='ACTIVE'||r.mintState?.supply!=='1')throw Error('A emissão Solana ainda não foi confirmada. A trava não foi enviada.');
- const collateral=await rwaReadCollateral(r,c);await rwaAssertCollateralOrigin(r,collateral);
- if(collateral.matches)return;
- if(collateral.state!==1)throw Error('O estado do lote mudou antes da trava. Atualize a consulta.');
- say('RWA criado em Solana. Confirme agora a trava do lote na MetaMask…');
- const tx=await c.lots.encumber(r.sourceLotId,collateral.expectedRef);
- say('Confirmando a trava na Ethereum… '+tx.hash);
- const receipt=await tx.wait();if(Number(receipt.status)!==1)throw Error('A transação de trava falhou.');
- const after=await rwaReadCollateral(r,c);
- if(!after.matches)throw Error('Não foi possível confirmar a trava deste lote para esta série.');
-}
 async function rwaCreateSelectedLotOnchain(button){
   if(rwaActionBusy){toast("An operation is already in progress.");return;}
   rwaActionBusy=true;
   const original=button.textContent;button.disabled=true;
   const statusNode=document.getElementById('rwaIssueStatus'),setStatus=t=>{if(statusNode)statusNode.textContent=t;};
-  let ctx=null,solanaIssued=false;
+  let ctx=null;
   try{
     const actor=rwaSelectedActor(),lot=rwaSelectedLot();
     if(!actor||!lot)throw Error("Select a company and lot.");
@@ -6235,20 +6185,18 @@ async function rwaCreateSelectedLotOnchain(button){
     const c=rwaContext(data),conn=rwaConnection();
     const listing=await conn.getAccountInfo(c.listing,'confirmed');
     if(listing)throw Error("This RWA already has an offer. Manage the sale in the table.");
-    const ethereum=await rwaPrepareAutomaticLock(data,setStatus);
-    const count=await rwaExecutePlan(ctx,setStatus);solanaIssued=true;
+    const count=await rwaExecutePlan(ctx,setStatus);
     const rows=rwaCatalog(),item=rows.find(r=>r.seriesId===data.seriesId);
     Object.assign(data,{id:item?.id||data.seriesId,createdAt:item?.createdAt||new Date().toISOString(),saleCurrency:currency,saleAmount:String(price),priceSol:currency==='SOL'?rwaSol(price):null});
     if(item)Object.assign(item,data);else rows.push(data);rwaSaveCatalog(rows);
     const map=rwaActorWallets();map[actor.id]=holderAddress;rwaSaveActorWallet_REMOVIDOs(map);
-    await rwaCompleteAutomaticLock(data,ethereum,setStatus);
-    setStatus("Concluído: RWA criado e lote travado na Ethereum. Agora você pode publicar a oferta em "+rwaPaymentLabel(currency)+'. '+count+" transação(ões) Solana confirmada(s).");
-    toast("RWA criado e trava confirmada.");
+    setStatus("RWA criado. Na tabela, use Travar lote com o agente Ethereum; depois publique a oferta em "+rwaPaymentLabel(currency)+'. '+count+" transação(ões) Solana confirmada(s).");
+    toast("RWA criado. Falta travar o lote antes da oferta.");
     rwaRenderSelectedLot();
   }catch(error){
     console.error(error);
     const done=ctx?.receipts||[];
-    setStatus((solanaIssued?"RWA criado em Solana, mas a trava NÃO foi concluída. A oferta permanece bloqueada. Use Concluir trava na tabela para retomar. ":"")+(error.message||String(error))+(done.length?' '+done.length+" previous transaction(s) confirmed. A retry will query and reuse completed steps. Signatures: "+done.map(r=>r.signature).join(', '):''));
+    setStatus((error.message||String(error))+(done.length?' '+done.length+" previous transaction(s) confirmed. A retry will query and reuse completed steps. Signatures: "+done.map(r=>r.signature).join(', '):''));
     toast("Operation interrupted. Review the message before retrying.");
   }finally{
     rwaActionBusy=false;button.disabled=false;button.textContent=original;
@@ -6262,19 +6210,16 @@ function rwaSelectedActor(){
   const saved=select?.value||localStorage.getItem("explorechem:rwa:supplier-actor:v1")||"";
   return ATORES.find(a=>a.id===saved)||ATORES[0]||null;
 }
-let rwaSupplierLotsRequest=0;
 async function rwaLoadSupplierLots(actor){
- const request=++rwaSupplierLotsRequest;
- const select=document.getElementById('rwaSourceLot'),status=document.getElementById('rwaLotsStatus');RWA_SUPPLIER_LOTS=[];RWA_SUPPLIER_LOTS_CONTEXT={actorId:'',blockTag:null,lotsAddress:''};rwaRenderSelectedLot();if(!select)return;
+ const select=document.getElementById('rwaSourceLot'),status=document.getElementById('rwaLotsStatus');RWA_SUPPLIER_LOTS=[];if(!select)return;
  select.disabled=true;select.innerHTML="<option value=\"Consultando lotes E1…\">Querying E1 lots…</option>";
- try{if(!actor)throw Error("Select an authorized company.");const c=await newLotsContext(false),data=await e1ReadLots(c),lotsAddress=await c.lots.getAddress();if(request!==rwaSupplierLotsRequest||!igualHex(rwaSelectedActor()?.id,actor.id))return;RWA_SUPPLIER_LOTS_CONTEXT={actorId:actor.id,blockTag:data.blockTag,lotsAddress};RWA_SUPPLIER_LOTS=e1CurrentCompanyLots(data.rows,actor.id).map(r=>({id:r.id,evidenceId:r.lot.evidenceId,commitment:r.lot.commitment,state:Number(r.lot.state),usable:r.usable,opening:r.opening,document:r.document,lot:r.lot}));
- select.innerHTML="<option value=\"\">Select a lot</option>"+RWA_SUPPLIER_LOTS.map(r=>'<option value="'+r.id+'">'+escaparHtml((r.document?.lotReference||r.document?.lotId||r.id)+' · '+E1_STATES[r.state])+'</option>').join('');select.disabled=!RWA_SUPPLIER_LOTS.length;select.onchange=rwaRenderSelectedLot;
- status.textContent=actor.nome+" · "+RWA_SUPPLIER_LOTS.length+" lote(s) atuais · consumidos e transferidos ficam em Histórico · bloco "+data.blockTag+(data.warnings.length?' · leitura parcial':'');rwaRenderSelectedLot();
- }catch(e){if(request!==rwaSupplierLotsRequest)return;select.innerHTML="<option value=\"Acesso aos lotes indisponível\">Lot access unavailable</option>";status.textContent=e.shortMessage||e.message;}
+ try{if(!actor)throw Error("Select an authorized company.");const c=await newLotsContext(false),data=await e1ReadLots(c);RWA_SUPPLIER_LOTS_CONTEXT={actorId:actor.id,blockTag:data.blockTag,lotsAddress:await c.lots.getAddress()};RWA_SUPPLIER_LOTS=data.rows.filter(r=>igualHex(r.lot.holder,actor.id)).map(r=>({id:r.id,evidenceId:r.lot.evidenceId,commitment:r.lot.commitment,state:Number(r.lot.state),usable:r.usable,opening:r.opening,document:r.document,lot:r.lot}));
+ select.innerHTML="<option value=\"\">Select a lot</option>"+RWA_SUPPLIER_LOTS.map(r=>'<option value="'+r.id+'">'+r.id+' · '+E1_STATES[r.state]+'</option>').join('');select.disabled=false;select.onchange=rwaRenderSelectedLot;
+ status.textContent="E1 commitments · block "+data.blockTag+(data.warnings.length?' · leitura parcial':'');rwaRenderSelectedLot();
+ }catch(e){select.innerHTML="<option value=\"Acesso aos lotes indisponível\">Lot access unavailable</option>";status.textContent=e.shortMessage||e.message;}
 }
 function rwaSelectedLot(){
   const id=String(document.getElementById("rwaSourceLot")?.value||"");
-  if(!igualHex(RWA_SUPPLIER_LOTS_CONTEXT.actorId,rwaSelectedActor()?.id))return null;
   return RWA_SUPPLIER_LOTS.find(r=>r.id===id)||null;
 }
 function rwaTokenQuantity(value){
@@ -6353,7 +6298,6 @@ function rwaSupplierPanelHtml(actor){
   "<section class=\"panel rwa-card\"><h3>E1 origin configuration</h3><p>The administrator wallet can update the authorized Lots contract for new issuances.</p><button type=\"button\" class=\"btn ghost\" id=\"rwaUpdateSourceConfig\">Update E1 origin with Phantom</button><p id=\"rwaConfigUpdateStatus\" class=\"rwa-form-note\" role=\"status\" aria-live=\"polite\"></p></section>"+
   "<section class=\"panel rwa-card\"><span class=\"section-eyebrow\">RWA ORIGIN</span><h2>Choose lot</h2><p class=\"sub\">Select a company lot to check its private composition and issue its economic right.</p>"+
     "<div class=\"rwa-lot-picker\"><div class=\"rwa-lot-picker-head\"><div><h3>My lots</h3><p>The selected lot is linked to actorId as the RWA's economic origin.</p></div><button type=\"button\" class=\"btn ghost sm\" id=\"rwaLoadLots\">Refresh lots</button></div>"+
-    '<div class="field"><label for="rwaLotCompany">Empresa dos lotes</label><select id="rwaLotCompany">'+rwaActorOptions(actor?.id)+'</select></div>'+
     "<div class=\"field\"><label for=\"rwaSourceLot\">Source lot</label><select id=\"rwaSourceLot\"><option value=\"\">Loading company lots…</option></select></div>"+
     "<div id=\"rwaSourceLotSummary\" class=\"rwa-lot-summary\"><span class=\"sm\">Select a lot to see its original quantity registered on Sepolia.</span></div>"+
     '<p id="rwaLotsStatus" class="rwa-form-note"></p></div>'+
@@ -6361,10 +6305,10 @@ function rwaSupplierPanelHtml(actor){
       "<span class=\"section-eyebrow\">RWA ISSUANCE</span><h3 id=\"rwaIssueTitle\">Create RWA from selected lot</h3>"+
       "<p class=\"sub\">The Series and Token-2022 Mint are created automatically on Solana Devnet. The Mint is not entered manually.</p>"+
       "<div class=\"rwa-ok\" style=\"margin:14px 0\"><b>Initial holder</b><br><span class=\"sm\">The public key entered above will be used.</span></div>"+
-      "<div class=\"field\"><details><summary>Regras do RWA · incluídas automaticamente na emissão</summary><p>"+escaparHtml(RWA_STANDARD_CREDIT_TERMS)+"</p></details></div><div class=\"field\"><label for=\"rwaIssuePrice\">Preço de venda · moeda selecionada</label><input id=\"rwaIssuePrice\" inputmode=\"decimal\" autocomplete=\"off\" required></div>"+
+      "<div class=\"field\"><label for=\"rwaCreditTerms\">Economic right and redemption terms</label><textarea id=\"rwaCreditTerms\" rows=\"4\" required></textarea></div><div class=\"field\"><label for=\"rwaIssuePrice\">Preço de venda · moeda selecionada</label><input id=\"rwaIssuePrice\" inputmode=\"decimal\" autocomplete=\"off\" required></div>"+
       "<p class=\"rwa-form-note\">Offer price, without fixing the redemption amount. To change the price after listing, cancel the offer and list again.</p>"+
-      "<p class=\"rwa-form-note\">Ao criar, confirme a emissão na Phantom e a trava do lote na MetaMask. A conclusão exige as duas confirmações; a oferta permanece bloqueada até a trava. Venda e revenda do crédito não liberam o lote; a liberação exige quitação e queima do RWA.</p>"+
-      "<div class=\"actions\"><button type=\"button\" class=\"btn\" id=\"rwaCreateRwa\">Criar RWA e travar lote</button></div>"+
+      "<p class=\"rwa-form-note\">Crie o RWA com a carteira da empresa como titular inicial. Depois, o agente autorizado trava o lote Ethereum antes da oferta. Venda e revenda do crédito não liberam o lote; a liberação exige quitação e queima do RWA.</p>"+
+      "<div class=\"actions\"><button type=\"button\" class=\"btn\" id=\"rwaCreateRwa\">Criar RWA para financiamento</button></div>"+
     '</div>'+
     '<div id="rwaSaleForm" hidden style="margin-top:22px;padding-top:22px;border-top:1px solid var(--rule)">'+
       "<span class=\"section-eyebrow\">RWA CRIADO</span><h3 id=\"rwaSaleTitle\">Selected lot's RWA</h3>"+
@@ -6420,17 +6364,13 @@ function rwaBindUi(){
   const tabs=[...root.querySelectorAll("[data-rwa-tab]")],supplier=document.getElementById("rwaSupplierPanel"),client=document.getElementById("rwaClientPanel");
   const activate=key=>{if(supplier)supplier.hidden=key!=="supplier";if(client)client.hidden=key!=="client";tabs.forEach(t=>t.setAttribute("aria-selected",String(t.dataset.rwaTab===key)));};tabs.forEach(t=>t.onclick=()=>{activate(t.dataset.rwaTab);queueMicrotask(()=>rwaRefreshTables());});activate("supplier");
   const actorSelect=document.getElementById("rwaSupplierActor");
-  const lotCompany=document.getElementById("rwaLotCompany");
-  const changeCompany=value=>{
-    if(actorSelect)actorSelect.value=value;if(lotCompany)lotCompany.value=value;
+  if(actorSelect)actorSelect.onchange=()=>{
     localStorage.setItem("explorechem:rwa:supplier-actor:v1",actorSelect.value);
     const actor=rwaSelectedActor(),summary=document.getElementById("rwaSupplierSummary");
     if(summary)summary.innerHTML=rwaSupplierSummaryHtml(actor);
     const holder=document.getElementById("rwaHolderPubkey");if(holder)holder.value=rwaActorWallets()[actor?.id]||rwaSolanaWalletAddress||"";
     rwaLoadSupplierLots(actor);rwaRefreshTables();
   };
-  if(actorSelect)actorSelect.onchange=()=>changeCompany(actorSelect.value);
-  if(lotCompany)lotCompany.onchange=()=>changeCompany(lotCompany.value);
   const loadLots=document.getElementById("rwaLoadLots");if(loadLots)loadLots.onclick=()=>rwaLoadSupplierLots(rwaSelectedActor());
   const holder=document.getElementById("rwaHolderPubkey"),useConnected=document.getElementById("rwaUseConnectedWallet"),connectHere=document.getElementById("rwaConnectHere");
   if(holder)holder.onchange=()=>{const actor=rwaSelectedActor(),value=String(holder.value||"").trim();if(!actor||!value)return;try{rwaPk(value);const map=rwaActorWallets();map[actor.id]=value;rwaSaveActorWallet_REMOVIDOs(map);const summary=document.getElementById("rwaSupplierSummary");if(summary)summary.innerHTML=rwaSupplierSummaryHtml(actor);}catch(_){toast("The supplied Solana public key is invalid.");}};
@@ -6621,7 +6561,7 @@ function rwaCollateralText(r){
 function rwaCollateralButtons(r){
  if(r.legacy||!r.collateral||r.collateral.error)return '';
  const button=(action,label)=>'<button class="btn ghost" data-rwa-collateral="'+action+'" data-rwa-series="'+escaparHtml(r.seriesId)+'">'+label+'</button>';
- if(r.economicStatus==='ACTIVE'&&r.collateral.state===1&&igualHex(r.collateral.holder,r.supplierActorId)&&r.mintState?.supply==='1')return button('encumber','Concluir trava · MetaMask');
+ if(r.economicStatus==='ACTIVE'&&r.collateral.state===1&&igualHex(r.collateral.holder,r.supplierActorId)&&r.mintState?.supply==='1')return button('encumber','Travar lote · agente Ethereum');
  if(r.economicStatus==='REDEEMED'&&r.redemption?.status===2&&r.mintState?.supply==='0'&&r.collateral.matches)return button('release','Liberar lote quitado · agente Ethereum');
  return '';
 }
@@ -7194,9 +7134,8 @@ function e1BindClient(){
  for(const id of ['productLots','productHistory'])if(!document.getElementById(id)){const n=document.createElement('section');n.id=id;overview.before(n);}
  const lots=document.getElementById('productLots'),history=document.getElementById('productHistory');
  let transfer=document.getElementById('productTokenization');if(!transfer){transfer=document.createElement('section');transfer.id='productTokenization';}lots.append(transfer);transfer.hidden=false;
- let stock=document.getElementById('e1RegisteredLots');if(!stock){stock=document.createElement('div');stock.id='e1RegisteredLots';}lots.prepend(stock);
- history.innerHTML='<div id="e1HistoricalLots"></div><div id="e1TransferTimeline"></div><div id="e1OrdersPanel"></div><div id="e1OperationTimeline"></div><div id="e1RegistrationHistory"></div>';
- const panels={lots:'productLots',element:'productElement',history:'productHistory',proof:'productProof',overview:'productOverview'},labels={lots:'Estoque atual',element:'Elemental',history:'Histórico',proof:'Comprovação',overview:'Consolidado'};
+ history.innerHTML='<div id="e1RegistrationHistory"></div><div id="e1OrdersPanel"></div><div id="e1RegisteredLots"></div>';
+ const panels={lots:'productLots',element:'productElement',history:'productHistory',proof:'productProof',overview:'productOverview'},labels={lots:'Lotes',element:'Elemental',history:'Histórico',proof:'Comprovação',overview:'Consolidado'};
  nav.replaceChildren();function activate(key){for(const [k,id] of Object.entries(panels)){const n=document.getElementById(id);if(n){n.hidden=k!==key;n.classList.remove('client-live-hidden');}}root.dataset.activeTab=key;for(const b of nav.children){b.setAttribute('aria-selected',String(b.dataset.productTab===key));b.tabIndex=b.dataset.productTab===key?0:-1;}}
  for(const key of Object.keys(panels)){const b=document.createElement('button');b.type='button';b.dataset.productTab=key;b.id='tab-'+key;b.setAttribute('role','tab');b.setAttribute('aria-controls',panels[key]);b.textContent=labels[key];b.onclick=()=>activate(key);nav.append(b);}activate('lots');
  const actor=document.getElementById('clientLiveActorSelect');actor.onchange=()=>{productTokenizationRender();actorStockRefresh();};document.getElementById('clientLiveRefresh').onclick=()=>{productTokenizationRender();actorStockRefresh();};productTokenizationRender();
