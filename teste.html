@@ -6322,16 +6322,24 @@ function rwaOfferStateText(row,readOk){
   if(!readOk)return "The current offer state has not been confirmed yet. Use Refresh Solana.";
   if(!row)return "The local record was not found in the Solana read yet. Refresh before another operation.";
   if(row.redemption?.status===1)return "Redemption requested. Awaiting settlement.";
+  if(row.economicStatus==='CANCELLED')return "RWA anterior cancelado. Com a queima confirmada e o lote ACTIVE, use Criar novo RWA e travar lote acima.";
   if(row.economicStatus!=='ACTIVE')return "Right closed. Check its state in the table below.";
   if(row.listing&&!row.collateral?.matches)return 'Oferta existente; compra bloqueada na plataforma até a trava do lote.';
   if(!row.listing&&!row.collateral?.matches)return 'RWA criado. Use Travar lote na tabela antes de publicar a oferta.';
   if(row.listing)return "Offer published for "+rwaPaymentText(row.listing.price,row.listing.currency)+". No additional confirmation is needed to keep the listing active.";
   return "RWA created, without a published offer in this Solana read. Use Sell / resell in the table below to list it.";
 }
+function rwaLotIssuanceView(lot,actorId,rows,readOk){
+ const matches=lot?rows.filter(r=>!r.legacy&&igualHex(r.sourceLotId,lot.id)&&igualHex(r.supplierActorId,actorId)):[];
+ const existing=matches.find(r=>r.economicStatus==='ACTIVE')||matches.find(r=>r.economicStatus!=='CANCELLED')||matches[matches.length-1]||null;
+ const canIssue=!!lot&&readOk&&lot.state===1&&matches.every(r=>r.economicStatus==='CANCELLED'&&r.mintState?.supply==='0'&&!r.wasSold&&!r.listing&&!r.redemption);
+ return {existing,canIssue};
+}
 function rwaRenderSelectedLot(){
  const row=rwaSelectedLot(),summary=document.getElementById('rwaSourceLotSummary');if(!summary)return;
- const existing=row?rwaLiveRows.find(r=>!r.legacy&&r.sourceLotId?.toLowerCase()===row.id.toLowerCase()&&r.supplierActorId?.toLowerCase()===rwaSelectedActor()?.id.toLowerCase()):null;
- const issue=document.getElementById('rwaIssueForm'),sale=document.getElementById('rwaSaleForm');if(issue)issue.hidden=!row||!!existing||row.state!==1;if(sale)sale.hidden=!existing;
+ const {existing,canIssue}=rwaLotIssuanceView(row,rwaSelectedActor()?.id,rwaLiveRows,rwaChainReadOk);
+ const issue=document.getElementById('rwaIssueForm'),sale=document.getElementById('rwaSaleForm');if(issue)issue.hidden=!canIssue;if(sale)sale.hidden=!existing;
+ const create=document.getElementById('rwaCreateRwa');if(create)create.textContent=existing&&canIssue?'Criar novo RWA e travar lote':'Criar RWA e travar lote';
  if(!row){summary.textContent="Select an E1 lot. Quantities and composition remain private.";return;}
  summary.innerHTML="<p>Lot "+escaparHtml(row.id)+' · '+escaparHtml(E1_STATES[row.state])+'</p><p class="mono">Compromisso '+escaparHtml(row.commitment)+"</p><div id=\"rwaPrivateComposition\">Conferindo composition privada…</div>";
  const composition=document.getElementById('rwaPrivateComposition');
@@ -7344,3 +7352,4 @@ if(walletProvider&&typeof walletProvider.on==="function"){
 
 
 </body></html>
+
