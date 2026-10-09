@@ -7,3 +7,4 @@ pub const ECONOMIC_STATUS_CLOSED: u8 = 3;
 
 pub const REDEMPTION_STATUS_REQUESTED: u8 = 1;
 pub const REDEMPTION_STATUS_SETTLED: u8 = 2;
+
