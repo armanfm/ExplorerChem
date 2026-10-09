@@ -302,3 +302,4 @@ pub struct RwaMinted {
 
     pub decimals: u8,
 }
+

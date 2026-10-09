@@ -103,3 +103,4 @@ pub struct SourceConfigUpdated {
     pub source_chain_id: u64,
     pub source_lots_contract: [u8; 20],
 }
+

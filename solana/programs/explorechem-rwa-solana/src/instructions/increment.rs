@@ -215,3 +215,4 @@ pub struct SeriesCreated {
     pub nonce: u64,
     pub created_at: i64,
 }
+

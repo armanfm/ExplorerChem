@@ -44,7 +44,7 @@ pub struct RequestRedemption<'info> {
     pub holder: Signer<'info>,
     #[account(init, payer=holder, space=8+RedemptionQuote::INIT_SPACE,
         seeds=[b"redemption-quote", series.series_id.as_ref()], bump)]
-    pub redemption_quote: Account<'info, RedemptionQuote>,
+    pub redemption_quote: Box<Account<'info, RedemptionQuote>>,
 
     // ============================================================
     // CONFIG
@@ -54,7 +54,7 @@ pub struct RequestRedemption<'info> {
         seeds = [b"config"],
         bump = config.bump
     )]
-    pub config: Account<'info, Config>,
+    pub config: Box<Account<'info, Config>>,
 
     // ============================================================
     // SERIES
@@ -67,7 +67,7 @@ pub struct RequestRedemption<'info> {
         ],
         bump = series.bump
     )]
-    pub series: Account<'info, Series>,
+    pub series: Box<Account<'info, Series>>,
 
     // ============================================================
     // SERIES -> MINT
@@ -90,7 +90,7 @@ pub struct RequestRedemption<'info> {
                 == mint.key()
                 @ ExploreChemRwaError::WrongMint
     )]
-    pub mint_record: Account<'info, RwaMintRecord>,
+    pub mint_record: Box<Account<'info, RwaMintRecord>>,
 
     // ============================================================
     // TOKEN-2022 MINT
@@ -103,7 +103,7 @@ pub struct RequestRedemption<'info> {
             mint.supply == 1
             @ ExploreChemRwaError::InvalidTokenBalance
     )]
-    pub mint: InterfaceAccount<'info, Mint>,
+    pub mint: Box<InterfaceAccount<'info, Mint>>,
 
     // ============================================================
     // TOKEN DO HOLDER
@@ -123,7 +123,7 @@ pub struct RequestRedemption<'info> {
             @ ExploreChemRwaError::InvalidTokenBalance
     )]
     pub holder_token_account:
-        InterfaceAccount<'info, TokenAccount>,
+        Box<InterfaceAccount<'info, TokenAccount>>,
 
     // ============================================================
     // REDEMPTION PDA
@@ -145,7 +145,7 @@ pub struct RequestRedemption<'info> {
 
         bump
     )]
-    pub redemption: Account<'info, Redemption>,
+    pub redemption: Box<Account<'info, Redemption>>,
 
     // ============================================================
     // ESCROW TOKEN ACCOUNT
@@ -169,7 +169,7 @@ pub struct RequestRedemption<'info> {
         associated_token::token_program = token_program
     )]
     pub escrow_token_account:
-        InterfaceAccount<'info, TokenAccount>,
+        Box<InterfaceAccount<'info, TokenAccount>>,
 
     pub token_program:
         Program<'info, Token2022>,
@@ -331,10 +331,10 @@ pub struct UpdateRedemptionQuote<'info> {
     #[account(seeds=[b"redemption", redemption.series_id.as_ref()], bump=redemption.bump,
         constraint=redemption.holder_wallet == holder.key() @ ExploreChemRwaError::WrongRedemptionHolder,
         constraint=redemption.status == REDEMPTION_STATUS_REQUESTED @ ExploreChemRwaError::InvalidRedemptionStatus)]
-    pub redemption: Account<'info, Redemption>,
+    pub redemption: Box<Account<'info, Redemption>>,
     #[account(mut, seeds=[b"redemption-quote", redemption.series_id.as_ref()], bump=redemption_quote.bump,
         constraint=redemption_quote.series_id == redemption.series_id @ ExploreChemRwaError::WrongRedemptionSeries)]
-    pub redemption_quote: Account<'info, RedemptionQuote>,
+    pub redemption_quote: Box<Account<'info, RedemptionQuote>>,
 }
 
 pub fn handle_update_redemption_quote(ctx: Context<UpdateRedemptionQuote>, lamports: u64) -> Result<()> {
@@ -342,3 +342,4 @@ pub fn handle_update_redemption_quote(ctx: Context<UpdateRedemptionQuote>, lampo
     ctx.accounts.redemption_quote.lamports = lamports;
     Ok(())
 }
+
