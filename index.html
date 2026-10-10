@@ -4628,7 +4628,7 @@ async function saveContractSet(){
 function bindRegistryOperations(){
  const run=async(fn)=>{try{await fn();}catch(e){toast(e.shortMessage||e.message);}};
  document.getElementById('saveContractSet').onclick=saveContractSet;
- document.getElementById('saveNewLots').onclick=()=>run(async()=>{const c=await newLotsContext(false,document.getElementById('newLotsAddress').value.trim());localStorage.setItem(EXPLORECHEM_LOTS_KEY,await c.lots.getAddress());document.getElementById('registryLinkStatus').textContent=c.linked===ethers.ZeroAddress?"Contract validado; falta vincular pelo owner.":"Contracts vinculados e validados.";});
+ document.getElementById('saveNewLots').onclick=()=>run(async()=>{const c=await newLotsContext(false,document.getElementById('newLotsAddress').value.trim());localStorage.setItem(EXPLORECHEM_LOTS_KEY,await c.lots.getAddress());document.getElementById('registryLinkStatus').textContent=c.linked===ethers.ZeroAddress?"Contract validado; falta vincular pelo owner.":"Contracts linked and validated.";});
  document.getElementById('linkNewLots').onclick=()=>run(async()=>{const c=await newLotsContext(true,document.getElementById('newLotsAddress').value.trim());if(c.linked!==ethers.ZeroAddress)throw Error("The Registry is already linked.");if(!igualHex(await c.registry.owner(),c.account))throw Error("Only the owner can establish this link.");if(!confirm("Confirm permanent link to this Lots contract?"))return;await(await c.registry.configureLots(await c.lots.getAddress())).wait();localStorage.setItem(EXPLORECHEM_LOTS_KEY,await c.lots.getAddress());document.getElementById('registryLinkStatus').textContent="Link confirmed on-chain.";});
  for(const [id,status] of [['suspendActor',3],['activateActor',2]])document.getElementById(id).onclick=()=>run(async()=>{const c=await adminContractContext();const actor=checkedHash(document.getElementById('statusActor').value.trim()),reason=documentCommit('ExploreChem/ActorStatus/v1|'+actor+'|'+status+'|'+new Date().toISOString());await(await c.contract.setActorStatus(actor,status,reason)).wait();toast(status===3?"Actor suspended; balances preserved.":'Ator reativado.');});
 }
@@ -4727,7 +4727,7 @@ async function productTokenizationRender(){
    const lot=item.row?.lot||await c.lots.getLot(item.id);
    if(Number(lot.state)===3){
     let reference='';try{reference=String(await c.lots.encumbrances(item.id));}catch(_){}
-    item.label+=' · Vinculado a RWA'+(reference&&reference!==ethers.ZeroHash?' · Ref. '+reference:' · referência indisponível');
+    item.label+=' · Linked to RWA'+(reference&&reference!==ethers.ZeroHash?' · Ref. '+reference:' · referência indisponível');
    }
   }
   const companies=CLIENT_BALANCE_ACTORS.length?CLIENT_BALANCE_ACTORS:ATORES.map(a=>({actor_id:a.id,display_name:a.nome})),recipients=[];
