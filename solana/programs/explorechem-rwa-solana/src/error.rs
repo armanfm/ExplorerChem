@@ -85,4 +85,12 @@ pub enum ExploreChemRwaError {
     RedemptionAmountChanged,
     #[msg("Nova carteira deve ser diferente da carteira atual")]
     SameRedemptionWallet,
+    #[msg("Mint de pagamento nao e o USDT autorizado")]
+    WrongPaymentMint,
+    #[msg("USDT deve usar 6 casas decimais e o Token Program tradicional")]
+    InvalidPaymentToken,
+    #[msg("Somente o administrador de Config pode configurar USDT")]
+    UnauthorizedPaymentAdmin,
+    #[msg("Token de demonstracao desativado neste build")]
+    DemoPaymentDisabled,
 }

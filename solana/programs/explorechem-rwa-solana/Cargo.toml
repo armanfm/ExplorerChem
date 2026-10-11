@@ -10,7 +10,9 @@ crate-type = ["cdylib", "lib"]
 name = "explorechem_rwa_solana"
 
 [features]
-default = []
+default = ["demo-usdt"]
+# Desative com --no-default-features para builds de producao.
+demo-usdt = []
 cpi = ["no-entrypoint"]
 no-entrypoint = []
 no-log-ix-name = []
@@ -24,9 +26,10 @@ custom-panic = []
 
 [dependencies]
 anchor-lang = "1.2.0"
-anchor-spl = { version = "1.2.0", features = ["token_2022", "associated_token"] }
+anchor-spl = { version = "1.2.0", features = ["token", "token_2022", "associated_token"] }
 
 [dev-dependencies]
+solana-account = "3.4.0"
 litesvm = "0.10.0"
 solana-message = "3.0.1"
 solana-transaction = "3.0.2"

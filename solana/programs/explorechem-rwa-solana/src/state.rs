@@ -52,7 +52,8 @@ pub struct Series {
 
     pub economic_status: u8,
 
-    // Byte legado ignorado. Preserva tamanho e posição do bump nas contas existentes.
+    // Sticky marketplace-sale marker (0 before a recorded sale, 1 after).
+    // Legacy/direct transfers still require attestor history verification. Layout unchanged.
     pub reserved: u8,
 
     pub bump: u8,
@@ -169,5 +170,36 @@ pub struct RedemptionAuthority {
 pub struct RedemptionQuote {
     pub series_id: [u8; 32],
     pub lamports: u64,
+    pub bump: u8,
+}
+
+// Novos discriminators; os layouts antigos de SOL permanecem intactos.
+// A mesma PDA de listing/quote impede pagamentos na moeda errada.
+#[account]
+#[derive(InitSpace)]
+pub struct UsdtPaymentConfig {
+    pub payment_mint: Pubkey,
+    pub decimals: u8,
+    pub demo: bool,
+    pub bump: u8,
+}
+
+#[account]
+#[derive(InitSpace)]
+pub struct UsdtListing {
+    pub series_id: [u8; 32],
+    pub mint: Pubkey,
+    pub seller: Pubkey,
+    pub price_units: u64,
+    pub payment_mint: Pubkey,
+    pub bump: u8,
+}
+
+#[account]
+#[derive(InitSpace)]
+pub struct UsdtRedemptionQuote {
+    pub series_id: [u8; 32],
+    pub payment_mint: Pubkey,
+    pub amount_units: u64,
     pub bump: u8,
 }

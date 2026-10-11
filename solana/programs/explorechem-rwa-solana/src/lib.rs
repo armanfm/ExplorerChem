@@ -117,5 +117,18 @@ pub mod explorechem_rwa_solana {
     pub fn enable_lineage(ctx: Context<ManageLineage>, expected_reservations: u32) -> Result<()> { lineage::enable(ctx, expected_reservations) }
     pub fn list_rwa(ctx: Context<ListRwa>, price_lamports: u64) -> Result<()> { marketplace::list(ctx, price_lamports) }
     pub fn buy_rwa(ctx: Context<BuyRwa>, expected_price: u64) -> Result<()> { marketplace::buy(ctx, expected_price) }
+    pub fn cancel_rwa(ctx: Context<CancelRwa>, history_hash: [u8;32]) -> Result<()> { cancel_rwa::handle_cancel_rwa(ctx, history_hash) }
+
     pub fn cancel_listing(ctx: Context<CancelListing>) -> Result<()> { marketplace::cancel(ctx) }
+
+    pub fn initialize_usdt_payments(ctx: Context<InitializeUsdtPayments>) -> Result<()> { usdt::handle_initialize_usdt_payments(ctx) }
+    pub fn initialize_demo_usdt(ctx: Context<InitializeDemoUsdt>) -> Result<()> { usdt::handle_initialize_demo_usdt(ctx) }
+    pub fn list_rwa_usdt(ctx: Context<ListRwaUsdt>, price_units: u64) -> Result<()> { usdt::handle_list_usdt(ctx, price_units) }
+    pub fn buy_rwa_usdt(ctx: Context<BuyRwaUsdt>, expected_price: u64) -> Result<()> { usdt::handle_buy_usdt(ctx, expected_price) }
+    pub fn cancel_listing_usdt(ctx: Context<CancelListingUsdt>) -> Result<()> { usdt::handle_cancel_usdt(ctx) }
+    pub fn request_redemption_usdt(ctx: Context<RequestRedemptionUsdt>, holder_actor_id: [u8;32], amount_units: u64) -> Result<()> { usdt::handle_request_redemption_usdt(ctx, holder_actor_id, amount_units) }
+    pub fn update_redemption_quote_usdt(ctx: Context<UpdateRedemptionQuoteUsdt>, amount_units: u64) -> Result<()> { usdt::handle_update_redemption_quote_usdt(ctx, amount_units) }
+    pub fn settle_and_burn_usdt(ctx: Context<SettleAndBurnUsdt>, settlement_hash: [u8;32], amount_units: u64) -> Result<()> { usdt::handle_settle_and_burn_usdt(ctx, settlement_hash, amount_units) }
+
 }
+

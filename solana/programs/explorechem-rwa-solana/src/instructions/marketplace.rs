@@ -7,19 +7,19 @@ use crate::error::ExploreChemRwaError as MarketError;
 pub struct ListRwa<'info> {
     #[account(mut)] pub seller: Signer<'info>,
     #[account(seeds=[b"config"], bump=config.bump)]
-    pub config: Account<'info, Config>,
+    pub config: Box<Account<'info, Config>>,
     #[account(seeds=[b"series", series.series_id.as_ref()], bump=series.bump)]
-    pub series: Account<'info, Series>,
+    pub series: Box<Account<'info, Series>>,
     #[account(seeds=[b"rwa-mint", series.series_id.as_ref()], bump=mint_record.bump, constraint=mint_record.series_id==series.series_id, constraint=mint_record.mint==mint.key())]
-    pub mint_record: Account<'info, RwaMintRecord>,
+    pub mint_record: Box<Account<'info, RwaMintRecord>>,
     #[account(address=mint_record.mint, constraint=mint.supply==1, constraint=mint.decimals==0)]
-    pub mint: InterfaceAccount<'info, Mint>,
+    pub mint: Box<InterfaceAccount<'info, Mint>>,
     #[account(mut, token::mint=mint, token::authority=seller, token::token_program=token_program, constraint=seller_token.amount==1)]
-    pub seller_token: InterfaceAccount<'info, TokenAccount>,
+    pub seller_token: Box<InterfaceAccount<'info, TokenAccount>>,
     #[account(init, payer=seller, space=8+Listing::INIT_SPACE, seeds=[b"listing", series.series_id.as_ref()], bump)]
-    pub listing: Account<'info, Listing>,
+    pub listing: Box<Account<'info, Listing>>,
     #[account(mut, associated_token::mint=mint, associated_token::authority=listing, associated_token::token_program=token_program, constraint=escrow.amount==0)]
-    pub escrow: InterfaceAccount<'info, TokenAccount>,
+    pub escrow: Box<InterfaceAccount<'info, TokenAccount>>,
     pub token_program: Program<'info, Token2022>,
     pub associated_token_program: Program<'info, AssociatedToken>,
     pub system_program: Program<'info, System>,
@@ -29,19 +29,19 @@ pub struct BuyRwa<'info> {
     #[account(mut)] pub buyer: Signer<'info>,
     #[account(mut, address=listing.seller)] pub seller: SystemAccount<'info>,
     #[account(seeds=[b"config"], bump=config.bump)]
-    pub config: Account<'info, Config>,
-    #[account(seeds=[b"series", series.series_id.as_ref()], bump=series.bump)]
-    pub series: Account<'info, Series>,
+    pub config: Box<Account<'info, Config>>,
+    #[account(mut, seeds=[b"series", series.series_id.as_ref()], bump=series.bump)]
+    pub series: Box<Account<'info, Series>>,
     #[account(seeds=[b"rwa-mint", series.series_id.as_ref()], bump=mint_record.bump, constraint=mint_record.series_id==series.series_id, constraint=mint_record.mint==mint.key())]
-    pub mint_record: Account<'info, RwaMintRecord>,
+    pub mint_record: Box<Account<'info, RwaMintRecord>>,
     #[account(address=mint_record.mint, constraint=mint.supply==1, constraint=mint.decimals==0)]
-    pub mint: InterfaceAccount<'info, Mint>,
+    pub mint: Box<InterfaceAccount<'info, Mint>>,
     #[account(mut, close=seller, seeds=[b"listing", series.series_id.as_ref()], bump=listing.bump, constraint=listing.series_id==series.series_id, constraint=listing.mint==mint.key())]
-    pub listing: Account<'info, Listing>,
+    pub listing: Box<Account<'info, Listing>>,
     #[account(mut, associated_token::mint=mint, associated_token::authority=listing, associated_token::token_program=token_program, constraint=escrow.amount==1)]
-    pub escrow: InterfaceAccount<'info, TokenAccount>,
+    pub escrow: Box<InterfaceAccount<'info, TokenAccount>>,
     #[account(mut, associated_token::mint=mint, associated_token::authority=buyer, associated_token::token_program=token_program)]
-    pub buyer_token: InterfaceAccount<'info, TokenAccount>,
+    pub buyer_token: Box<InterfaceAccount<'info, TokenAccount>>,
     pub token_program: Program<'info, Token2022>,
     pub associated_token_program: Program<'info, AssociatedToken>,
     pub system_program: Program<'info, System>,
@@ -50,19 +50,19 @@ pub struct BuyRwa<'info> {
 pub struct CancelListing<'info> {
     #[account(mut, address=listing.seller)] pub seller: Signer<'info>,
     #[account(seeds=[b"config"], bump=config.bump)]
-    pub config: Account<'info, Config>,
+    pub config: Box<Account<'info, Config>>,
     #[account(seeds=[b"series", series.series_id.as_ref()], bump=series.bump)]
-    pub series: Account<'info, Series>,
+    pub series: Box<Account<'info, Series>>,
     #[account(seeds=[b"rwa-mint", series.series_id.as_ref()], bump=mint_record.bump, constraint=mint_record.series_id==series.series_id, constraint=mint_record.mint==mint.key())]
-    pub mint_record: Account<'info, RwaMintRecord>,
+    pub mint_record: Box<Account<'info, RwaMintRecord>>,
     #[account(address=mint_record.mint, constraint=mint.supply==1, constraint=mint.decimals==0)]
-    pub mint: InterfaceAccount<'info, Mint>,
+    pub mint: Box<InterfaceAccount<'info, Mint>>,
     #[account(mut, close=seller, seeds=[b"listing", series.series_id.as_ref()], bump=listing.bump, constraint=listing.series_id==series.series_id, constraint=listing.mint==mint.key())]
-    pub listing: Account<'info, Listing>,
+    pub listing: Box<Account<'info, Listing>>,
     #[account(mut, associated_token::mint=mint, associated_token::authority=listing, associated_token::token_program=token_program, constraint=escrow.amount==1)]
-    pub escrow: InterfaceAccount<'info, TokenAccount>,
+    pub escrow: Box<InterfaceAccount<'info, TokenAccount>>,
     #[account(mut, associated_token::mint=mint, associated_token::authority=seller, associated_token::token_program=token_program)]
-    pub seller_token: InterfaceAccount<'info, TokenAccount>,
+    pub seller_token: Box<InterfaceAccount<'info, TokenAccount>>,
     pub token_program: Program<'info, Token2022>,
     pub associated_token_program: Program<'info, AssociatedToken>,
     pub system_program: Program<'info, System>,
@@ -76,6 +76,8 @@ pub fn list(ctx: Context<ListRwa>, price_lamports: u64) -> Result<()> {
  Ok(())
 }
 pub fn buy(ctx: Context<BuyRwa>, expected_price: u64) -> Result<()> {
+    // Sticky marker: a buy and its marker commit or revert together.
+    ctx.accounts.series.reserved = 1;
  require!(!ctx.accounts.config.paused && ctx.accounts.series.economic_status==1, MarketError::Inactive);
  require!(expected_price>0 && ctx.accounts.listing.price_lamports==expected_price, MarketError::Price);
  require!(ctx.accounts.buyer.key()!=ctx.accounts.seller.key(), MarketError::SelfPurchase);
@@ -93,3 +95,4 @@ pub fn cancel(ctx: Context<CancelListing>) -> Result<()> {
  token_2022::close_account(CpiContext::new_with_signer(ctx.accounts.token_program.key(),CloseAccount {account:ctx.accounts.escrow.to_account_info(),destination:ctx.accounts.seller.to_account_info(),authority:ctx.accounts.listing.to_account_info()},seeds))?;
  Ok(())
 }
+

@@ -45,7 +45,7 @@ pub struct SettleAndBurn<'info> {
         seeds = [b"config"],
         bump = config.bump
     )]
-    pub config: Account<'info, Config>,
+    pub config: Box<Account<'info, Config>>,
 
     // Qualquer carteira pode financiar o pagamento integral solicitado.
     // O titular recebe SOL; o pagador não recebe o token nem o direito.
@@ -54,11 +54,11 @@ pub struct SettleAndBurn<'info> {
 
     #[account(seeds=[b"redemption-authority", series.series_id.as_ref()], bump=redemption_authority.bump,
         constraint=redemption_authority.series_id == series.series_id @ ExploreChemRwaError::WrongRedemptionSeries)]
-    pub redemption_authority: Account<'info, RedemptionAuthority>,
+    pub redemption_authority: Box<Account<'info, RedemptionAuthority>>,
 
     #[account(seeds=[b"redemption-quote", series.series_id.as_ref()], bump=redemption_quote.bump,
         constraint=redemption_quote.series_id == series.series_id @ ExploreChemRwaError::WrongRedemptionSeries)]
-    pub redemption_quote: Account<'info, RedemptionQuote>,
+    pub redemption_quote: Box<Account<'info, RedemptionQuote>>,
 
     pub system_program: Program<'info, System>,
 
@@ -76,7 +76,7 @@ pub struct SettleAndBurn<'info> {
 
         bump = series.bump
     )]
-    pub series: Account<'info, Series>,
+    pub series: Box<Account<'info, Series>>,
 
     // ============================================================
     // MINT RECORD
@@ -100,7 +100,7 @@ pub struct SettleAndBurn<'info> {
                 == mint.key()
                 @ ExploreChemRwaError::WrongMint
     )]
-    pub mint_record: Account<'info, RwaMintRecord>,
+    pub mint_record: Box<Account<'info, RwaMintRecord>>,
 
     // ============================================================
     // MINT
@@ -115,7 +115,7 @@ pub struct SettleAndBurn<'info> {
             mint.supply == 1
             @ ExploreChemRwaError::InvalidTokenBalance
     )]
-    pub mint: InterfaceAccount<'info, Mint>,
+    pub mint: Box<InterfaceAccount<'info, Mint>>,
 
     // ============================================================
     // REDEMPTION PDA
@@ -146,7 +146,7 @@ pub struct SettleAndBurn<'info> {
                 == REDEMPTION_STATUS_REQUESTED
                 @ ExploreChemRwaError::InvalidRedemptionStatus
     )]
-    pub redemption: Account<'info, Redemption>,
+    pub redemption: Box<Account<'info, Redemption>>,
 
     // ============================================================
     // HOLDER ORIGINAL DO PEDIDO
@@ -184,12 +184,12 @@ pub struct SettleAndBurn<'info> {
             @ ExploreChemRwaError::InvalidTokenBalance
     )]
     pub escrow_token_account:
-        InterfaceAccount<'info, TokenAccount>,
+        Box<InterfaceAccount<'info, TokenAccount>>,
 
     pub token_program:
         Program<'info, Token2022>,
     #[account(mut, seeds=[b"credit-lineage-v2"], bump=lineage.bump)]
-    pub lineage: Account<'info, LineageRegistry>,
+    pub lineage: Box<Account<'info, LineageRegistry>>,
 
 }
 
@@ -423,7 +423,7 @@ pub struct RotateRedemptionAuthority<'info> {
         bump=redemption_authority.bump,
         constraint=redemption_authority.issuer_wallet == current_issuer_wallet.key()
             @ ExploreChemRwaError::UnauthorizedRedemptionIssuer)]
-    pub redemption_authority: Account<'info, RedemptionAuthority>,
+    pub redemption_authority: Box<Account<'info, RedemptionAuthority>>,
 }
 
 pub fn handle_rotate_redemption_authority(ctx: Context<RotateRedemptionAuthority>) -> Result<()> {
@@ -445,3 +445,4 @@ pub struct RedemptionAuthorityRotated {
     pub previous_wallet: Pubkey,
     pub new_wallet: Pubkey,
 }
+
