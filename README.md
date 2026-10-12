@@ -1,35 +1,49 @@
 # ExploreChem
 
-**Verifiable mineral provenance connected to transferable economic rights.**
+**Private quantities, public encumbrance and settlement: verifiable rare-earth provenance as collateral for export financing.**
 
-ExploreChem connects private industrial evidence, Chainlink CRE calculations, physical lot traceability on Ethereum Sepolia and transferable economic rights on Solana Devnet. It focuses initially on rare earths and supports company identity, mass and elemental accounting, lot transformation, physical receipt, RWA issuance, trading and paid redemption.
+ExploreChem lets a rare-earth producer prove where a lot came from and how its mass was accounted for, without revealing volumes, grades or capacity to competitors, and then use that verified lot as collateral for export financing. Private industrial evidence is processed by Chainlink CRE (Chainlink Runtime Environment) workflows; Ethereum Sepolia records lot commitments, custody states and lineage; Solana Devnet records an issuer-linked economic right (RWA, Real World Asset) that a financier funds and the issuer settles.
 
 **Buying an RWA does not transfer the mineral or its custody.** The physical lot and the economic right have separate lifecycles: selling or transforming the material does not close the issuer's existing economic series.
 
-Here, an **economic obligation** means the issuer identity and origin/terms commitments recorded for a series, together with the token holder's ability to request a SOL settlement. The program executes settlement when a payer signs and funds it. It does not automatically debit the issuer or enforce free-form commercial terms.
+Here, an **economic obligation** means the issuer identity and origin/terms commitments recorded for a series, together with the token holder's ability to request a SOL settlement. In the intended use, the holder is the financier and the settlement is the issuer's repayment. The program executes settlement when a payer signs and funds it. It does not automatically debit the issuer or enforce free-form commercial terms.
 
-[Live application](https://armanfm.github.io/ExplorerChem/) · [Source repository](https://github.com/armanfm/ExplorerChem)
+[Pitch video](https://youtu.be/HURDA09KyJc) · [Technical demo](https://youtu.be/gpj7f8joUoE) · [Live application](https://armanfm.github.io/ExplorerChem/) · [Source repository](https://github.com/armanfm/ExplorerChem)
 
-> Testnet MVP. Companies, documents and quantities used in examples are synthetic. Demonstration tokens do not create real commercial payment obligations. Any real commercial enforceability depends on agreements and validation outside the protocol.
+> Testnet MVP. Companies, documents and quantities used in examples are synthetic. Demonstration tokens do not create real commercial payment obligations and are not offered to the public. Any real commercial enforceability depends on agreements and validation outside the protocol.
 
 **ExploreChem** is the product name. **ExplorerChem** is the existing GitHub repository and GitHub Pages path; the links above retain those actual paths.
 
-## A short product walkthrough
+## Problem and who pays
 
-Use Ethereum Sepolia and Solana Devnet. The economic example uses one issuer wallet and two buyer wallets with Devnet SOL, plus the configured attestor when it is a different signer.
+Traceability in critical-mineral chains is held back by cost, limited interoperability and commercial confidentiality, a diagnosis set out in the IEA/OECD (International Energy Agency / Organisation for Economic Co-operation and Development) April 2026 report on traceability in critical mineral supply chains. The problem is sharpest in the midstream, where lots are mixed and aggregated: competitors must prove mass conservation to each other without disclosing volumes, prices or installed capacity.
+
+In the EU, the Critical Raw Materials Act (Regulation (EU) 2024/1252, Articles 28–30) sets labelling, recycled-content and environmental-footprint requirements for permanent magnets; their detailed rules depend on implementing and delegated acts. The ESPR (Ecodesign for Sustainable Products Regulation, Regulation (EU) 2024/1781) provides the Digital Product Passport infrastructure.
+
+Traceability today pays through market access and risk management, not through a price premium. ExploreChem turns verified provenance into a financing input:
+
+- **The financier pays:** a verified, encumbered lot reduces due-diligence cost and double-pledging risk.
+- **The producer gains:** faster, cheaper export credit without depending on a price premium.
+- **Initial focus: Brazil.** Brazil holds the world's second-largest rare-earth reserves but supplies under 1% of global output; ionic-clay mining has been in operation since 2024.
+
+## Demonstration flow
+
+The technical demo follows these steps on Ethereum Sepolia and Solana Devnet. It uses an issuer (producer) wallet, a financier wallet and a third wallet that exercises transfer mechanics, plus the configured attestor when it is a different signer.
 
 | Step | Action | System behavior |
 |---|---|---|
-| 1. Evidence | Select the company and submit a private industrial JSON document | Anchor its hash and actor reference on Ethereum |
+| 1. Evidence | The producer submits a private industrial JSON document | Anchor its hash and actor reference on Ethereum |
 | 2. Accounting | Run MUF, then Elemental | Check document/result integrity, calculate balances and create proof-linked lot commitments |
-| 3. Inspect | Select the lot in the authorized company view | Inspect private quantities and composition; public records contain commitments, holders, states and lineage |
-| 4. Issue and list | Select company and source lot, enter terms and a 1 SOL asking price, and sign the required transactions | Register its ancestry, reserve issuer-scoped coverage, issue one Token-2022 unit and place it in sale escrow |
-| 5. Buy | Connect a different wallet and buy the offer | Pay 1 SOL to the seller and receive the economic token atomically; physical custody remains separate |
-| 6. Resell | Publish a 2 SOL offer and buy it from the third wallet | Transfer the same economic right; the original issuer stays associated with the series |
-| 7. Request | The current holder requests 3 SOL redemption | Lock the token in redemption escrow and record the requested amount; no payment or burn occurs yet |
-| 8. Settle | The issuer, or another eligible payer, signs and funds the current 3 SOL request | Pay the recorded holder, burn the unit, close redemption escrow and finalize the series atomically |
+| 3. Inspect | Select the lot in the authorized company view | Inspect private quantities and composition; public records contain only commitments, holders, states and lineage |
+| 4. Issue | The producer selects the source lot, enters financing terms and a 1 SOL amount, and signs | Register ancestry, reserve issuer-scoped coverage so the same lot cannot back another issue, issue one Token-2022 unit and place it in escrow |
+| 5. Fund | The financier wallet takes the offer | Pay 1 SOL to the producer and receive the economic right atomically; physical custody remains separate |
+| 6. Transfer (testnet mechanics) | The right is offered at 2 SOL and taken by a third wallet | Show that the right moves while the original issuer stays bound to the series; see the transfer-restriction note below |
+| 7. Request settlement | The current holder requests 3 SOL | Lock the token in redemption escrow and record the requested amount; no payment or burn occurs yet |
+| 8. Settle | The producer, or another eligible payer, funds the 3 SOL request | Pay the holder, burn the unit, close escrow, finalize the series and release the coverage reservation atomically |
 
-The 1, 2 and 3 SOL values illustrate separate sale, resale and requested redemption amounts. Secondary prices do not determine redemption value.
+The 1, 2 and 3 SOL values illustrate separate funding, transfer and settlement amounts. Transfer prices do not determine settlement value.
+
+**Transfer restriction (roadmap).** The current Devnet program allows any wallet to take a listed offer, so step 6 demonstrates transfer mechanics only. The target design is not an open marketplace: transfers are restricted to enabled financing parties, with price and terms kept off-chain and only their hash on-chain.
 
 **Before requesting redemption:** the token is removed from circulation while the request is pending. The current program has no redemption-cancellation instruction or automatic timeout return. If nobody pays, the token remains in escrow for an indefinite period; the holder can update the requested amount but cannot resell the locked unit. Cancelling a marketplace offer is a separate operation that returns its sale-escrow token.
 
@@ -41,7 +55,7 @@ The 1, 2 and 3 SOL values illustrate separate sale, resale and requested redempt
 | ProofRegistry on Ethereum | Evidence commitments, MUF/Elemental states, authorized reports and proof history |
 | Lots on Ethereum | Lot commitments, holders, custody states and declared parent/child lineage |
 | Chainlink CRE workflows | Integrity checks, total-mass accounting and elemental calculations using private evidence |
-| Solana RWA program | Issuer-linked economic series, Token-2022 issuance, overlap controls, marketplace escrow and paid redemption/burn |
+| Solana RWA program | Issuer-linked economic series, Token-2022 issuance, coverage-reservation (anti-double-pledge) controls, transfer escrow and paid settlement/burn |
 | Private storage and frontend | Controlled evidence/results, authorized lot inspection and wallet-based operations |
 
 Ethereum records **commitments, custody states and declared physical lineage**. Solana records the economic instrument, token transfers, offers and SOL settlements. The design uses separate physical and economic state machines; it is not a token bridge.
@@ -63,7 +77,7 @@ See [Attestation responsibilities and lineage rules](docs/economic-model.md#atte
 - Each series issues one indivisible Token-2022 unit with decimals 0. Supply is 1 after mint and 0 after paid redemption and burn.
 - A buyer receives the economic right. The original issuer remains associated with it after secondary resale or physical transfer.
 - A seller sets the sale price. The current holder proposes the redemption amount and can edit it while pending. The payer accepts it by signing a transaction paying exactly the current quote.
-- Payment uses the payer's own native SOL. Any wallet other than the registered redemption holder can fund it without a payment allowlist or attestor signature. The payer receives no token or mineral ownership.
+- Settlement uses the payer's own native SOL. Any wallet other than the registered redemption holder can fund it without a payment allowlist or attestor signature. The payer receives no token or mineral ownership. The program also exposes an experimental USDT purchase instruction (`buy_rwa_usdt`) that is not part of the demonstration flow.
 - Payment, burn, escrow closure, final status and release of the active lineage reservation occur atomically. A failed payment preserves the pending request and escrowed unit; transaction fees may still apply.
 - For the same issuer, an active reservation blocks another issue on the same lot or a registered ancestor/descendant. Subdivision preserves that reservation. Reselling the existing RWA remains allowed while it is outside redemption escrow.
 - Different issuers have separate reservation scopes. Selling the physical lot to another company does not settle the original issuer's series.
@@ -107,10 +121,11 @@ Run the workflows from the repository root:
 (cd workflows/elemental && cre workflow simulate ./elemental-worflow --target staging-settings)
 ```
 
-Run MUF before Elemental. Add `--broadcast` to submit reports to the configured testnet. MUF and Elemental integrate with Chainlink CRE through `handlerInTee` for confidential processing; these commands invoke the simulator, whose logs are for debugging.
+Run MUF before Elemental. Add `--broadcast` to submit reports to the configured testnet. MUF and Elemental integrate with Chainlink CRE through `handlerInTee` for confidential processing (this submission runs them in the CRE simulator); these commands invoke the simulator, whose logs are for debugging.
 
 See [Configuration and operations](docs/operations.md) for dependencies, contract wiring, source updates and the Solana build flow.
 Synthetic industrial JSON examples for use with the MUF and Elemental workflows are available in [exemples/](exemples/).
+
 ## Privacy, costs and operating boundaries
 
 - Masses, elemental quantities, purity, detailed results, openings and salts remain in controlled off-chain storage. Authorized private views expose composition; the public catalogue does not expose numerical composition. Public presence indicators, when displayed, identify elements without quantities.
@@ -134,8 +149,8 @@ AI-assisted tools, including ChatGPT, Claude and Manus, supported implementation
 ## Team
 
 - **Armando Freire — Technical Lead:** architecture, Solidity contracts, Rust/Anchor program, Chainlink CRE workflows, integration, testing and technical documentation.
-- **Jéssica — Product Lead:** product direction, requirements, refinement, documentation, positioning and presentation.
-- **Adriana Tourinho — Technical & Business Mentor:** technical/business guidance, hands-on support, Solidity development, internal code review and Scrum coordination support.
+- **Jéssica Chagas — Product Lead:** product direction, requirements, refinement, documentation, positioning and presentation.
+- **Adriana Tourinho — Security & Privacy Lead:** threat model, Solidity review, internal security review and Solidity development.
 
 ## License
 
