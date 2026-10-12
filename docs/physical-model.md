@@ -87,7 +87,7 @@ Example: a private calculation can represent `100 kg → 60 kg product + 39 kg r
 
 Physical receipt requires the relevant recipient's acceptance/confirmation under the custody flow. The receiving interface exposes authorized private quantities so the recipient can inspect the lot. Expiry does not itself prove receipt or resolve a dispute.
 
-The physical contract's encumbrance mechanism is distinct from the current RWA policy. **Issuing an economic right does not automatically require freezing the physical lot.** Selling, receiving or transforming the material can continue under the physical contract's own rules. An explicitly encumbered lot remains subject to that contract's restrictions.
+The Solana program does not freeze the physical lot by itself; the encumbrance is applied on Ethereum. **In the application flow, issuing an RWA encumbers the source lot** (`encumber`, called by an authorized collateral agent with a single-use `encumbranceRef`). An `ENCUMBERED` lot cannot enter a custody order or a transformation, because both require an `ACTIVE` lot. After the series is settled or the issuance is cancelled, the collateral agent calls `release` and the lot returns to `ACTIVE`. The contract cannot verify Solana state, so the release relies on the agent key (see SECURITY.md, finding F-10).
 
 ### Integrity controls
 
