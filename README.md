@@ -4,7 +4,7 @@
 
 ExploreChem lets a rare-earth producer prove where a lot came from and how its mass was accounted for, without revealing volumes, grades or capacity to competitors, and then use that verified lot as collateral for export financing. Private industrial evidence is processed by Chainlink CRE (Chainlink Runtime Environment) workflows; Ethereum Sepolia records lot commitments, custody states and lineage; Solana Devnet records an issuer-linked economic right (RWA, Real World Asset) that a financier funds and the issuer settles.
 
-**Buying an RWA does not transfer the mineral or its custody.** The physical lot and the economic right have separate lifecycles: selling or transforming the material does not close the issuer's existing economic series.
+**Buying an RWA does not transfer the mineral or its custody.** The physical lot and the economic right have separate lifecycles. In the application flow, issuing an RWA also encumbers the source lot on Ethereum (`ENCUMBERED`, set through the collateral-agent role): while encumbered, the lot cannot be sold, sent to another company or transformed. The lot returns to `ACTIVE` only after the series is settled or the issuance is cancelled. On the Solana side, the economic series stays bound to its original issuer regardless of later physical transfers.
 
 Here, an **economic obligation** means the issuer identity and origin/terms commitments recorded for a series, together with the token holder's ability to request a SOL settlement. In the intended use, the holder is the financier and the settlement is the issuer's repayment. The program executes settlement when a payer signs and funds it. It does not automatically debit the issuer or enforce free-form commercial terms.
 
@@ -80,8 +80,11 @@ See [Attestation responsibilities and lineage rules](docs/economic-model.md#atte
 - Settlement uses the payer's own native SOL. Any wallet other than the registered redemption holder can fund it without a payment allowlist or attestor signature. The payer receives no token or mineral ownership. The program also exposes an experimental USDT purchase instruction (`buy_rwa_usdt`) that is not part of the demonstration flow.
 - Payment, burn, escrow closure, final status and release of the active lineage reservation occur atomically. A failed payment preserves the pending request and escrowed unit; transaction fees may still apply.
 - For the same issuer, an active reservation blocks another issue on the same lot or a registered ancestor/descendant. Subdivision preserves that reservation. Reselling the existing RWA remains allowed while it is outside redemption escrow.
-- Different issuers have separate reservation scopes. Selling the physical lot to another company does not settle the original issuer's series.
-- Redemption does not require the physical lot to remain in the issuer's custody. It settles the economic series rather than delivering the mineral.
+- Two independent controls prevent double use of a lot: the Solana coverage reservation (no second issue on the same lot or its lineage) and the Ethereum encumbrance (no sale, custody transfer or transformation while the RWA is outstanding).
+- Different issuers have separate reservation scopes. Once a lot is released, selling it to another company does not settle the original issuer's series.
+- Redemption settles the economic series rather than delivering the mineral. After settlement, the collateral agent releases the Ethereum lot back to `ACTIVE`.
+- The release decision relies on the collateral-agent key; the Ethereum contract cannot verify Solana settlement by itself (see [SECURITY.md](SECURITY.md), finding F-10).
+
 
 The requesting holder's quote is separate from the entered terms text and from past sale prices. There is no automatic inflation index or automatic debit. A request alone does not burn the token.
 
