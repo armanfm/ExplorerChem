@@ -1993,17 +1993,84 @@ async function atoresNoRegistry(rows,address){
   }
   return output;
 }
+async function atoresDoContrato(address){
+  const provider=await clientBalanceProvider();
+  const registryAddress=await actorRegistryAddress(provider);
+  if(!ethers.isAddress(registryAddress)||registryAddress===ethers.ZeroAddress)throw new Error("The current ProofRegistry has no E1 ActorRegistry configured.");
+  const abi=[
+    "event ActorRegistrationRequested(bytes32 indexed actorId,address indexed controller,bytes32 indexed registrationHash,uint64 requestedAt)",
+    "function getActor(bytes32 actorId) view returns (tuple(bytes32 actorId,address controller,bytes32 registrationHash,uint8 status,uint64 createdAt,uint64 statusUpdatedAt))"
+  ];
+  const registry=new ethers.Contract(registryAddress,abi,provider);
+  const latest=await provider.getBlockNumber(),from=Math.max(0,latest-600000),chunk=50000,requested=new Map();
+  const topic=registry.interface.getEvent("ActorRegistrationRequested").topicHash;
+  for(let start=from;start<=latest;start+=chunk){
+    const end=Math.min(latest,start+chunk-1);
+    try{
+      const logs=await provider.getLogs({address:registryAddress,topics:[topic],fromBlock:start,toBlock:end});
+      for(const log of logs){try{const event=registry.interface.parseLog(log);requested.set(String(event.args.actorId).toLowerCase(),String(event.args.actorId));}catch(_){}}
+    }catch(_){
+      for(let small=start;small<=end;small+=10000){
+        const logs=await provider.getLogs({address:registryAddress,topics:[topic],fromBlock:small,toBlock:Math.min(end,small+9999)});
+        for(const log of logs){try{const event=registry.interface.parseLog(log);requested.set(String(event.args.actorId).toLowerCase(),String(event.args.actorId));}catch(_){}}
+      }
+    }
+  }
+  const actors=[];
+  for(const actorId of requested.values()){
+    const actor=await registry.getActor(actorId),status=Number(actor.status);
+    if(status>0&&String(actor.actorId).toLowerCase()===actorId.toLowerCase())actors.push({actorId:String(actor.actorId),controller:String(actor.controller),chainStatus:status,chainCreatedAt:Number(actor.createdAt)});
+  }
+  return actors;
+}
+async function tipoAtorDoContrato(provider,actorId){
+  const types=[];
+  try{
+    await loadActorTypeConfig(provider);
+    const roles=new ethers.Contract(DEFAULT_EXPLORERCHEM_ACTOR_ROLES_V2_ADDRESS,["function actorActivities(bytes32 actorId) view returns(uint256)"],provider);
+    const activity=BigInt(await roles.actorActivities(actorId));
+    for(const [type,config] of Object.entries(ACTOR_TYPE_CONFIG)){if(config.kind==="commercial"&&(activity&BigInt(config.mask))===BigInt(config.mask))types.push(type);}
+  }catch(_){}
+  try{
+    await loadActorTypeConfig(provider);
+    const docs=new ethers.Contract(DEFAULT_EXPLORERCHEM_DOCUMENTARY_REGISTRY_ADDRESS,["function actorServiceMask(bytes32 actorId) view returns(uint8)"],provider);
+    const services=BigInt(await docs.actorServiceMask(actorId));
+    for(const [type,config] of Object.entries(ACTOR_TYPE_CONFIG)){if(config.kind==="passive"&&(services&BigInt(config.mask))===BigInt(config.mask))types.push(type);}
+  }catch(_){}
+  return types;
+}
 async function carregarAtores(){
   const sequence=++ACTOR_LOAD_SEQUENCE,address=EXPLORERCHEM_CONTRACT_ADDRESS;
   ATORES=[];ACTOR_LOAD_ERROR="";
   try{
-    const {data,error}=await supabaseClient.from("explorerchem_actors")
-      .select("id,actor_id,display_name,actor_type,country_code,public_wallet_address,created_at")
-      .order("created_at",{ascending:false});
-    if(error)throw error;
-    const current=await atoresNoRegistry(data||[],address);
+    let metadata=[],metadataWarning="";
+    try{
+      const {data,error}=await supabaseClient.from("explorerchem_actors")
+        .select("id,actor_id,display_name,actor_type,country_code,public_wallet_address,created_at")
+        .order("created_at",{ascending:false});
+      if(error)throw error;
+      metadata=data||[];
+    }catch(error){metadataWarning="Company details could not be loaded from Supabase: "+(error.message||String(error));console.warn(metadataWarning);}
+    const [chainActors,provider]=await Promise.all([atoresDoContrato(address),clientBalanceProvider()]);
     if(sequence!==ACTOR_LOAD_SEQUENCE||address!==EXPLORERCHEM_CONTRACT_ADDRESS)return;
-    ATORES=current.map(a=>({dbId:a.id,id:a.actor_id,actorType:a.actor_type,nome:a.display_name,papel:actorTypeLabel[a.actor_type]||a.actor_type,praca:a.country_code||"—",publicWalletAddress:a.public_wallet_address||null,controller:a.chainController,chainStatus:a.chainStatus,chainLabel:['Not registered','Pending','Active','Suspended','Rejected'][a.chainStatus]||'Unknown',carteiras:a.public_wallet_address?1:0,evid:0,desde:a.created_at?new Date(a.created_at).toLocaleDateString("en-US"):"—"}));
+    const metadataById=new Map(metadata.map(a=>[String(a.actor_id||"").toLowerCase(),a]));
+    const onchainById=new Map(chainActors.map(a=>[a.actorId.toLowerCase(),a]));
+    for(const row of metadata){
+      const key=String(row.actor_id||"").toLowerCase();
+      if(key&&!onchainById.has(key)){
+        try{const [verified]=await atoresNoRegistry([row],address);if(verified)onchainById.set(key,{actorId:verified.actor_id,controller:verified.chainController,chainStatus:verified.chainStatus,chainCreatedAt:0});}catch(_){}
+      }
+    }
+    const list=[];
+    for(const actor of onchainById.values()){
+      const db=metadataById.get(actor.actorId.toLowerCase())||null;
+      const actorTypes=db?.actor_type?[db.actor_type]:await tipoAtorDoContrato(provider,actor.actorId);
+      const actorType=actorTypes[0]||null;
+      const fallbackName="On-chain actor "+actor.actorId.slice(2,10)+"…";
+      list.push({dbId:db?.id||null,id:actor.actorId,actorType,papel:actorType?actorTypes.map(t=>actorTypeLabel[t]||t).join(", "):"Type not assigned",nome:db?.display_name||fallbackName,praca:db?.country_code||"—",publicWalletAddress:db?.public_wallet_address||actor.controller,controller:actor.controller,chainStatus:actor.chainStatus,chainLabel:['Not registered','Pending','Active','Suspended','Rejected'][actor.chainStatus]||'Unknown',carteiras:db?.public_wallet_address?1:0,evid:0,desde:db?.created_at?new Date(db.created_at).toLocaleDateString("en-US"):(actor.chainCreatedAt?new Date(actor.chainCreatedAt*1000).toLocaleDateString("en-US"):"—"),metadataMissing:!db});
+    }
+    ATORES=list.sort((a,b)=>a.nome.localeCompare(b.nome));
+    if(metadataWarning)ACTOR_LOAD_ERROR=metadataWarning;
   }catch(error){
     if(sequence!==ACTOR_LOAD_SEQUENCE)return;
     ACTOR_LOAD_ERROR="Could not verify companies in the current Registry: "+(error.shortMessage||error.message);
@@ -2726,13 +2793,13 @@ T.atores=()=>
   "<h1>Companies</h1><p class=\"sub\">Each company has a logical identity and one or more "+
   "authorized wallets. Changing the key does not change the identity or erase already anchored history.</p>"+ "<p class=\"mono\">Registry current: "+escaparHtml(EXPLORERCHEM_CONTRACT_ADDRESS)+'</p>'+
   (ATORES.length
-    ? "<div class=\"panel scrollx\"><table><thead><tr><th>Company</th><th>Location</th>"+
+    ? "<div class=\"panel scrollx\"><table><thead><tr><th>Company</th><th>Actor type</th><th>Location</th>"+
       "<th>Registry status</th><th>Identity</th><th>Public wallet</th><th class=\"num\">Evidence</th><th>Since</th><th></th></tr></thead><tbody>"+
       ATORES.map(a=>'<tr><td style="font-weight:500">'+val(a.nome)+'</td>'+
-        '<td>'+val(a.praca)+'</td><td>'+val(a.chainLabel)+'</td><td class="mono" style="font-size:12.5px">'+val(a.id)+'</td>'+
+        '<td>'+val(a.papel)+'</td><td>'+val(a.praca)+'</td><td>'+val(a.chainLabel)+'</td><td class="mono" style="font-size:12.5px">'+val(a.id)+'</td>'+ 
         '<td class="mono" style="font-size:12px">'+(a.publicWalletAddress?val(a.publicWalletAddress.slice(0,8)+'…'+a.publicWalletAddress.slice(-6)):"Not registered")+'</td>'+
         '<td class="num">'+val(a.evid,0)+'</td><td>'+val(a.desde)+'</td>'+
-        '<td><button type="button" class="btn ghost sm" data-edit-actor-wallet="'+val(a.dbId)+"\">Change wallet</button></td></tr>").join("")+'</tbody></table></div>'
+        '<td>'+(a.dbId?'<button type="button" class="btn ghost sm" data-edit-actor-wallet="'+val(a.dbId)+'">Change wallet</button>':'—')+'</td></tr>').join('')+'</tbody></table></div>'+(ATORES.some(a=>a.metadataMissing)?'<p class="note">Identity, controller wallet and status come from ActorRegistry. Company names and locations are shown when available in Supabase.</p>':'')+(ACTOR_LOAD_ERROR?'<p class="note">'+escaparHtml(ACTOR_LOAD_ERROR)+'</p>':'')
     : vazio("No actor registered",
         ACTOR_LOAD_ERROR||"No company registered in this Registry was found in Supabase."))+
   '<section class="panel pad" id="actorWalletEditor" hidden style="margin-top:16px">'+
@@ -2796,7 +2863,7 @@ T.admin=()=>
   '<div class="stats">'+
     '<div><span class="n">'+(ADMIN_CONTEXT.checked?(ADMIN_CONTEXT.isAdmin?'AUTORIZADO':'BLOQUEADO'):'—')+"</span><span class=\"l\">Administrator wallet</span></div>"+
     '<div><span class="n">'+ADMIN_REQUESTS.length+"</span><span class=\"l\">Pending requests</span></div>"+
-    '<div><span class="n">'+ATORES.length+"</span><span class=\"l\">Active companies in database</span></div>"+
+    '<div><span class="n">'+ATORES.length+"</span><span class=\"l\">Actor identities found on-chain</span></div>"+
     '<div><span class="n">'+(ADMIN_CONTEXT.checked?(ADMIN_CONTEXT.isOwner?'OWNER':'ADMIN'):'—')+"</span><span class=\"l\">Wallet permission level</span></div></div>"+
   '<section class="panel" style="margin-top:16px"><div class="pad" style="display:flex;align-items:center;justify-content:space-between;gap:16px">'+
     "<div><h3 style=\"margin:0 0 5px\">Company requests</h3><p class=\"sm\" style=\"margin:0\">The contract is queried directly. Only requests in PENDING state appear here.</p></div>"+
@@ -5195,6 +5262,7 @@ const ACTOR_MODALITY_DEFINITIONS={
 let ACTOR_TYPE_CONFIG={};
 
 async function loadActorTypeConfig(provider){
+  if(Object.keys(ACTOR_TYPE_CONFIG).length)return ACTOR_TYPE_CONFIG;
   const rolesAddress=DEFAULT_EXPLORERCHEM_ACTOR_ROLES_V2_ADDRESS;
   const docAddress=DEFAULT_EXPLORERCHEM_DOCUMENTARY_REGISTRY_ADDRESS;
   if(await provider.getCode(rolesAddress)==="0x")throw new Error("ActorRolesV2 was not found at its configured Sepolia address.");
@@ -8498,4 +8566,3 @@ if(walletProvider&&typeof walletProvider.on==="function"){
 
 
 </body></html>
-
