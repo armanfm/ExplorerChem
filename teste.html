@@ -5180,15 +5180,71 @@ async function actorRegistryAddress(provider){
   return await registry.actorRegistry();
 }
 
-const ACTOR_TYPE_CONFIG={
-  MINER:{label:"Miner",kind:"commercial",mask:1},
-  REFINER:{label:"Purifier / refiner",kind:"commercial",mask:64},
-  LABORATORY:{label:"Laboratory",kind:"passive",mask:4}
+const ACTOR_MODALITY_DEFINITIONS={
+  commercial:[
+    {type:"MINER",getter:"MINER"},{type:"CARRIER",getter:"TRANSPORTER"},
+    {type:"PROCESSOR",getter:"PROCESSOR"},{type:"REFINER",getter:"REFINER"},
+    {type:"RECYCLER",getter:"RECYCLER"},{type:"MANUFACTURER",getter:"MANUFACTURER"},
+    {type:"EXPORTER",getter:"EXPORTER"},{type:"BUYER",getter:"BUYER"}
+  ],
+  passive:[
+    {type:"SAMPLER",kind:0},{type:"CUSTODIAN",kind:1},{type:"LABORATORY",kind:2},
+    {type:"AUDITOR",kind:3},{type:"CERTIFIER",kind:4}
+  ]
 };
+let ACTOR_TYPE_CONFIG={};
+
+async function loadActorTypeConfig(provider){
+  const rolesAddress=DEFAULT_EXPLORERCHEM_ACTOR_ROLES_V2_ADDRESS;
+  const docAddress=DEFAULT_EXPLORERCHEM_DOCUMENTARY_REGISTRY_ADDRESS;
+  if(await provider.getCode(rolesAddress)==="0x")throw new Error("ActorRolesV2 was not found at its configured Sepolia address.");
+  if(await provider.getCode(docAddress)==="0x")throw new Error("DocumentaryRegistryV2 was not found at its configured Sepolia address.");
+  const roleAbi=["function SUPPORTED_COMMERCIAL_MASK() view returns(uint256)",...ACTOR_MODALITY_DEFINITIONS.commercial.map(x=>`function ${x.getter}() view returns(uint256)`),"function e1Actors() view returns(address)"];
+  const docAbi=["function SUPPORTED_SERVICE_MASK() view returns(uint8)","function requiredActivity(uint8) view returns(uint256)","function e1Actors() view returns(address)"];
+  const roles=new ethers.Contract(rolesAddress,roleAbi,provider);
+  const docs=new ethers.Contract(docAddress,docAbi,provider);
+  const [commercialSupported,passiveSupported]=await Promise.all([roles.SUPPORTED_COMMERCIAL_MASK(),docs.SUPPORTED_SERVICE_MASK()]);
+  const configs={};
+  for(const item of ACTOR_MODALITY_DEFINITIONS.commercial){
+    const mask=BigInt(await roles[item.getter]());
+    if(mask!==0n&&(mask&(mask-1n))===0n&&(mask&~BigInt(commercialSupported))===0n)
+      configs[item.type]={label:actorTypeLabel[item.type]||item.type,kind:"commercial",mask};
+  }
+  for(const item of ACTOR_MODALITY_DEFINITIONS.passive){
+    const mask=BigInt(await docs.requiredActivity(item.kind));
+    if(mask!==0n&&(mask&(mask-1n))===0n&&(mask&BigInt(passiveSupported))===mask)
+      configs[item.type]={label:actorTypeLabel[item.type]||item.type,kind:"passive",mask:Number(mask)};
+  }
+  if(!Object.keys(configs).length)throw new Error("The deployed contracts did not expose any supported actor modalities.");
+  ACTOR_TYPE_CONFIG=configs;
+  return configs;
+}
+
+async function populateActorTypeSelect(select){
+  if(!select)return;
+  select.disabled=true;select.innerHTML='<option value="">Loading on-chain actor modalities…</option>';
+  const help=document.getElementById("actorTypeHelp");
+  try{
+    const provider=new ethers.JsonRpcProvider(SEPOLIA_PUBLIC_RPC,SEPOLIA_CHAIN_ID_DECIMAL,{staticNetwork:true});
+    const configs=await loadActorTypeConfig(provider);
+    const options=(kind,title)=>{
+      const values=Object.entries(configs).filter(([,v])=>v.kind===kind);
+      return values.length?'<optgroup label="'+title+'">'+values.map(([type,v])=>'<option value="'+type+'">'+escaparHtml(v.label)+'</option>').join("")+'</optgroup>':'';
+    };
+    select.innerHTML='<option value="">Select actor type</option>'+options("commercial","Commercial activities · ActorRolesV2")+options("passive","Documentary services · DocumentaryRegistryV2");
+    select.disabled=false;
+    if(help)help.textContent="Available modalities and permission masks were read from the deployed Sepolia contracts.";
+  }catch(error){
+    select.innerHTML='<option value="">On-chain modalities unavailable</option>';
+    if(help)help.textContent="Could not read the deployed role contracts. Registration is disabled until their modalities load.";
+    console.error(error);
+  }
+}
 
 async function actorTypeContractContext(provider,signer,actorType){
+  await loadActorTypeConfig(provider);
   const config=ACTOR_TYPE_CONFIG[actorType];
-  if(!config)throw new Error("Select Miner, Laboratory, or Purifier / refiner.");
+  if(!config)throw new Error("Select an actor modality exposed by the deployed contracts.");
   const registryAddress=await actorRegistryAddress(provider);
   const account=await signer.getAddress();
   let contract,address,abi;
@@ -5297,7 +5353,8 @@ async function adminDecideActor(actorId,approve,button){
     const {provider,signer,contract}=await adminContractContext(true);
     const request=ADMIN_REQUESTS.find(r=>r.actorId.toLowerCase()===actorId.toLowerCase());
     if(approve){
-      if(!request?.actorType||!ACTOR_TYPE_CONFIG[request.actorType])throw new Error("This request has no selected actor type. Reject it and submit a new request with Miner, Laboratory, or Purifier / refiner selected.");
+      await loadActorTypeConfig(provider);
+      if(!request?.actorType||!ACTOR_TYPE_CONFIG[request.actorType])throw new Error("This request has no supported actor modality. Reject it and submit a new request after the on-chain modalities load.");
       await actorTypeContractContext(provider,signer,request.actorType);
     }
     const decisionHash=ethers.keccak256(ethers.toUtf8Bytes(JSON.stringify({schemaVersion:"explorechem.actor.decision.v1",action:approve?"APPROVE":"REJECT",actorId,decidedBy:walletAddress,timestamp:new Date().toISOString()})));
@@ -7283,6 +7340,8 @@ function render(){
     e.preventDefault(); enviarEvidenciaReal(el);
   };};
 
+  const actorTypeSelect=$("#actorType");
+  if(actorTypeSelect)populateActorTypeSelect(actorTypeSelect);
   const salvarAtor=$("#salvarAtor");
   if(salvarAtor) salvarAtor.onclick=async function(e){
     e.preventDefault();
@@ -7292,7 +7351,8 @@ function render(){
     if(chainAtual!=="0xaa36a7"){toast("Switch the wallet network to Sepolia before signing.");return;}
     const nome=$("#rs")?.value.trim(),publicWalletRaw=$("#wl")?.value.trim(),actorType=$("#actorType")?.value||"",papel=actorTypeLabel[actorType]||"Company",existing=ATORES.find(a=>normalizarNomeEmpresa(a.nome)===normalizarNomeEmpresa(nome));
     if(!nome){toast("Enter the legal company name.");return;}
-    if(!ACTOR_TYPE_CONFIG[actorType]){toast("Select Miner, Laboratory, or Purifier / refiner before registering.");return;}
+    if(actorTypeSelect?.disabled){toast("Wait for the on-chain actor modalities to load before registering.");return;}
+    if(!ACTOR_TYPE_CONFIG[actorType]){toast("Select an actor modality loaded from the deployed contracts.");return;}
     if(!publicWalletRaw){toast("Enter the actor's public wallet.");return;}
     const novo={id:existing?.id||$("#actorId")?.value||novoActorId(),nome,papel,praca:$("#pr")?.value||"—",carteiras:1,evid:existing?.evid||0,desde:existing?.desde||new Date().toLocaleDateString("en-US")};
     if(!existing&&ATORES.some(a=>a.id===novo.id)){toast("Identifier already in use. Generate another one before registering.");return;}
@@ -8438,3 +8498,4 @@ if(walletProvider&&typeof walletProvider.on==="function"){
 
 
 </body></html>
+
