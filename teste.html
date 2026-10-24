@@ -1926,7 +1926,7 @@ async function carregarDocumentosRemotos(){
   if(document.readyState!=="loading") render();
 }
 
-const actorTypeLabel={MINER:"Miner",CARRIER:"Carrier",LABORATORY:"Laboratory",PROCESSOR:"Processor",REFINER:"Refiner",RECYCLER:"Recycler",MANUFACTURER:"Manufacturer",OTHER:"Other",SAMPLER:"Sampler",CUSTODIAN:"Sample custodian",AUDITOR:"Auditor",CERTIFIER:"Certifier",EXPORTER:"Exporter",BUYER:"Buyer"};
+const actorTypeLabel={MINER:"Miner",CARRIER:"Carrier",LABORATORY:"Laboratory",PROCESSOR:"Processor",REFINER:"Purifier / refiner",RECYCLER:"Recycler",MANUFACTURER:"Manufacturer",OTHER:"Other",SAMPLER:"Sampler",CUSTODIAN:"Sample custodian",AUDITOR:"Auditor",CERTIFIER:"Certifier",EXPORTER:"Exporter",BUYER:"Buyer"};
 
 /* Mapa papel → visão e persistência do ator ativo */
 const PAPEL_ROLE={
@@ -2777,10 +2777,11 @@ function adminStatusLabel(status){
 }
 function adminRequestRows(){
   if(!ADMIN_REQUESTS.length){
-    return '<tr><td colspan="6"><div class="pad" style="text-align:center">'+escaparHtml(ADMIN_SCAN_MESSAGE)+'</div></td></tr>';
+    return '<tr><td colspan="7"><div class="pad" style="text-align:center">'+escaparHtml(ADMIN_SCAN_MESSAGE)+'</div></td></tr>';
   }
   return ADMIN_REQUESTS.map(r=>'<tr data-admin-actor="'+escaparHtml(r.actorId)+'">'+
     '<td><b>'+escaparHtml(r.companyName||"Company name missing in database")+'</b><div class="sm">'+escaparHtml(r.country||"Private registration not found yet")+'</div></td>'+
+    '<td>'+escaparHtml(actorTypeLabel[r.actorType]||"Role missing")+'</td>'+
     '<td class="mono" style="font-size:11px;word-break:break-all">'+escaparHtml(r.actorId)+'</td>'+
     '<td class="mono" style="font-size:11px;word-break:break-all">'+escaparHtml(r.controller)+'</td>'+
     '<td>'+escaparHtml(r.requestedAt||"—")+'</td><td><span class="tag t-pend">'+adminStatusLabel(r.status)+'</span></td>'+
@@ -2800,7 +2801,7 @@ T.admin=()=>
   '<section class="panel" style="margin-top:16px"><div class="pad" style="display:flex;align-items:center;justify-content:space-between;gap:16px">'+
     "<div><h3 style=\"margin:0 0 5px\">Company requests</h3><p class=\"sm\" style=\"margin:0\">The contract is queried directly. Only requests in PENDING state appear here.</p></div>"+
     "<button type=\"button\" class=\"btn ghost\" id=\"adminRefresh\">Refresh pending requests</button></div>"+
-    "<div class=\"scrollx\"><table><thead><tr><th>Company</th><th>actorId</th><th>Controlling wallet</th><th>Solicitada em</th><th>State</th><th>Action</th></tr></thead>"+
+    "<div class=\"scrollx\"><table><thead><tr><th>Company</th><th>Actor type</th><th>actorId</th><th>Controlling wallet</th><th>Requested at</th><th>State</th><th>Action</th></tr></thead>"+
     '<tbody id="adminPendingBody">'+adminRequestRows()+'</tbody></table></div></section>'+
   registryOperationsPane()+
   "<div class=\"split\" style=\"margin-top:16px\"><section class=\"panel pad\"><h3>Active contract · Ethereum Sepolia</h3>"+
@@ -2822,11 +2823,14 @@ T.passivev2=()=>ectInboxHtml();
 T.publiccertv2=()=>ecPublicCertificatePage();
 T.cadastro=()=>
   "<div class=\"crumb\">Companies · new registration</div><h1>Register company</h1>"+
-  "<p class=\"sub\">Registration sends a transaction: the company identity and wallet are recorded on-chain. "+
+  "<p class=\"sub\">Registration records the company identity on-chain. The selected actor type is assigned on its role contract after approval. "+
   "Legal name and contact details remain here only.</p><div class=\"split\">"+
   "<div class=\"panel pad\"><h3>Identification</h3>"+
   "<div class=\"field\"><label for=\"rs\">Legal company name</label>"+
   '<input id="rs" placeholder="Nome empresarial completo"></div>'+
+  "<div class=\"field\"><label for=\"actorType\">Actor type</label>"+
+  '<select id="actorType" required><option value="">Select actor type</option><option value="MINER">Miner — authorized for INITIAL stock</option><option value="LABORATORY">Laboratory — passive lab report service</option><option value="REFINER">Purifier / refiner — commercial actor</option></select>'+
+  '<p class="sm" id="actorTypeHelp">The selected type is assigned on-chain after company approval.</p></div>'+
   "<div class=\"field\"><label for=\"actorId\">Unique company identifier</label>"+
   '<div style="display:flex;gap:8px"><input id="actorId" class="mono" readonly style="flex:1" value="'+novoActorId()+'">'+
   "<button type=\"button\" class=\"btn ghost sm\" id=\"gerarActorId\">Generate</button></div>"+
@@ -2841,14 +2845,14 @@ T.cadastro=()=>
   "<div class=\"field\"><label for=\"wl\">Actor public wallet</label>"+
   '<input id="wl" class="mono" placeholder="0x…" autocomplete="off" spellcheck="false"></div>'+
   "<p class=\"note\">This wallet will receive tokens for the company. It can be changed later in the dedicated screen.</p></div><div class=\"stack\">"+
-  "<div class=\"panel pad\"><h3>What this actor can see</h3><dl class=\"kv\">"+
+  "<div class=\"panel pad\"><h3>Data visibility rules</h3><p class=\"sm\">These visibility notes do not assign the actor type.</p><dl class=\"kv\">"+
   "<dt>Own evidence</dt><dd><span class=\"tag t-ok\">Yes</span></dd>"+
   "<dt>The next stage in the chain</dt><dd><span class=\"tag t-ok\">Yes</span></dd>"+
   "<dt>The verdict of the input lots</dt><dd><span class=\"tag t-ok\">Yes</span></dd>"+
   "<dt>What happens after the recipient</dt><dd><span class=\"tag t-pend\">No</span></dd>"+
   "<dt>Third-party documents</dt><dd><span class=\"tag t-pend\">No</span></dd>"+
   "<dt>Masses and grades of other flows</dt><dd><span class=\"tag t-pend\">No</span></dd></dl></div>"+
-  "<div class=\"actions\"><button class=\"btn\" id=\"salvarAtor\">Register and approve company</button>"+
+  "<div class=\"actions\"><button class=\"btn\" id=\"salvarAtor\">Register company and assign actor type</button>"+
   '<button class="btn ghost">Cancel</button></div></div></div>'+
   "<section class=\"panel pad\" style=\"margin-top:16px\"><h3>Active contract · Ethereum Sepolia</h3>"+
   "<p class=\"sm\">Change the address here after a new deployment. The value is stored only in this browser and will be used for actor registration, evidence submission, and on-chain queries.</p>"+
@@ -5176,6 +5180,53 @@ async function actorRegistryAddress(provider){
   return await registry.actorRegistry();
 }
 
+const ACTOR_TYPE_CONFIG={
+  MINER:{label:"Miner",kind:"commercial",mask:1},
+  REFINER:{label:"Purifier / refiner",kind:"commercial",mask:64},
+  LABORATORY:{label:"Laboratory",kind:"passive",mask:4}
+};
+
+async function actorTypeContractContext(provider,signer,actorType){
+  const config=ACTOR_TYPE_CONFIG[actorType];
+  if(!config)throw new Error("Select Miner, Laboratory, or Purifier / refiner.");
+  const registryAddress=await actorRegistryAddress(provider);
+  const account=await signer.getAddress();
+  let contract,address,abi;
+  if(config.kind==="commercial"){
+    address=DEFAULT_EXPLORERCHEM_ACTOR_ROLES_V2_ADDRESS;
+    if(await provider.getCode(address)==="0x")throw new Error("ActorRolesV2 was not found at the configured Sepolia address.");
+    abi=["function owner() view returns(address)","function e1Actors() view returns(address)","function actorActivities(bytes32) view returns(uint256)","function setActorActivities(bytes32,uint256,bytes32)"];
+  }else{
+    address=DEFAULT_EXPLORERCHEM_DOCUMENTARY_REGISTRY_ADDRESS;
+    if(await provider.getCode(address)==="0x")throw new Error("DocumentaryRegistryV2 was not found at the configured Sepolia address.");
+    abi=["function owner() view returns(address)","function e1Actors() view returns(address)","function actorServiceMask(bytes32) view returns(uint8)","function setPassiveServiceMask(bytes32,uint8)"];
+  }
+  contract=new ethers.Contract(address,abi,signer);
+  const [contractOwner,contractRegistry]=await Promise.all([contract.owner(),contract.e1Actors()]);
+  if(!igualHex(contractRegistry,registryAddress))throw new Error("The selected role contract points to a different E1 ActorRegistry.");
+  if(!igualHex(contractOwner,account))throw new Error("The connected wallet must own the contract that assigns this actor type.");
+  return {config,contract,account};
+}
+
+async function assignActorTypeOnchain(provider,signer,actorId,actorType){
+  const {config,contract}=await actorTypeContractContext(provider,signer,actorType);
+  let txHash=null;
+  if(config.kind==="commercial"){
+    const current=BigInt(await contract.actorActivities(actorId));
+    if(current!==BigInt(config.mask)){
+      const policyRef=ethers.keccak256(ethers.toUtf8Bytes(JSON.stringify({schemaVersion:"explorechem.actor.activity-assignment.v1",actorId,actorType,assignedBy:await signer.getAddress(),assignedAt:Math.floor(Date.now()/1000)})));
+      const tx=await contract.setActorActivities(actorId,config.mask,policyRef);await tx.wait();txHash=tx.hash;
+    }
+    if(BigInt(await contract.actorActivities(actorId))!==BigInt(config.mask))throw new Error("On-chain commercial activity does not match the selected actor type.");
+  }else{
+    const current=Number(await contract.actorServiceMask(actorId));
+    const desired=current|config.mask;
+    if(desired!==current){const tx=await contract.setPassiveServiceMask(actorId,desired);await tx.wait();txHash=tx.hash;}
+    if((Number(await contract.actorServiceMask(actorId))&config.mask)!==config.mask)throw new Error("On-chain passive service does not match the selected actor type.");
+  }
+  return {label:config.label,txHash};
+}
+
 async function adminContractContext(requireAdmin=true){
   if(!walletAddress) throw new Error("Connect the administrator wallet.");
   const chainAtual=await refreshWalletChain();
@@ -5215,7 +5266,7 @@ async function adminLoadPending(){
     logs.forEach(log=>{try{const p=iface.parseLog(log);byActor.set(String(p.args.actorId).toLowerCase(),{actorId:String(p.args.actorId),controller:String(p.args.controller),registrationHash:String(p.args.registrationHash),requestedAt:new Date(Number(p.args.requestedAt)*1000).toLocaleString("en-US"),blockNumber:log.blockNumber});}catch(_){}});
     let dbRows=[];
     try{
-      const response=await supabaseClient.from("explorerchem_actors").select("id,actor_id,display_name,country_code,active,created_at");
+      const response=await supabaseClient.from("explorerchem_actors").select("id,actor_id,display_name,actor_type,country_code,active,created_at");
       if(!response.error&&Array.isArray(response.data))dbRows=response.data;
     }catch(_){ }
     const dbMap=new Map(dbRows.map(a=>[String(a.actor_id).toLowerCase(),a]));
@@ -5226,7 +5277,7 @@ async function adminLoadPending(){
         const status=Number(actor.status);
         if(status!==1)continue;
         const db=dbMap.get(item.actorId.toLowerCase());
-        requests.push({...item,status,companyName:db?.display_name||"",country:db?.country_code||"",dbId:db?.id||null});
+        requests.push({...item,status,companyName:db?.display_name||"",actorType:db?.actor_type||"",country:db?.country_code||"",dbId:db?.id||null});
       }catch(_){ }
     }
     ADMIN_REQUESTS=requests.sort((a,b)=>b.blockNumber-a.blockNumber);
@@ -5243,18 +5294,24 @@ async function adminDecideActor(actorId,approve,button){
   const original=button.textContent;
   button.disabled=true;button.textContent=approve?"Aprovando…":"Rejeitando…";
   try{
-    const {contract}=await adminContractContext(true);
+    const {provider,signer,contract}=await adminContractContext(true);
+    const request=ADMIN_REQUESTS.find(r=>r.actorId.toLowerCase()===actorId.toLowerCase());
+    if(approve){
+      if(!request?.actorType||!ACTOR_TYPE_CONFIG[request.actorType])throw new Error("This request has no selected actor type. Reject it and submit a new request with Miner, Laboratory, or Purifier / refiner selected.");
+      await actorTypeContractContext(provider,signer,request.actorType);
+    }
     const decisionHash=ethers.keccak256(ethers.toUtf8Bytes(JSON.stringify({schemaVersion:"explorechem.actor.decision.v1",action:approve?"APPROVE":"REJECT",actorId,decidedBy:walletAddress,timestamp:new Date().toISOString()})));
     const tx=approve?await contract.approveActorRegistration(actorId,decisionHash):await contract.rejectActorRegistration(actorId,decisionHash);
     await tx.wait();
-    const request=ADMIN_REQUESTS.find(r=>r.actorId.toLowerCase()===actorId.toLowerCase());
+    let roleAssignment=null;
+    if(approve)roleAssignment=await assignActorTypeOnchain(provider,signer,actorId,request.actorType);
     if(request?.dbId){
       const update={active:!!approve};
       if(approve)update.onchain_registered_at=new Date().toISOString();
       const result=await supabaseClient.from("explorerchem_actors").update(update).eq("id",request.dbId);
       if(result.error)console.warn("On-chain decision confirmed; database not updated:",result.error.message);
     }
-    toast(approve?"Company approved on-chain.":"Request rejected on-chain.");
+    toast(approve?"Company approved; "+roleAssignment.label+" role confirmed on-chain.":"Request rejected on-chain.");
     await carregarAtores();
     await adminLoadPending();
   }catch(error){console.error(error);toast(error.message||"Could not complete the decision.");}
@@ -7233,14 +7290,15 @@ function render(){
     if(!walletAddress){toast("Connect an authorized wallet before continuing.");return;}
     const chainAtual=await refreshWalletChain();
     if(chainAtual!=="0xaa36a7"){toast("Switch the wallet network to Sepolia before signing.");return;}
-    const nome=$("#rs")?.value.trim(),publicWalletRaw=$("#wl")?.value.trim(),papel="Company",existing=ATORES.find(a=>normalizarNomeEmpresa(a.nome)===normalizarNomeEmpresa(nome));
+    const nome=$("#rs")?.value.trim(),publicWalletRaw=$("#wl")?.value.trim(),actorType=$("#actorType")?.value||"",papel=actorTypeLabel[actorType]||"Company",existing=ATORES.find(a=>normalizarNomeEmpresa(a.nome)===normalizarNomeEmpresa(nome));
     if(!nome){toast("Enter the legal company name.");return;}
+    if(!ACTOR_TYPE_CONFIG[actorType]){toast("Select Miner, Laboratory, or Purifier / refiner before registering.");return;}
     if(!publicWalletRaw){toast("Enter the actor's public wallet.");return;}
     const novo={id:existing?.id||$("#actorId")?.value||novoActorId(),nome,papel,praca:$("#pr")?.value||"—",carteiras:1,evid:existing?.evid||0,desde:existing?.desde||new Date().toLocaleDateString("en-US")};
     if(!existing&&ATORES.some(a=>a.id===novo.id)){toast("Identifier already in use. Generate another one before registering.");return;}
     const actorIdField=$("#actorId");if(actorIdField)actorIdField.value=novo.id;
     const originalText=salvarAtor.textContent;salvarAtor.disabled=true;salvarAtor.textContent="Checking registration…";
-    const actorType="OTHER",countryCode=($("#pa")?.value||"BR").slice(0,2).toUpperCase();
+    const countryCode=$("#pa")?.value?$("#pa").value.trim().slice(0,2).toUpperCase():"BR";
     try{
       if(!window.ethers) throw new Error("Web3 library did not load");
       if(!ethers.isAddress(publicWalletRaw)) throw new Error("The actor's public wallet is not a valid Ethereum address.");
@@ -7258,7 +7316,8 @@ function render(){
       const registrationAdmin=await contract.isAdmin(walletAddress);
       let status=0,approvalReceipt=null;
       try{status=Number((await contract.getActor(novo.id)).status);}catch(_){status=0;}
-      const registrationData={schemaVersion:"explorechem.actor.registration.v1",actorId:novo.id,legalName:nome,operatingLocation:$("#pr")?.value||null,country:$("#pa")?.value||null,responsibleName:$("#rp")?.value||null,email:$("#em")?.value||null,controller:walletAddress};
+      if(registrationAdmin&&(status===0||status===1))await actorTypeContractContext(provider,signer,actorType);
+      const registrationData={schemaVersion:"explorechem.actor.registration.v1",actorId:novo.id,actorType,legalName:nome,operatingLocation:$("#pr")?.value||null,country:$("#pa")?.value||null,responsibleName:$("#rp")?.value||null,email:$("#em")?.value||null,controller:walletAddress};
       const registrationHash=ethers.keccak256(ethers.toUtf8Bytes(JSON.stringify(registrationData)));
       if(status===0){
         salvarAtor.textContent="Requesting registration…";
@@ -7271,6 +7330,8 @@ function render(){
       }
       if(status!==1&&status!==2)throw new Error(status===3?"The company is suspended in the new contract.":"The company cannot be activated in its current on-chain state.");
       if(status===2&&!await contract.isWalletAuthorized(novo.id,walletAddress))throw new Error("The company is active, but this wallet is not authorized to submit evidence for it.");
+      let roleAssignment=null;
+      if(status===2)roleAssignment=await assignActorTypeOnchain(provider,signer,novo.id,actorType);
       salvarAtor.textContent="Saving company…";
       const chainFields={active:status===2,onchain_registered_at:new Date().toISOString(),public_wallet_address:publicWalletAddress};if(approvalReceipt?.hash)chainFields.onchain_registration_tx=approvalReceipt.hash;
       const response=existing?.dbId
@@ -7282,7 +7343,7 @@ function render(){
       ATOR_ATIVO=status===2?novo.id:null;
       persistirAtorAtivo();
       await carregarAtores();
-      toast(status===1?"Registration requested. Await company administrator approval.":"Company active on-chain.");
+      toast(status===1?"Registration requested as "+papel+". Administrator approval and on-chain role assignment are pending.":"Company active; "+roleAssignment.label+" role confirmed on-chain.");
     }catch(error){
       console.error(error); toast(error.message||"Could not complete registration.");
     }finally{
