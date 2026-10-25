@@ -2061,6 +2061,13 @@ async function tipoAtorDoContrato(provider,actorId){
   }catch(_){}
   return types;
 }
+function userRoleSupabase(user){
+  // Only trust roles issued in app_metadata by Supabase Auth. user_metadata is
+  // editable by the user and must not grant registration privileges.
+  const claims=user?.app_metadata||{};
+  const role=claims.role||claims.user_role||claims.account_role||"";
+  return String(role).trim().toLowerCase();
+}
 async function exigirPermissaoCadastroAtorSupabase(){
   const {data,error}=await supabaseClient.auth.getUser();
   if(error||!data?.user){e1Login();throw new Error("Sign in with Private access before registering company metadata. No blockchain transaction was sent.");}
@@ -8604,3 +8611,4 @@ if(walletProvider&&typeof walletProvider.on==="function"){
 
 
 </body></html>
+
