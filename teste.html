@@ -1993,31 +1993,53 @@ async function atoresNoRegistry(rows,address){
   }
   return output;
 }
+async function eventosCadastroAtor(provider,registryAddress){
+  const eventAbi="event ActorRegistrationRequested(bytes32 indexed actorId,address indexed controller,bytes32 indexed registrationHash,uint64 requestedAt)";
+  const iface=new ethers.Interface([eventAbi]),topic=iface.getEvent("ActorRegistrationRequested").topicHash,requested=new Map();
+  let indexerError=null;
+  try{
+    const base="https://api.routescan.io/v2/network/testnet/evm/11155111/etherscan/api";
+    const offset=1000;
+    for(let page=1;page<=100;page++){
+      const url=new URL(base);
+      for(const [key,value] of Object.entries({module:"logs",action:"getLogs",fromBlock:"0",toBlock:"latest",address:registryAddress,topic0:topic,page:String(page),offset:String(offset)}))url.searchParams.set(key,value);
+      const response=await fetch(url.toString(),{cache:"no-store"});
+      if(!response.ok)throw new Error("Routescan returned HTTP "+response.status);
+      const payload=await response.json();
+      if(!Array.isArray(payload.result)){
+        if(String(payload.result||payload.message||"").toLowerCase().includes("no records"))break;
+        throw new Error(String(payload.result||payload.message||"Routescan returned an invalid logs response."));
+      }
+      for(const log of payload.result){
+        if(String(log.address||"").toLowerCase()!==registryAddress.toLowerCase()||String(log.topics?.[0]||"").toLowerCase()!==topic.toLowerCase())continue;
+        try{const event=iface.parseLog({topics:log.topics,data:log.data});requested.set(String(event.args.actorId).toLowerCase(),String(event.args.actorId));}catch(_){}
+      }
+      if(payload.result.length<offset)break;
+    }
+    if(requested.size)return [...requested.values()];
+  }catch(error){indexerError=error;}
+  try{
+    const latest=await provider.getBlockNumber(),from=Math.max(0,latest-10000),chunk=2000;
+    for(let start=from;start<=latest;start+=chunk){
+      const logs=await provider.getLogs({address:registryAddress,topics:[topic],fromBlock:start,toBlock:Math.min(latest,start+chunk-1)});
+      for(const log of logs){try{const event=iface.parseLog(log);requested.set(String(event.args.actorId).toLowerCase(),String(event.args.actorId));}catch(_){}}
+    }
+    return [...requested.values()];
+  }catch(rpcError){
+    throw new Error("Could not index ActorRegistry registration events. Routescan: "+(indexerError?.message||"no events returned")+"; Sepolia RPC: "+(rpcError.shortMessage||rpcError.message||String(rpcError)));
+  }
+}
 async function atoresDoContrato(address){
   const provider=await clientBalanceProvider();
   const registryAddress=await actorRegistryAddress(provider);
   if(!ethers.isAddress(registryAddress)||registryAddress===ethers.ZeroAddress)throw new Error("The current ProofRegistry has no E1 ActorRegistry configured.");
   const abi=[
-    "event ActorRegistrationRequested(bytes32 indexed actorId,address indexed controller,bytes32 indexed registrationHash,uint64 requestedAt)",
     "function getActor(bytes32 actorId) view returns (tuple(bytes32 actorId,address controller,bytes32 registrationHash,uint8 status,uint64 createdAt,uint64 statusUpdatedAt))"
   ];
   const registry=new ethers.Contract(registryAddress,abi,provider);
-  const latest=await provider.getBlockNumber(),from=Math.max(0,latest-600000),chunk=50000,requested=new Map();
-  const topic=registry.interface.getEvent("ActorRegistrationRequested").topicHash;
-  for(let start=from;start<=latest;start+=chunk){
-    const end=Math.min(latest,start+chunk-1);
-    try{
-      const logs=await provider.getLogs({address:registryAddress,topics:[topic],fromBlock:start,toBlock:end});
-      for(const log of logs){try{const event=registry.interface.parseLog(log);requested.set(String(event.args.actorId).toLowerCase(),String(event.args.actorId));}catch(_){}}
-    }catch(_){
-      for(let small=start;small<=end;small+=10000){
-        const logs=await provider.getLogs({address:registryAddress,topics:[topic],fromBlock:small,toBlock:Math.min(end,small+9999)});
-        for(const log of logs){try{const event=registry.interface.parseLog(log);requested.set(String(event.args.actorId).toLowerCase(),String(event.args.actorId));}catch(_){}}
-      }
-    }
-  }
+  const ids=await eventosCadastroAtor(provider,registryAddress);
   const actors=[];
-  for(const actorId of requested.values()){
+  for(const actorId of ids){
     const actor=await registry.getActor(actorId),status=Number(actor.status);
     if(status>0&&String(actor.actorId).toLowerCase()===actorId.toLowerCase())actors.push({actorId:String(actor.actorId),controller:String(actor.controller),chainStatus:status,chainCreatedAt:Number(actor.createdAt)});
   }
@@ -5371,23 +5393,7 @@ async function adminLoadPending(){
   try{
     const {provider,contract}=await adminContractContext(true);
     const actorAddress=await contract.getAddress();
-    const latest=await provider.getBlockNumber();
-    const from=Math.max(0,latest-600000);
-    const iface=new ethers.Interface(ADMIN_ABI);
-    const topic=iface.getEvent("ActorRegistrationRequested").topicHash;
-    const logs=[];
-    const chunk=50000;
-    for(let start=from;start<=latest;start+=chunk){
-      const end=Math.min(latest,start+chunk-1);
-      try{logs.push(...await provider.getLogs({address:actorAddress,topics:[topic],fromBlock:start,toBlock:end}));}
-      catch(error){
-        for(let small=start;small<=end;small+=10000){
-          logs.push(...await provider.getLogs({address:actorAddress,topics:[topic],fromBlock:small,toBlock:Math.min(end,small+9999)}));
-        }
-      }
-    }
-    const byActor=new Map();
-    logs.forEach(log=>{try{const p=iface.parseLog(log);byActor.set(String(p.args.actorId).toLowerCase(),{actorId:String(p.args.actorId),controller:String(p.args.controller),registrationHash:String(p.args.registrationHash),requestedAt:new Date(Number(p.args.requestedAt)*1000).toLocaleString("en-US"),blockNumber:log.blockNumber});}catch(_){}});
+    const actorIds=await eventosCadastroAtor(provider,actorAddress);
     let dbRows=[];
     try{
       const response=await supabaseClient.from("explorerchem_actors").select("id,actor_id,display_name,actor_type,country_code,active,created_at");
@@ -5395,13 +5401,14 @@ async function adminLoadPending(){
     }catch(_){ }
     const dbMap=new Map(dbRows.map(a=>[String(a.actor_id).toLowerCase(),a]));
     const requests=[];
-    for(const item of byActor.values()){
+    for(const actorId of actorIds){
       try{
-        const actor=await contract.getActor(item.actorId);
+        const actor=await contract.getActor(actorId);
         const status=Number(actor.status);
         if(status!==1)continue;
-        const db=dbMap.get(item.actorId.toLowerCase());
-        requests.push({...item,status,companyName:db?.display_name||"",actorType:db?.actor_type||"",country:db?.country_code||"",dbId:db?.id||null});
+        const db=dbMap.get(actorId.toLowerCase());
+        const requestedAt=Number(actor.createdAt);
+        requests.push({actorId:String(actorId),controller:String(actor.controller),registrationHash:String(actor.registrationHash),requestedAt:new Date(requestedAt*1000).toLocaleString("en-US"),blockNumber:requestedAt,status,companyName:db?.display_name||"",actorType:db?.actor_type||"",country:db?.country_code||"",dbId:db?.id||null});
       }catch(_){ }
     }
     ADMIN_REQUESTS=requests.sort((a,b)=>b.blockNumber-a.blockNumber);
