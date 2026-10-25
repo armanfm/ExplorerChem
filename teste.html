@@ -2061,20 +2061,21 @@ async function tipoAtorDoContrato(provider,actorId){
   }catch(_){}
   return types;
 }
-function userRoleSupabase(user){
-  // Only trust roles issued in app_metadata by Supabase Auth. user_metadata is
-  // editable by the user and must not grant registration privileges.
-  const claims=user?.app_metadata||{};
-  const role=claims.role||claims.user_role||claims.account_role||"";
-  return String(role).trim().toLowerCase();
+const EXPLORECHEM_DEMO_ACTOR_PROFILES_KEY="explorechem_demo_actor_profiles_v1";
+function carregarPerfisAtorDemo(){
+  try{const value=JSON.parse(localStorage.getItem(EXPLORECHEM_DEMO_ACTOR_PROFILES_KEY)||"[]");return Array.isArray(value)?value:[];}catch(_){return[];}
 }
-async function exigirPermissaoCadastroAtorSupabase(){
-  const {data,error}=await supabaseClient.auth.getUser();
-  if(error||!data?.user){e1Login();throw new Error("Sign in with Private access before registering company metadata. No blockchain transaction was sent.");}
-  if(userRoleSupabase(data.user)==="operator")return data.user;
-  const {data:isPlatformAdmin,error:adminError}=await supabaseClient.rpc("explorerchem_is_platform_admin");
-  if(adminError||isPlatformAdmin!==true)throw new Error("This Supabase account cannot register company metadata. Sign in with an authorized Operator or platform administrator account. No blockchain transaction was sent.");
-  return data.user;
+function salvarPerfilAtorDemo(profile){
+  const profiles=carregarPerfisAtorDemo(),key=String(profile.actor_id||"").toLowerCase();
+  const index=profiles.findIndex(item=>String(item.actor_id||"").toLowerCase()===key);
+  const localProfile={id:null,...profile,created_at:profile.created_at||new Date().toISOString(),demo_local:true};
+  if(index>=0)profiles[index]=localProfile;else profiles.push(localProfile);
+  localStorage.setItem(EXPLORECHEM_DEMO_ACTOR_PROFILES_KEY,JSON.stringify(profiles));
+  return localProfile;
+}
+function removerPerfilAtorDemo(actorId){
+  const key=String(actorId||"").toLowerCase();
+  try{localStorage.setItem(EXPLORECHEM_DEMO_ACTOR_PROFILES_KEY,JSON.stringify(carregarPerfisAtorDemo().filter(item=>String(item.actor_id||"").toLowerCase()!==key)));}catch(_){}
 }
 async function carregarAtores(){
   const sequence=++ACTOR_LOAD_SEQUENCE,address=EXPLORERCHEM_CONTRACT_ADDRESS;
@@ -2088,6 +2089,7 @@ async function carregarAtores(){
       if(error)throw error;
       metadata=data||[];
     }catch(error){metadataWarning="Company details could not be loaded from Supabase: "+(error.message||String(error));console.warn(metadataWarning);}
+    metadata=[...metadata,...carregarPerfisAtorDemo()];
     const [chainActors,provider]=await Promise.all([atoresDoContrato(address),clientBalanceProvider()]);
     if(sequence!==ACTOR_LOAD_SEQUENCE||address!==EXPLORERCHEM_CONTRACT_ADDRESS)return;
     const metadataById=new Map(metadata.map(a=>[String(a.actor_id||"").toLowerCase(),a]));
@@ -2927,8 +2929,7 @@ T.passivev2=()=>ectInboxHtml();
 T.publiccertv2=()=>ecPublicCertificatePage();
 T.cadastro=()=>
   "<div class=\"crumb\">Companies · new registration</div><h1>Register company</h1>"+
-  "<p class=\"sub\">Registration records the company identity on-chain. The selected actor type is assigned on its role contract after approval. "+
-  "Legal name and contact details stay off-chain in the protected company directory. Sign in with Private access as an authorized Operator or platform administrator before submitting.</p><div class=\"split\">"+
+  "<p class=\"sub\">The actor identity and type are recorded on Sepolia. Company details stay off-chain; in this demo, this browser keeps the profile if Supabase does not allow the write.</p><div class=\"split\">"+
   "<div class=\"panel pad\"><h3>Identification</h3>"+
   "<div class=\"field\"><label for=\"rs\">Legal company name</label>"+
   '<input id="rs" placeholder="Nome empresarial completo"></div>'+
@@ -7460,8 +7461,8 @@ function render(){
     const actorIdField=$("#actorId");if(actorIdField)actorIdField.value=novo.id;
     const originalText=salvarAtor.textContent;salvarAtor.disabled=true;salvarAtor.textContent="Checking registration…";
     const countryCode=$("#pa")?.value?$("#pa").value.trim().slice(0,2).toUpperCase():"BR";
+    let metadataSavedLocally=false;
     try{
-      await exigirPermissaoCadastroAtorSupabase();
       if(!window.ethers) throw new Error("Web3 library did not load");
       if(!ethers.isAddress(publicWalletRaw)) throw new Error("The actor's public wallet is not a valid Ethereum address.");
       const publicWalletAddress=ethers.getAddress(publicWalletRaw);
@@ -7507,16 +7508,23 @@ function render(){
       if(!metadataOnly)chainFields.onchain_registered_at=new Date().toISOString();
       else if(Number(onchainIdentity.createdAt)>0)chainFields.onchain_registered_at=new Date(Number(onchainIdentity.createdAt)*1000).toISOString();
       if(approvalReceipt?.hash)chainFields.onchain_registration_tx=approvalReceipt.hash;
-      const response=existing?.dbId
-        ? await supabaseClient.from("explorerchem_actors").update({...chainFields,display_name:nome,actor_type:actorType,country_code:countryCode}).eq("id",existing.dbId).select("id,actor_id,display_name,actor_type,public_wallet_address").single()
-        : await supabaseClient.from("explorerchem_actors").insert({actor_id:novo.id,display_name:nome,actor_type:actorType,country_code:countryCode,...chainFields}).select("id,actor_id,display_name,actor_type,public_wallet_address").single();
-      const {data:row,error}=response;
-      if(error) throw new Error("Blockchain confirmed, but Supabase rejected the registration: "+error.message);
-      novo.dbId=row.id;
+      const profile={actor_id:novo.id,display_name:nome,actor_type:actorType,country_code:countryCode,...chainFields};
+      try{
+        const response=existing?.dbId
+          ? await supabaseClient.from("explorerchem_actors").update(profile).eq("id",existing.dbId).select("id,actor_id,display_name,actor_type,public_wallet_address").single()
+          : await supabaseClient.from("explorerchem_actors").insert(profile).select("id,actor_id,display_name,actor_type,public_wallet_address").single();
+        if(response.error)throw response.error;
+        novo.dbId=response.data?.id||null;
+        removerPerfilAtorDemo(novo.id);
+      }catch(dbError){
+        salvarPerfilAtorDemo(profile);metadataSavedLocally=true;
+        console.warn("Supabase kept its existing access rules; saved this demo profile in this browser instead:",dbError.message||dbError);
+      }
       ATOR_ATIVO=status===2?novo.id:null;
       persistirAtorAtivo();
       await carregarAtores();
-      toast(metadataOnly?"Off-chain company profile saved for the existing actor. No new blockchain registration was sent.":status===1?"Registration requested as "+papel+". Administrator approval and on-chain role assignment are pending.":"Company active; "+roleAssignment.label+" role confirmed on-chain.");
+      const successMessage=metadataOnly?"Off-chain company profile saved for the existing actor. No new blockchain registration was sent.":status===1?"Registration requested as "+papel+". Administrator approval and on-chain role assignment are pending.":"Company active; "+roleAssignment.label+" role confirmed on-chain.";
+      toast(successMessage+(metadataSavedLocally?" Demo profile saved in this browser; Supabase access was unchanged.":""));
     }catch(error){
       console.error(error); toast(error.message||"Could not complete registration.");
     }finally{
@@ -8611,4 +8619,3 @@ if(walletProvider&&typeof walletProvider.on==="function"){
 
 
 </body></html>
-
