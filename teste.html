@@ -2061,6 +2061,14 @@ async function tipoAtorDoContrato(provider,actorId){
   }catch(_){}
   return types;
 }
+async function exigirPermissaoCadastroAtorSupabase(){
+  const {data,error}=await supabaseClient.auth.getUser();
+  if(error||!data?.user){e1Login();throw new Error("Sign in with Private access before registering company metadata. No blockchain transaction was sent.");}
+  if(userRoleSupabase(data.user)==="operator")return data.user;
+  const {data:isPlatformAdmin,error:adminError}=await supabaseClient.rpc("explorerchem_is_platform_admin");
+  if(adminError||isPlatformAdmin!==true)throw new Error("This Supabase account cannot register company metadata. Sign in with an authorized Operator or platform administrator account. No blockchain transaction was sent.");
+  return data.user;
+}
 async function carregarAtores(){
   const sequence=++ACTOR_LOAD_SEQUENCE,address=EXPLORERCHEM_CONTRACT_ADDRESS;
   ATORES=[];ACTOR_LOAD_ERROR="";
@@ -2913,7 +2921,7 @@ T.publiccertv2=()=>ecPublicCertificatePage();
 T.cadastro=()=>
   "<div class=\"crumb\">Companies · new registration</div><h1>Register company</h1>"+
   "<p class=\"sub\">Registration records the company identity on-chain. The selected actor type is assigned on its role contract after approval. "+
-  "Legal name and contact details remain here only.</p><div class=\"split\">"+
+  "Legal name and contact details stay off-chain in the protected company directory. Sign in with Private access as an authorized Operator or platform administrator before submitting.</p><div class=\"split\">"+
   "<div class=\"panel pad\"><h3>Identification</h3>"+
   "<div class=\"field\"><label for=\"rs\">Legal company name</label>"+
   '<input id="rs" placeholder="Nome empresarial completo"></div>'+
@@ -2921,9 +2929,9 @@ T.cadastro=()=>
   '<select id="actorType" required><option value="">Select actor type</option><option value="MINER">Miner — authorized for INITIAL stock</option><option value="LABORATORY">Laboratory — passive lab report service</option><option value="REFINER">Purifier / refiner — commercial actor</option></select>'+
   '<p class="sm" id="actorTypeHelp">The selected type is assigned on-chain after company approval.</p></div>'+
   "<div class=\"field\"><label for=\"actorId\">Unique company identifier</label>"+
-  '<div style="display:flex;gap:8px"><input id="actorId" class="mono" readonly style="flex:1" value="'+novoActorId()+'">'+
+  '<div style="display:flex;gap:8px"><input id="actorId" class="mono" style="flex:1" value="'+novoActorId()+'" spellcheck="false" autocomplete="off">'+
   "<button type=\"button\" class=\"btn ghost sm\" id=\"gerarActorId\">Generate</button></div>"+
-  "<p class=\"sm\">Opaque identifier for system reference; it is not a transferable token or blockchain asset.</p></div>"+
+  "<p class=\"sm\">For a new company, keep the generated ID. To add an off-chain profile to an already active actor, paste its existing actorId; the page verifies its on-chain status, role, and connected wallet before saving.</p></div>"+
   "<div class=\"f2\"><div class=\"field\"><label for=\"pr\">Operating location</label>"+
   '<input id="pr" placeholder="Cidade, UF"></div>'+
   "<div class=\"field\"><label for=\"pa\">Country</label><input id=\"pa\" placeholder=\"Country\"></div></div>"+
@@ -7424,17 +7432,18 @@ function render(){
     if(!walletAddress){toast("Connect an authorized wallet before continuing.");return;}
     const chainAtual=await refreshWalletChain();
     if(chainAtual!=="0xaa36a7"){toast("Switch the wallet network to Sepolia before signing.");return;}
-    const nome=$("#rs")?.value.trim(),publicWalletRaw=$("#wl")?.value.trim(),actorType=$("#actorType")?.value||"",papel=actorTypeLabel[actorType]||"Company",existing=ATORES.find(a=>normalizarNomeEmpresa(a.nome)===normalizarNomeEmpresa(nome));
+    const nome=$("#rs")?.value.trim(),publicWalletRaw=$("#wl")?.value.trim(),actorType=$("#actorType")?.value||"",papel=actorTypeLabel[actorType]||"Company",requestedActorId=$("#actorId")?.value.trim()||"",existing=ATORES.find(a=>igualHex(a.id,requestedActorId));
     if(!nome){toast("Enter the legal company name.");return;}
     if(actorTypeSelect?.disabled){toast("Wait for the on-chain actor modalities to load before registering.");return;}
     if(!ACTOR_TYPE_CONFIG[actorType]){toast("Select an actor modality loaded from the deployed contracts.");return;}
     if(!publicWalletRaw){toast("Enter the actor's public wallet.");return;}
-    const novo={id:existing?.id||$("#actorId")?.value||novoActorId(),nome,papel,praca:$("#pr")?.value||"—",carteiras:1,evid:existing?.evid||0,desde:existing?.desde||new Date().toLocaleDateString("en-US")};
-    if(!existing&&ATORES.some(a=>a.id===novo.id)){toast("Identifier already in use. Generate another one before registering.");return;}
+    const novo={id:existing?.id||requestedActorId||novoActorId(),nome,papel,praca:$("#pr")?.value||"—",carteiras:1,evid:existing?.evid||0,desde:existing?.desde||new Date().toLocaleDateString("en-US")};
+    if(!/^0x[0-9a-fA-F]{64}$/.test(novo.id)){toast("Enter a valid 32-byte actorId.");return;}
     const actorIdField=$("#actorId");if(actorIdField)actorIdField.value=novo.id;
     const originalText=salvarAtor.textContent;salvarAtor.disabled=true;salvarAtor.textContent="Checking registration…";
     const countryCode=$("#pa")?.value?$("#pa").value.trim().slice(0,2).toUpperCase():"BR";
     try{
+      await exigirPermissaoCadastroAtorSupabase();
       if(!window.ethers) throw new Error("Web3 library did not load");
       if(!ethers.isAddress(publicWalletRaw)) throw new Error("The actor's public wallet is not a valid Ethereum address.");
       const publicWalletAddress=ethers.getAddress(publicWalletRaw);
@@ -7449,8 +7458,14 @@ function render(){
       ];
       const contract=new ethers.Contract(await actorRegistryAddress(provider),abi,signer);
       const registrationAdmin=await contract.isAdmin(walletAddress);
-      let status=0,approvalReceipt=null;
-      try{status=Number((await contract.getActor(novo.id)).status);}catch(_){status=0;}
+      let status=0,approvalReceipt=null,onchainIdentity=null;
+      try{onchainIdentity=await contract.getActor(novo.id);status=Number(onchainIdentity.status);}catch(_){status=0;}
+      const metadataOnly=status===2;
+      if(metadataOnly){
+        if(!await contract.isWalletAuthorized(novo.id,walletAddress))throw new Error("This wallet is not authorized for the active actorId. No metadata was saved.");
+        const assignedTypes=await tipoAtorDoContrato(provider,novo.id);
+        if(!assignedTypes.includes(actorType))throw new Error("The selected actor type does not match the active actor's on-chain role. No metadata was saved.");
+      }
       if(registrationAdmin&&(status===0||status===1))await actorTypeContractContext(provider,signer,actorType);
       const registrationData={schemaVersion:"explorechem.actor.registration.v1",actorId:novo.id,actorType,legalName:nome,operatingLocation:$("#pr")?.value||null,country:$("#pa")?.value||null,responsibleName:$("#rp")?.value||null,email:$("#em")?.value||null,controller:walletAddress};
       const registrationHash=ethers.keccak256(ethers.toUtf8Bytes(JSON.stringify(registrationData)));
@@ -7466,9 +7481,12 @@ function render(){
       if(status!==1&&status!==2)throw new Error(status===3?"The company is suspended in the new contract.":"The company cannot be activated in its current on-chain state.");
       if(status===2&&!await contract.isWalletAuthorized(novo.id,walletAddress))throw new Error("The company is active, but this wallet is not authorized to submit evidence for it.");
       let roleAssignment=null;
-      if(status===2)roleAssignment=await assignActorTypeOnchain(provider,signer,novo.id,actorType);
+      if(status===2&&!metadataOnly)roleAssignment=await assignActorTypeOnchain(provider,signer,novo.id,actorType);
       salvarAtor.textContent="Saving company…";
-      const chainFields={active:status===2,onchain_registered_at:new Date().toISOString(),public_wallet_address:publicWalletAddress};if(approvalReceipt?.hash)chainFields.onchain_registration_tx=approvalReceipt.hash;
+      const chainFields={active:status===2,public_wallet_address:publicWalletAddress};
+      if(!metadataOnly)chainFields.onchain_registered_at=new Date().toISOString();
+      else if(Number(onchainIdentity.createdAt)>0)chainFields.onchain_registered_at=new Date(Number(onchainIdentity.createdAt)*1000).toISOString();
+      if(approvalReceipt?.hash)chainFields.onchain_registration_tx=approvalReceipt.hash;
       const response=existing?.dbId
         ? await supabaseClient.from("explorerchem_actors").update({...chainFields,display_name:nome,actor_type:actorType,country_code:countryCode}).eq("id",existing.dbId).select("id,actor_id,display_name,actor_type,public_wallet_address").single()
         : await supabaseClient.from("explorerchem_actors").insert({actor_id:novo.id,display_name:nome,actor_type:actorType,country_code:countryCode,...chainFields}).select("id,actor_id,display_name,actor_type,public_wallet_address").single();
@@ -7478,7 +7496,7 @@ function render(){
       ATOR_ATIVO=status===2?novo.id:null;
       persistirAtorAtivo();
       await carregarAtores();
-      toast(status===1?"Registration requested as "+papel+". Administrator approval and on-chain role assignment are pending.":"Company active; "+roleAssignment.label+" role confirmed on-chain.");
+      toast(metadataOnly?"Off-chain company profile saved for the existing actor. No new blockchain registration was sent.":status===1?"Registration requested as "+papel+". Administrator approval and on-chain role assignment are pending.":"Company active; "+roleAssignment.label+" role confirmed on-chain.");
     }catch(error){
       console.error(error); toast(error.message||"Could not complete registration.");
     }finally{
