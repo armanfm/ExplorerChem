@@ -2931,7 +2931,7 @@ T.cadastro=()=>
   "<div class=\"field\"><label for=\"actorId\">Unique company identifier</label>"+
   '<div style="display:flex;gap:8px"><input id="actorId" class="mono" style="flex:1" value="'+novoActorId()+'" spellcheck="false" autocomplete="off">'+
   "<button type=\"button\" class=\"btn ghost sm\" id=\"gerarActorId\">Generate</button></div>"+
-  "<p class=\"sm\">For a new company, keep the generated ID. To add an off-chain profile to an already active actor, paste its existing actorId; the page verifies its on-chain status, role, and connected wallet before saving.</p></div>"+
+  "<p class=\"sm\">For a new company, keep the generated ID. To finish an incomplete active actor, or add its off-chain profile, paste its existing actorId. The page verifies its on-chain status, role, and connected wallet before continuing.</p></div>"+
   "<div class=\"f2\"><div class=\"field\"><label for=\"pr\">Operating location</label>"+
   '<input id="pr" placeholder="Cidade, UF"></div>'+
   "<div class=\"field\"><label for=\"pa\">Country</label><input id=\"pa\" placeholder=\"Country\"></div></div>"+
@@ -5353,11 +5353,16 @@ async function actorTypeContractContext(provider,signer,actorType){
   }else{
     address=DEFAULT_EXPLORERCHEM_DOCUMENTARY_REGISTRY_ADDRESS;
     if(await provider.getCode(address)==="0x")throw new Error("DocumentaryRegistryV2 was not found at the configured Sepolia address.");
-    abi=["function owner() view returns(address)","function e1Actors() view returns(address)","function actorServiceMask(bytes32) view returns(uint8)","function setPassiveServiceMask(bytes32,uint8)"];
+    abi=["function owner() view returns(address)","function e1Actors() view returns(address)","function lots() view returns(address)","function actorServiceMask(bytes32) view returns(uint8)","function setPassiveServiceMask(bytes32,uint8)"];
   }
   contract=new ethers.Contract(address,abi,signer);
   const [contractOwner,contractRegistry]=await Promise.all([contract.owner(),contract.e1Actors()]);
   if(!igualHex(contractRegistry,registryAddress))throw new Error("The selected role contract points to a different E1 ActorRegistry.");
+  if(config.kind==="passive"){
+    const linkedLots=await contract.lots();
+    if(!ethers.isAddress(linkedLots)||linkedLots===ethers.ZeroAddress||await provider.getCode(linkedLots)==="0x")throw new Error("DocumentaryRegistryV2 points to an invalid Lots E2 contract.");
+    if(!igualHex(linkedLots,DEFAULT_EXPLORERCHEM_LOTS_ADDRESS))throw new Error("DocumentaryRegistryV2 points to a different Lots E2 address than the one configured in this app.");
+  }
   if(!igualHex(contractOwner,account))throw new Error("The connected wallet must own the contract that assigns this actor type.");
   return {config,contract,account};
 }
@@ -5373,9 +5378,15 @@ async function assignActorTypeOnchain(provider,signer,actorId,actorType){
     }
     if(BigInt(await contract.actorActivities(actorId))!==BigInt(config.mask))throw new Error("On-chain commercial activity does not match the selected actor type.");
   }else{
+    const registryAddress=await actorRegistryAddress(provider);
+    const registry=new ethers.Contract(registryAddress,["function actorActive(bytes32 actorId) view returns(bool)"],provider);
+    if(!await registry.actorActive(actorId))throw new Error("ActorRegistry does not report this actor as Active, so the Laboratory service cannot be assigned. Keep this actorId; do not register another one.");
     const current=Number(await contract.actorServiceMask(actorId));
     const desired=current|config.mask;
-    if(desired!==current){const tx=await contract.setPassiveServiceMask(actorId,desired);await tx.wait();txHash=tx.hash;}
+    if(desired!==current){
+      try{const tx=await contract.setPassiveServiceMask(actorId,desired);await tx.wait();txHash=tx.hash;}
+      catch(error){throw new Error("DocumentaryRegistryV2 reverted while assigning the passive service. The ActorRegistry identity may already be active; keep the same actorId. Check DocumentaryRegistryV2's linked E1 and Lots E2 addresses. "+(error.shortMessage||error.reason||"The RPC returned no revert reason."));}
+    }
     if((Number(await contract.actorServiceMask(actorId))&config.mask)!==config.mask)throw new Error("On-chain passive service does not match the selected actor type.");
   }
   return {label:config.label,txHash};
@@ -7460,11 +7471,13 @@ function render(){
       const registrationAdmin=await contract.isAdmin(walletAddress);
       let status=0,approvalReceipt=null,onchainIdentity=null;
       try{onchainIdentity=await contract.getActor(novo.id);status=Number(onchainIdentity.status);}catch(_){status=0;}
-      const metadataOnly=status===2;
-      if(metadataOnly){
+      let metadataOnly=false,assignedTypes=[];
+      if(status===2){
         if(!await contract.isWalletAuthorized(novo.id,walletAddress))throw new Error("This wallet is not authorized for the active actorId. No metadata was saved.");
-        const assignedTypes=await tipoAtorDoContrato(provider,novo.id);
-        if(!assignedTypes.includes(actorType))throw new Error("The selected actor type does not match the active actor's on-chain role. No metadata was saved.");
+        assignedTypes=await tipoAtorDoContrato(provider,novo.id);
+        if(assignedTypes.includes(actorType))metadataOnly=true;
+        else if(assignedTypes.length)throw new Error("The active actor already has a different on-chain type. No metadata was saved.");
+        else await actorTypeContractContext(provider,signer,actorType);
       }
       if(registrationAdmin&&(status===0||status===1))await actorTypeContractContext(provider,signer,actorType);
       const registrationData={schemaVersion:"explorechem.actor.registration.v1",actorId:novo.id,actorType,legalName:nome,operatingLocation:$("#pr")?.value||null,country:$("#pa")?.value||null,responsibleName:$("#rp")?.value||null,email:$("#em")?.value||null,controller:walletAddress};
