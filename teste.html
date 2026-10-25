@@ -2042,23 +2042,37 @@ async function tipoAtorDoContrato(provider,actorId){
 async function carregarAtores(){
   const sequence=++ACTOR_LOAD_SEQUENCE,address=EXPLORERCHEM_CONTRACT_ADDRESS;
   ATORES=[];ACTOR_LOAD_ERROR="";
+  let metadata=[],metadataWarning="",historyWarning="";
   try{
-    let metadata=[],metadataWarning="";
-    try{
-      const {data,error}=await supabaseClient.from("explorerchem_actors")
-        .select("id,actor_id,display_name,actor_type,country_code,public_wallet_address,created_at")
-        .order("created_at",{ascending:false});
-      if(error)throw error;
-      metadata=data||[];
-    }catch(error){metadataWarning="Company details could not be loaded from Supabase: "+(error.message||String(error));console.warn(metadataWarning);}
-    const [chainActors,provider]=await Promise.all([atoresDoContrato(address),clientBalanceProvider()]);
+    const {data,error}=await supabaseClient.from("explorerchem_actors")
+      .select("id,actor_id,display_name,actor_type,country_code,public_wallet_address,created_at")
+      .order("created_at",{ascending:false});
+    if(error)throw error;
+    metadata=data||[];
+  }catch(error){
+    metadataWarning="Company details could not be loaded from Supabase: "+(error.message||String(error));
+    console.warn(metadataWarning);
+  }
+  let chainActors=[];
+  try{
+    chainActors=await atoresDoContrato(address);
+  }catch(error){
+    historyWarning=error.shortMessage||error.message||String(error);
+    console.warn("Actor event history unavailable; validating Supabase actor IDs directly:",historyWarning);
+  }
+  try{
+    const provider=await clientBalanceProvider();
     if(sequence!==ACTOR_LOAD_SEQUENCE||address!==EXPLORERCHEM_CONTRACT_ADDRESS)return;
     const metadataById=new Map(metadata.map(a=>[String(a.actor_id||"").toLowerCase(),a]));
     const onchainById=new Map(chainActors.map(a=>[a.actorId.toLowerCase(),a]));
+    let directReadWarning="";
     for(const row of metadata){
       const key=String(row.actor_id||"").toLowerCase();
       if(key&&!onchainById.has(key)){
-        try{const [verified]=await atoresNoRegistry([row],address);if(verified)onchainById.set(key,{actorId:verified.actor_id,controller:verified.chainController,chainStatus:verified.chainStatus,chainCreatedAt:0});}catch(_){}
+        try{
+          const [verified]=await atoresNoRegistry([row],address);
+          if(verified)onchainById.set(key,{actorId:verified.actor_id,controller:verified.chainController,chainStatus:verified.chainStatus,chainCreatedAt:0});
+        }catch(error){directReadWarning=error.shortMessage||error.message||String(error);}
       }
     }
     const list=[];
@@ -2071,11 +2085,14 @@ async function carregarAtores(){
     }
     ATORES=list.sort((a,b)=>a.nome.localeCompare(b.nome));
     if(metadataWarning)ACTOR_LOAD_ERROR=metadataWarning;
+    else if(historyWarning&&ATORES.length)ACTOR_LOAD_ERROR="Some ActorRegistry event history is unavailable. Company names were loaded from Supabase and each listed actor was checked directly against the registry.";
+    else if(historyWarning||directReadWarning)ACTOR_LOAD_ERROR="Could not verify companies in the current Registry: "+(directReadWarning||historyWarning);
   }catch(error){
     if(sequence!==ACTOR_LOAD_SEQUENCE)return;
-    ACTOR_LOAD_ERROR="Could not verify companies in the current Registry: "+(error.shortMessage||error.message);
+    ACTOR_LOAD_ERROR="Could not verify companies in the current Registry: "+(error.shortMessage||error.message||String(error));
     console.error(error);
   }
+  if(sequence!==ACTOR_LOAD_SEQUENCE||address!==EXPLORERCHEM_CONTRACT_ADDRESS)return;
   if(ATOR_ATIVO&&!ATORES.some(a=>a.id===ATOR_ATIVO&&a.chainStatus===2)){ATOR_ATIVO=null;persistirAtorAtivo();}
   if(document.readyState!=="loading")render();
 }
