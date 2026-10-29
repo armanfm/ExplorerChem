@@ -1,0 +1,16 @@
+# Gitleaks configuration for ExploreChem.
+# Uses the default rule set and allowlists only values that are public by design.
+# Any new allowlist entry must say why the value is not a secret.
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Values that are public by design (not secrets)"
+regexes = [
+  # Supabase publishable key, used in the browser UI. Public by design; protected by RLS.
+  # A Supabase service_role / sb_secret_ key is NOT covered here and will still be flagged.
+  '''^sb_publishable_[A-Za-z0-9_-]+$''',
+  # localStorage key names in index.html / teste.html (e.g. explorechem_lots_custody_v2_...).
+  '''^explorechem_lots_[a-z0-9_]+$''',
+]
