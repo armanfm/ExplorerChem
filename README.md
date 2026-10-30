@@ -1,11 +1,3 @@
-
-> [!CAUTION]
-> **DEVELOPMENT BRANCH — NOT FOR HACKATHON EVALUATION**
->
-> This branch is used exclusively for development, review, approval, and auditing of proposed changes.
->
-> For hackathon evaluation, please use the [`main` branch](https://github.com/armanfm/ExplorerChem/tree/main).
-
 # ExploreChem
 
 **Private quantities, public encumbrance and settlement: verifiable rare-earth provenance as collateral for export financing.**
