@@ -1237,6 +1237,13 @@ html,body,.shell,main,#view{overflow-x:clip}
 .ind-charts{display:grid;grid-template-columns:1fr 1fr;gap:20px}.ind-charts>.panel{margin:0;min-width:0}.ind-charts h3{font-size:20px;margin:8px 0 24px}.ind-distribution{display:flex;align-items:center;gap:26px;min-height:240px}.ind-donut{width:180px;height:180px;border-radius:50%;flex-shrink:0;padding:20px;box-sizing:border-box}.ind-donut>div{height:100%;border-radius:50%;background:#0b2824;display:flex;flex-direction:column;align-items:center;justify-content:center}.ind-donut strong{font-size:38px}.ind-donut span{color:#b5d0c6;font-size:12px}.ind-legend{flex:1}.ind-legend>div{display:grid;grid-template-columns:10px 1fr auto;gap:9px;align-items:center;border-bottom:1px solid #244b42;padding:14px 0;font-size:13px}.ind-legend i{width:8px;height:8px;border-radius:50%}.ind-legend small{grid-column:2/4;color:#a5c2b9}.ind-bars{max-height:290px;overflow:auto;padding-right:6px}.ind-bar-row{margin-bottom:22px}.ind-bar-row>div:first-child{display:flex;justify-content:space-between;gap:14px;font-size:13px}.ind-bar-row span{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.ind-bar-row b{white-space:nowrap}.ind-track{background:#1b3a34;height:8px;border-radius:5px;margin:10px 0 6px;overflow:hidden}.ind-track i{display:block;height:100%;border-radius:5px}.ind-bar-row small{font-family:monospace;color:#afc8c0}.ind-shortcuts{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px;margin:24px 0}.ind-shortcut{cursor:pointer;background:#102e28;color:#e7f9f3;border:1px solid #2a5147;border-radius:12px;padding:20px;display:flex;align-items:center;gap:16px;text-align:left}.ind-shortcut>span{color:#5fd3b7;font-size:13px}.ind-shortcut div{flex:1}.ind-shortcut b,.ind-shortcut small{display:block}.ind-shortcut small{margin-top:7px;color:#b0c9c0;line-height:1.5}.ind-shortcut:hover{border-color:#2dd4bf;background:#153e33}.industrial-dashboard button:focus-visible{outline:2px solid #5eead4;outline-offset:3px}.industrial-dashboard .ec-note{color:#afc7bf;font-size:13px;line-height:1.7}.industrial-dashboard table{width:100%;table-layout:auto}.industrial-dashboard td{vertical-align:top;max-width:420px}.industrial-dashboard td .btn{white-space:normal;text-align:left;overflow-wrap:anywhere}.industrial-dashboard td details{max-width:250px}.industrial-dashboard td details[open]{min-width:160px}.industrial-dashboard .panel{border-color:#285047}
 @media(max-width:1100px){.ind-distribution{flex-direction:column;align-items:stretch}.ind-donut{align-self:center}.ind-metrics{grid-template-columns:repeat(2,minmax(0,1fr))}}@media(max-width:700px){.ind-charts,.ind-shortcuts{grid-template-columns:1fr}.ind-intro{align-items:flex-start;flex-direction:column}.ind-metric{padding:16px}.ind-metric strong{font-size:25px}.industrial-dashboard .product-nav button{padding:10px 14px}}
 </style>
+<style id="analysis-extension-style">
+/* Scoped exclusively to the added Analysis workspace. */
+#analysis-root{max-width:1400px;margin:auto;padding-bottom:36px}#analysis-root h1{margin:8px 0 10px}#analysis-root .ad-lead{color:var(--mute);margin:0 0 26px}#analysis-root .ad-toolbar{display:flex;gap:14px;align-items:end;margin-bottom:18px}#analysis-root .ad-toolbar .field{flex:1;margin:0}#analysis-root select,#analysis-root input:not([type=file]),#analysis-root textarea{width:100%;box-sizing:border-box}#analysis-root label{display:block;margin:15px 0 8px;color:var(--mute);font-size:12px}#analysis-root .ad-toolbar label{margin-top:0}#analysis-root .ad-status{padding:13px 16px;border:1px solid var(--rule);border-radius:12px;min-height:46px;white-space:pre-wrap;overflow-wrap:anywhere}#analysis-root .ad-error{border-color:#d89872;color:#ffd9bc}#analysis-root .ad-tabs{display:flex;gap:6px;flex-wrap:wrap;margin:22px 0;padding:6px;border:1px solid var(--rule);border-radius:12px}#analysis-root .ad-tabs button{padding:11px 16px;border:0;border-radius:8px;background:transparent;color:var(--mute);cursor:pointer}#analysis-root .ad-tabs button[aria-pressed=true]{color:var(--ink);background:rgba(48,209,191,.19)}#analysis-root .ad-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px 26px}#analysis-root .ad-wide{grid-column:1/-1}#analysis-root .ad-grid .field{margin-bottom:16px}#analysis-root .ad-actions{display:flex;flex-wrap:wrap;gap:9px;margin-top:18px}#analysis-root .ad-card{margin-bottom:16px}#analysis-root .ad-card-top{display:flex;justify-content:space-between;align-items:center;gap:14px}#analysis-root .ad-card-top h2,#analysis-root .ad-card-top h3{margin:0}#analysis-root .mono{overflow-wrap:anywhere;word-break:break-word}#analysis-root .ad-file{padding:18px 0;border-top:1px solid var(--rule);margin-top:14px}#analysis-root .ad-file>span,#analysis-root .ad-file>small{display:block;color:var(--mute);margin-top:7px}#analysis-root .ad-dialog{width:min(780px,92vw);max-height:85vh;overflow:auto;color:var(--ink);background:#0d2926;border:1px solid var(--rule);border-radius:18px}#analysis-root .ad-dialog::backdrop{background:rgba(0,0,0,.65)}#analysis-root input[type=file]{max-width:100%;padding:14px 0;color:var(--mute)}#analysis-root button:disabled{opacity:.5;cursor:wait}#analysis-root details{margin-top:12px}#analysis-root .note{color:var(--mute);font-size:12px;line-height:1.6}#analysis-root button:focus-visible,#analysis-root input:focus-visible,#analysis-root select:focus-visible,#analysis-root textarea:focus-visible{outline:2px solid #2dd4bf;outline-offset:3px}@media(max-width:760px){#analysis-root .ad-grid{grid-template-columns:1fr}#analysis-root .ad-toolbar{align-items:stretch;flex-direction:column}#analysis-root .ad-card-top{align-items:flex-start;flex-direction:column}#analysis-root .ad-tabs button{flex:1}}
+
+#analysis-root textarea{display:block;width:100%;max-width:none;min-height:130px;padding:12px 14px;border:1px solid var(--rule2);border-radius:10px;background:color-mix(in srgb,var(--panel) 92%,var(--sunk));color:var(--ink);font:inherit;font-size:13.5px;line-height:1.6;resize:vertical;box-shadow:inset 0 1px 2px rgba(24,57,59,.04)}
+
+</style>
 </head>
 <body>
 
@@ -1265,6 +1272,7 @@ html,body,.shell,main,#view{overflow-x:clip}
     <option value="op">Operator</option>
     <option value="cli">Client</option>
     <option value="rwa">RWA</option>
+    <option value="analysis">Analysis</option>
   </select></div>
   <div class="wallet-area" id="walletArea"></div>
   <div class="session" id="session" aria-label="Authenticated user"></div>
@@ -2072,16 +2080,18 @@ const kg3=n=>(n/1000000).toLocaleString("en-US",{minimumFractionDigits:3,maximum
 const NAVS={
   op:[["enviar","Lots"],["evidencias","Evidence"],["atores","Companies"],["cadastro","Register company"],["admin","Admin"]],
   cli:[["dashboard","My balance"]],
-  rwa:[["rwa","RWA"]]};
+  rwa:[["rwa","RWA"]],
+  analysis:[["analysis","Analyses & documents"]]};
 
 let SESSION={
   op:{iniciais:"—",nome:"Not authenticated",acesso:"Operations"},
   cli:{iniciais:"—",nome:"Client",acesso:"Mass balance"},
-  rwa:{iniciais:"R",nome:"RWA",acesso:"Economic rights · Solana Devnet"}
+  rwa:{iniciais:"R",nome:"RWA",acesso:"Economic rights · Solana Devnet"},
+  analysis:{iniciais:"A",nome:"Analysis",acesso:"Documentary services"}
 };
 
 const roleSolicitada=new URLSearchParams(window.location.search).get("role");
-let role=["op","cli","rwa"].includes(roleSolicitada)?roleSolicitada:"op";
+let role=["op","cli","rwa","analysis"].includes(roleSolicitada)?roleSolicitada:"op";
 let page=NAVS[role][0][0];
 let walletAddress="";
 let walletChainId="";
@@ -7453,6 +7463,226 @@ function e1BindClient(){
 }
 const E1_STATES=['NOT FOUND','ACTIVE','IN CUSTODY','ENCUMBERED','CONSUMED'];
 const e1AccessButton=document.createElement('button');e1AccessButton.className='btn';e1AccessButton.textContent='Private access';e1AccessButton.style.cssText='position:fixed;bottom:16px;right:16px;z-index:9999';e1AccessButton.onclick=e1Login;document.body.append(e1AccessButton);
+/* ANALYSIS EXTENSION START */
+const ANALYSIS_DEPLOYMENT_BLOCK=12001605;
+/* ExploreChem Analysis extension — isolated from existing operational views. */
+const ANALYSIS_CONTRACT='0x0D3bB1A96bBaaB2e3b1f5F06ed91F672418c1b1f';
+const ANALYSIS_PROOF='0x1934305d8FC0a426a0eF5D475E941341d8c9fC1e';
+const ANALYSIS_ACTORS='0x2fb8a06A929299fEFCAfef63fCf663C0b07016F8';
+const ANALYSIS_LOTS='0x92eFE5Cf48d9e18d2B66F1547D3E6D445b1774a3';
+const ANALYSIS_ENDPOINT=SUPABASE_URL+'/functions/v1/explorechem-analysis-v1';
+const ANALYSIS_KINDS=['Sampling','Laboratory analysis','Sample custody','Audit','Certification'];
+const ANALYSIS_STATES=['Not found','Pending acceptance','Accepted','Rejected','Cancelled','Completed'];
+const ANALYSIS_ABI=[{"inputs":[{"internalType":"address","name":"existingProofRegistry","type":"address"}],"stateMutability":"nonpayable","type":"constructor"},{"inputs":[],"name":"AlreadyRevoked","type":"error"},{"inputs":[],"name":"InactiveActor","type":"error"},{"inputs":[],"name":"InvalidConfiguration","type":"error"},{"inputs":[],"name":"InvalidDocument","type":"error"},{"inputs":[],"name":"InvalidIdentifier","type":"error"},{"inputs":[],"name":"InvalidLot","type":"error"},{"inputs":[],"name":"InvalidRecordLink","type":"error"},{"inputs":[],"name":"InvalidState","type":"error"},{"inputs":[],"name":"RecordNotFound","type":"error"},{"inputs":[],"name":"RequestAlreadyExists","type":"error"},{"inputs":[],"name":"RequestNotFound","type":"error"},{"inputs":[],"name":"Unauthorized","type":"error"},{"inputs":[],"name":"WrongServiceKind","type":"error"},{"anonymous":false,"inputs":[{"indexed":true,"internalType":"bytes32","name":"recordId","type":"bytes32"},{"indexed":true,"internalType":"bytes32","name":"lotId","type":"bytes32"},{"indexed":true,"internalType":"bytes32","name":"actorId","type":"bytes32"},{"indexed":false,"internalType":"bytes32","name":"requestId","type":"bytes32"},{"indexed":false,"internalType":"enum ExploreChemDocumentaryRegistry.ServiceKind","name":"kind","type":"uint8"},{"indexed":false,"internalType":"bytes32","name":"documentCommitment","type":"bytes32"},{"indexed":false,"internalType":"bytes32","name":"previousRecordId","type":"bytes32"},{"indexed":false,"internalType":"bool","name":"publicDocument","type":"bool"}],"name":"DocumentaryRecordAdded","type":"event"},{"anonymous":false,"inputs":[{"indexed":true,"internalType":"bytes32","name":"recordId","type":"bytes32"},{"indexed":true,"internalType":"bytes32","name":"lotId","type":"bytes32"},{"indexed":true,"internalType":"bytes32","name":"actorId","type":"bytes32"},{"indexed":false,"internalType":"bytes32","name":"reasonCommitment","type":"bytes32"}],"name":"DocumentaryRecordRevoked","type":"event"},{"anonymous":false,"inputs":[{"indexed":true,"internalType":"bytes32","name":"recordId","type":"bytes32"},{"indexed":true,"internalType":"bytes32","name":"lotId","type":"bytes32"},{"indexed":false,"internalType":"bytes32","name":"fileSha256","type":"bytes32"},{"indexed":false,"internalType":"string","name":"publicDocumentURI","type":"string"}],"name":"PublicCertificatePublished","type":"event"},{"anonymous":false,"inputs":[{"indexed":true,"internalType":"bytes32","name":"requestId","type":"bytes32"},{"indexed":false,"internalType":"enum ExploreChemDocumentaryRegistry.RequestState","name":"state","type":"uint8"}],"name":"RequestStateChanged","type":"event"},{"anonymous":false,"inputs":[{"indexed":true,"internalType":"bytes32","name":"requestId","type":"bytes32"},{"indexed":true,"internalType":"bytes32","name":"lotId","type":"bytes32"},{"indexed":true,"internalType":"bytes32","name":"providerActorId","type":"bytes32"},{"indexed":false,"internalType":"bytes32","name":"requesterActorId","type":"bytes32"},{"indexed":false,"internalType":"enum ExploreChemDocumentaryRegistry.ServiceKind","name":"kind","type":"uint8"},{"indexed":false,"internalType":"bytes32","name":"contextCommitment","type":"bytes32"},{"indexed":false,"internalType":"bytes32","name":"previousStageRecordId","type":"bytes32"}],"name":"ServiceRequested","type":"event"},{"inputs":[],"name":"actorRegistry","outputs":[{"internalType":"contract IExploreChemDocumentaryActors","name":"","type":"address"}],"stateMutability":"view","type":"function"},{"inputs":[{"internalType":"bytes32","name":"requestId","type":"bytes32"},{"internalType":"address","name":"wallet","type":"address"}],"name":"canReadPrivateRequest","outputs":[{"internalType":"bool","name":"","type":"bool"}],"stateMutability":"view","type":"function"},{"inputs":[{"internalType":"bytes32","name":"requestId","type":"bytes32"}],"name":"cancelPendingRequest","outputs":[],"stateMutability":"nonpayable","type":"function"},{"inputs":[{"internalType":"bytes32","name":"recordId","type":"bytes32"}],"name":"getRecord","outputs":[{"components":[{"internalType":"bytes32","name":"requestId","type":"bytes32"},{"internalType":"bytes32","name":"lotId","type":"bytes32"},{"internalType":"bytes32","name":"actorId","type":"bytes32"},{"internalType":"bytes32","name":"documentCommitment","type":"bytes32"},{"internalType":"bytes32","name":"previousRecordId","type":"bytes32"},{"internalType":"address","name":"recordedBy","type":"address"},{"internalType":"uint64","name":"recordedAt","type":"uint64"},{"internalType":"enum ExploreChemDocumentaryRegistry.ServiceKind","name":"kind","type":"uint8"},{"internalType":"bool","name":"publicDocument","type":"bool"},{"internalType":"bool","name":"revoked","type":"bool"},{"internalType":"string","name":"publicDocumentURI","type":"string"}],"internalType":"struct ExploreChemDocumentaryRegistry.DocumentaryRecord","name":"","type":"tuple"}],"stateMutability":"view","type":"function"},{"inputs":[{"internalType":"bytes32","name":"requestId","type":"bytes32"}],"name":"getRequest","outputs":[{"components":[{"internalType":"bytes32","name":"lotId","type":"bytes32"},{"internalType":"bytes32","name":"requesterActorId","type":"bytes32"},{"internalType":"bytes32","name":"providerActorId","type":"bytes32"},{"internalType":"bytes32","name":"contextCommitment","type":"bytes32"},{"internalType":"bytes32","name":"previousStageRecordId","type":"bytes32"},{"internalType":"uint64","name":"createdAt","type":"uint64"},{"internalType":"enum ExploreChemDocumentaryRegistry.ServiceKind","name":"kind","type":"uint8"},{"internalType":"enum ExploreChemDocumentaryRegistry.RequestState","name":"state","type":"uint8"}],"internalType":"struct ExploreChemDocumentaryRegistry.Request","name":"","type":"tuple"}],"stateMutability":"view","type":"function"},{"inputs":[{"internalType":"bytes32","name":"","type":"bytes32"}],"name":"latestRecordForRequest","outputs":[{"internalType":"bytes32","name":"","type":"bytes32"}],"stateMutability":"view","type":"function"},{"inputs":[{"internalType":"bytes32","name":"lotId","type":"bytes32"},{"internalType":"uint256","name":"index","type":"uint256"}],"name":"lotRecordAt","outputs":[{"internalType":"bytes32","name":"","type":"bytes32"}],"stateMutability":"view","type":"function"},{"inputs":[{"internalType":"bytes32","name":"lotId","type":"bytes32"}],"name":"lotRecordCount","outputs":[{"internalType":"uint256","name":"","type":"uint256"}],"stateMutability":"view","type":"function"},{"inputs":[{"internalType":"bytes32","name":"lotId","type":"bytes32"},{"internalType":"uint256","name":"index","type":"uint256"}],"name":"lotRequestAt","outputs":[{"internalType":"bytes32","name":"","type":"bytes32"}],"stateMutability":"view","type":"function"},{"inputs":[{"internalType":"bytes32","name":"lotId","type":"bytes32"}],"name":"lotRequestCount","outputs":[{"internalType":"uint256","name":"","type":"uint256"}],"stateMutability":"view","type":"function"},{"inputs":[],"name":"lots","outputs":[{"internalType":"contract IExploreChemDocumentaryLots","name":"","type":"address"}],"stateMutability":"view","type":"function"},{"inputs":[],"name":"proofRegistry","outputs":[{"internalType":"address","name":"","type":"address"}],"stateMutability":"view","type":"function"},{"inputs":[{"internalType":"bytes32","name":"requestId","type":"bytes32"},{"internalType":"bytes32","name":"fileSha256","type":"bytes32"},{"internalType":"string","name":"publicDocumentURI","type":"string"},{"internalType":"bytes32","name":"previousRecordId","type":"bytes32"}],"name":"publishCertificate","outputs":[{"internalType":"bytes32","name":"recordId","type":"bytes32"}],"stateMutability":"nonpayable","type":"function"},{"inputs":[],"name":"recordCount","outputs":[{"internalType":"uint256","name":"","type":"uint256"}],"stateMutability":"view","type":"function"},{"inputs":[{"internalType":"bytes32","name":"requestId","type":"bytes32"},{"internalType":"bytes32","name":"documentCommitment","type":"bytes32"},{"internalType":"bytes32","name":"previousRecordId","type":"bytes32"}],"name":"recordPrivateEvidence","outputs":[{"internalType":"bytes32","name":"recordId","type":"bytes32"}],"stateMutability":"nonpayable","type":"function"},{"inputs":[{"internalType":"bytes32","name":"requestId","type":"bytes32"},{"internalType":"uint256","name":"index","type":"uint256"}],"name":"requestRecordAt","outputs":[{"internalType":"bytes32","name":"","type":"bytes32"}],"stateMutability":"view","type":"function"},{"inputs":[{"internalType":"bytes32","name":"requestId","type":"bytes32"}],"name":"requestRecordCount","outputs":[{"internalType":"uint256","name":"","type":"uint256"}],"stateMutability":"view","type":"function"},{"inputs":[{"internalType":"bytes32","name":"requestId","type":"bytes32"},{"internalType":"bytes32","name":"lotId","type":"bytes32"},{"internalType":"bytes32","name":"requesterActorId","type":"bytes32"},{"internalType":"bytes32","name":"providerActorId","type":"bytes32"},{"internalType":"enum ExploreChemDocumentaryRegistry.ServiceKind","name":"kind","type":"uint8"},{"internalType":"bytes32","name":"contextCommitment","type":"bytes32"},{"internalType":"bytes32","name":"previousStageRecordId","type":"bytes32"}],"name":"requestService","outputs":[],"stateMutability":"nonpayable","type":"function"},{"inputs":[{"internalType":"bytes32","name":"requestId","type":"bytes32"},{"internalType":"bool","name":"accept","type":"bool"}],"name":"respond","outputs":[],"stateMutability":"nonpayable","type":"function"},{"inputs":[{"internalType":"bytes32","name":"recordId","type":"bytes32"},{"internalType":"bytes32","name":"reasonCommitment","type":"bytes32"}],"name":"revokeRecord","outputs":[],"stateMutability":"nonpayable","type":"function"}];
+const AD={actors:[],actor:'',requests:[],lots:[],tab:'request',token:null,tokenWallet:'',tokenExpires:0,busy:false,loaded:false,sequence:0,draft:null,scopeDrafts:new Map(),recordDrafts:new Map()};
+const adEsc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const adSame=(a,b)=>String(a||'').toLowerCase()===String(b||'').toLowerCase();
+const adShort=v=>String(v||'').length>22?String(v).slice(0,12)+'…'+String(v).slice(-8):String(v||'');
+const adHash=v=>/^0x[0-9a-f]{64}$/i.test(String(v));
+const adName=id=>AD.actors.find(a=>adSame(a.id,id))?.name||adShort(id);
+const adQ=id=>document.getElementById(id);
+function adStatus(message,error=false){for(const id of ['ad-status','ad-dialog-status']){const el=adQ(id);if(el){el.textContent=message;el.classList.toggle('ad-error',error);el.setAttribute('role',error?'alert':'status');}}}
+async function adReadContext(){
+ const provider=await clientBalanceProvider();
+ const contract=new ethers.Contract(ANALYSIS_CONTRACT,ANALYSIS_ABI,provider);
+ const [proof,actors,lots]=await Promise.all([contract.proofRegistry(),contract.actorRegistry(),contract.lots()]);
+ if(!adSame(proof,ANALYSIS_PROOF)||!adSame(actors,ANALYSIS_ACTORS)||!adSame(lots,ANALYSIS_LOTS))throw Error('The documentary contract is linked to a different base.');
+ return {provider,contract,actors:new ethers.Contract(ANALYSIS_ACTORS,['function actorActive(bytes32) view returns(bool)','function isWalletAuthorized(bytes32,address) view returns(bool)'],provider),lots:new ethers.Contract(ANALYSIS_LOTS,EXPLORECHEM_LOTS_ABI,provider)};
+}
+async function adSigner(){
+ const ethereum=getWalletProvider();if(!ethereum)throw Error('Install or enable MetaMask.');
+ const provider=new ethers.BrowserProvider(ethereum);await provider.send('eth_requestAccounts',[]);
+ if(Number((await provider.getNetwork()).chainId)!==11155111)throw Error('Select Ethereum Sepolia in MetaMask.');
+ const signer=await provider.getSigner();walletAddress=await signer.getAddress();walletChainId='0xaa36a7';renderWallet();
+ return {provider,signer,address:walletAddress,contract:new ethers.Contract(ANALYSIS_CONTRACT,ANALYSIS_ABI,signer)};
+}
+async function adAuthorized(actorId){const w=await adSigner(),c=await adReadContext();if(!await c.actors.actorActive(actorId)||!await c.actors.isWalletAuthorized(actorId,w.address))throw Error('The connected wallet is not authorized for '+adName(actorId)+'.');return w;}
+async function adSession(){const {data,error}=await supabaseClient.auth.getSession();if(error||!data?.session?.access_token){e1Login();throw Error('Use Private access to sign in, then retry this action.');}return data.session.access_token;}
+async function adApiRaw(action,data={},token=null){
+ const jwt=await adSession();const r=await fetch(ANALYSIS_ENDPOINT,{method:'POST',headers:{'Content-Type':'application/json','apikey':SUPABASE_PUBLISHABLE_KEY,'Authorization':'Bearer '+jwt,...(token?{'x-analysis-token':token}:{})},body:JSON.stringify({action,...data})});
+ let out;try{out=await r.json();}catch{throw Error('Document service returned HTTP '+r.status+'.');}
+ if(!r.ok){if(r.status===401){AD.token=null;AD.tokenExpires=0;}throw Error(out.error||out.message||'Document service: HTTP '+r.status);}
+ return out;
+}
+async function adWalletAccess(){
+ const w=await adSigner();if(AD.token&&adSame(AD.tokenWallet,w.address)&&AD.tokenExpires>Date.now()+10000)return AD.token;
+ const challenge=await adApiRaw('challenge',{wallet:w.address});
+ const signature=await w.signer.signMessage(challenge.message);
+ const session=await adApiRaw('verify',{id:challenge.id,signature});
+ AD.token=session.token;AD.tokenWallet=session.wallet;AD.tokenExpires=Date.parse(session.expiresAt);return AD.token;
+}
+async function adApi(action,data){return adApiRaw(action,data,await adWalletAccess());}
+async function adRun(fn){if(AD.busy)return;AD.busy=true;document.querySelectorAll('#analysis-root button').forEach(b=>b.disabled=true);try{await fn();}catch(error){console.error('Analysis:',error);adStatus(error.shortMessage||error.message||String(error),true);}finally{AD.busy=false;document.querySelectorAll('#analysis-root button').forEach(b=>b.disabled=false);}}
+async function adWait(tx){adStatus('Transaction submitted: '+tx.hash+'. Waiting for confirmation…');const receipt=await tx.wait();if(receipt.status!==1)throw Error('Transaction reverted.');return receipt;}
+function adCompanyOptions(selected=AD.actor){return AD.actors.map(a=>`<option value="${a.id}" ${adSame(a.id,selected)?'selected':''}>${adEsc(a.name)}</option>`).join('');}
+function adRender(){
+ adQ('session').innerHTML='<span class="session-avatar">A</span><span class="session-copy"><b>Analysis</b><span>Documentary services</span></span>';
+ renderWallet();const select=adQ('roleSelector');select.value='analysis';select.onchange=function(){window.location.href=window.location.pathname+(this.value==='op'?'':'?role='+encodeURIComponent(this.value));};
+ adQ('nav').innerHTML='<button aria-current="page">Analyses &amp; documents</button>';
+ const count=key=>AD.requests.filter(r=>key==='received'?adSame(r.providerActorId,AD.actor):adSame(r.requesterActorId,AD.actor)).length;
+ adQ('view').innerHTML=`<div id="analysis-root"><span class="section-eyebrow">ANALYSIS · DOCUMENTARY SERVICES</span><h1>Analyses &amp; documents</h1><p class="ad-lead">Request a service for an existing lot. The lot stays with its holder.</p><section class="panel pad ad-toolbar"><div class="field"><label for="ad-company">Company</label><select id="ad-company">${AD.actors.length?adCompanyOptions():'<option>Loading companies…</option>'}</select></div><button type="button" class="btn ghost" id="ad-refresh">Refresh</button><button type="button" class="btn" id="ad-connect">Connect wallet</button></section><p id="ad-status" class="ad-status" aria-live="polite">${AD.loaded?'Select a service or open a request.':'Loading documentary requests…'}</p><nav class="ad-tabs" aria-label="Analysis sections">${[['request','Request service'],['received','Received · '+count('received')],['sent','Sent · '+count('sent')],['history','Lot history'],['certificates','Public certificates']].map(([key,label])=>`<button type="button" data-ad-tab="${key}" aria-pressed="${AD.tab===key}">${label}</button>`).join('')}</nav><section id="ad-panel"></section><dialog id="ad-dialog" class="panel pad ad-dialog"></dialog></div>`;
+ adQ('ad-company').onchange=()=>{AD.actor=adQ('ad-company').value;sessionStorage.setItem('explorechem-analysis-company',AD.actor);AD.lots=[];AD.draft=null;adRun(adRefresh);};
+ adQ('ad-refresh').onclick=()=>adRun(adRefresh);adQ('ad-connect').onclick=()=>adRun(async()=>{await adSigner();adStatus('Wallet connected.');});
+ document.querySelectorAll('[data-ad-tab]').forEach(b=>b.onclick=()=>{AD.tab=b.dataset.adTab;adRenderPanel();});
+ adQ('ad-panel').onclick=adPanelAction;adRenderPanel();
+}
+function adRenderPanel(){
+ if(!adQ('ad-panel'))return;
+ document.querySelectorAll('[data-ad-tab]').forEach(b=>b.setAttribute('aria-pressed',String(b.dataset.adTab===AD.tab)));
+ if(AD.tab==='request'){
+  adQ('ad-panel').innerHTML=`<section class="panel pad"><h2>Request a documentary service</h2><p>Choose the lot, the company and the work to be performed. Only the lot holder’s authorized wallet can send this request.</p><div class="ad-grid"><div class="field"><label for="ad-lot-select">Existing lot</label><select id="ad-lot-select"><option value="">Select a lot or enter its ID below</option>${AD.lots.map(l=>`<option value="${l.id}">${adEsc(l.label)}</option>`).join('')}</select><button class="btn ghost" type="button" id="ad-load-lots">Load this company’s lots</button><label for="ad-lot-id">Lot ID</label><input id="ad-lot-id" class="mono" autocomplete="off" spellcheck="false"><p class="note">You may also paste an existing lot ID. Ownership is checked on-chain.</p></div><div class="field"><label for="ad-provider">Service company</label><select id="ad-provider">${adCompanyOptions('')}</select><label for="ad-kind">Service</label><select id="ad-kind">${ANALYSIS_KINDS.map((n,i)=>`<option value="${i}">${n}</option>`).join('')}</select><label for="ad-previous">Previous stage record ID · optional</label><input id="ad-previous" class="mono" autocomplete="off" spellcheck="false"></div><div class="field ad-wide"><label for="ad-scope">Scope and instructions · private</label><textarea id="ad-scope" rows="3" maxlength="5000"></textarea><label for="ad-context-files">Documents shared with the service company · optional, 10 MB each</label><input id="ad-context-files" type="file" multiple accept=".pdf,.json,.txt,.png,.jpg,.jpeg"><p class="note">Scope and attachments are private to the request participants. Certificate files published by the service company are public.</p></div></div><button type="button" class="btn" id="ad-request">Send service request</button></section>`;
+  adQ('ad-lot-select').onchange=()=>adQ('ad-lot-id').value=adQ('ad-lot-select').value;
+  adQ('ad-load-lots').onclick=()=>adRun(adLoadLots);adQ('ad-request').onclick=()=>adRun(adCreateRequest);
+ }else if(AD.tab==='received'||AD.tab==='sent'){
+  const received=AD.tab==='received',list=AD.requests.filter(r=>adSame(received?r.providerActorId:r.requesterActorId,AD.actor));
+  adQ('ad-panel').innerHTML=`<section><h2>${received?'Received service requests':'Sent service requests'}</h2>${list.length?list.map(r=>adRequestCard(r,received)).join(''):'<section class="panel pad"><p>No requests for this company.</p></section>'}</section>`;
+ }else if(AD.tab==='history'){
+  const ids=[...new Set(AD.requests.map(r=>r.lotId))];adQ('ad-panel').innerHTML=`<section class="panel pad"><h2>Documentary history by lot</h2><p>This history belongs to the Analysis workspace.</p><label for="ad-history-lot">Lot ID</label><input id="ad-history-lot" class="mono" list="ad-known-lots" autocomplete="off"><datalist id="ad-known-lots">${ids.map(id=>`<option value="${id}">`).join('')}</datalist><button type="button" class="btn" data-ad-action="history">Load history</button><div id="ad-history"></div></section>`;
+ }else{
+  adQ('ad-panel').innerHTML='<section class="panel pad"><h2>Public certificates</h2><p>Certificate references and revocation status can be checked without private document access.</p><label for="ad-certificate-lot">Lot ID</label><input id="ad-certificate-lot" class="mono" autocomplete="off"><button type="button" class="btn" data-ad-action="certificates">Find certificates</button><div id="ad-certificates"></div></section>';
+ }
+}
+function adRequestCard(r,received){
+ const state=Number(r.state),actions=[`<button class="btn ghost" data-ad-action="details" data-request="${r.id}">Scope &amp; documents</button>`];
+ if(received&&state===1)actions.push(`<button class="btn" data-ad-action="accept" data-request="${r.id}">Accept</button><button class="btn ghost" data-ad-action="reject" data-request="${r.id}">Reject</button>`);
+ if(received&&[2,5].includes(state))actions.push(`<button class="btn" data-ad-action="result" data-request="${r.id}">${state===5?'Add revision':Number(r.kind)===4?'Publish certificate':'Add document'}</button>`);
+ if(!received&&state===1)actions.push(`<button class="btn ghost" data-ad-action="cancel" data-request="${r.id}">Cancel request</button>`);
+ if(!received&&[1,2].includes(state))actions.push(`<button class="btn ghost" data-ad-action="scope" data-request="${r.id}">Attach scope documents</button>`);
+ return `<article class="panel pad ad-card"><div class="ad-card-top"><h3>${adEsc(ANALYSIS_KINDS[Number(r.kind)])}</h3><span class="ec-chip">${adEsc(ANALYSIS_STATES[state])}</span></div><p><b>${adEsc(adName(r.requesterActorId))}</b> → <b>${adEsc(adName(r.providerActorId))}</b></p><p>Lot <span class="mono">${adEsc(r.lotId)}</span></p><details><summary>Request reference</summary><p class="mono">${r.id}</p>${r.previousStageRecordId!==ethers.ZeroHash?'<p>Previous stage: <span class="mono">'+r.previousStageRecordId+'</span></p>':''}</details><div class="ad-actions">${actions.join('')}</div></article>`;
+}
+function adNormalizeRequest(id,r){return {id,lotId:r.lotId,requesterActorId:r.requesterActorId,providerActorId:r.providerActorId,contextCommitment:r.contextCommitment,previousStageRecordId:r.previousStageRecordId,kind:Number(r.kind),state:Number(r.state),createdAt:Number(r.createdAt)};}
+async function adRefresh(){
+ const sequence=++AD.sequence;adStatus('Reading companies and documentary requests…');
+ const c=await adReadContext();
+ const response=await fetch(SUPABASE_URL+'/rest/v1/explorerchem_actors?select=actor_id,display_name&order=display_name.asc',{headers:{apikey:SUPABASE_PUBLISHABLE_KEY}});
+ if(!response.ok)throw Error('Could not load company names: HTTP '+response.status);
+ const catalog=await response.json(),actors=[];
+ for(const row of catalog){if(adHash(row.actor_id)&&await c.actors.actorActive(row.actor_id))actors.push({id:row.actor_id.toLowerCase(),name:row.display_name||adShort(row.actor_id)});}
+ if(sequence!==AD.sequence||role!=='analysis')return;
+ AD.actors=actors;AD.actor=actors.some(a=>adSame(a.id,AD.actor))?AD.actor:sessionStorage.getItem('explorechem-analysis-company')||actors[0]?.id||'';
+ if(!actors.some(a=>adSame(a.id,AD.actor)))AD.actor=actors[0]?.id||'';
+ const head=await c.provider.getBlockNumber(),logs=[];
+ for(let from=ANALYSIS_DEPLOYMENT_BLOCK;from<=head;from+=4000){logs.push(...await c.contract.queryFilter(c.contract.filters.ServiceRequested(),from,Math.min(from+3999,head)));}
+ const requests=[];for(const event of logs){const id=event.args.requestId;requests.push(adNormalizeRequest(id,await c.contract.getRequest(id)));}
+ if(sequence!==AD.sequence||role!=='analysis')return;
+ AD.requests=requests.sort((a,b)=>b.createdAt-a.createdAt);AD.loaded=true;adRender();adStatus('Documentary requests updated from Sepolia.');
+}
+async function adLoadLots(){
+ const selected=AD.actor;if(!selected)throw Error('Select a company.');await adAuthorized(selected);await adSession();
+ adStatus('Reading this company’s existing lots…');const c=await adReadContext();
+ const registry=new ethers.Contract(ANALYSIS_PROOF,CLIENT_BALANCE_ABI,c.provider);
+ const data=await e1ReadLots({provider:c.provider,registry,lots:c.lots,linked:ANALYSIS_LOTS});
+ AD.lots=data.rows.filter(r=>adSame(r.lot.holder,selected)&&[1,2,3].includes(Number(r.lot.state))).map(r=>({id:r.id,label:(r.document?.lotReference||adShort(r.id))+(r.opening?.materialMassMg?' · '+(Number(r.opening.materialMassMg)/1000000).toLocaleString('en-US')+' kg':'')}));
+ adRenderPanel();adStatus(AD.lots.length+' lots available for documentary requests.'+(data.warnings?.length?' Some private lot documents could not be loaded; you can paste a lot ID.':''));
+}
+function adMime(file){const mime=file.type||({pdf:'application/pdf',json:'application/json',txt:'text/plain',png:'image/png',jpg:'image/jpeg',jpeg:'image/jpeg'}[file.name.split('.').pop().toLowerCase()]);if(!['application/pdf','application/json','text/plain','image/png','image/jpeg'].includes(mime))throw Error('Supported files: PDF, JSON, TXT, PNG and JPEG.');if(file.size<1||file.size>10485760)throw Error('Each file must contain 1 byte to 10 MB.');return mime;}
+async function adSha(bytes){return ethers.hexlify(new Uint8Array(await crypto.subtle.digest('SHA-256',bytes)));}
+function adBase64(bytes){let out='';for(let i=0;i<bytes.length;i+=16384)out+=String.fromCharCode(...bytes.subarray(i,i+16384));return btoa(out);}
+function adSaveBlob(bytes,mime,name){const blob=new Blob([bytes],{type:mime});const url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(url),10000);}
+function adPrivateCommitment(request,sha,salt){return ethers.keccak256(ethers.AbiCoder.defaultAbiCoder().encode(['string','uint256','address','bytes32','bytes32','bytes32','uint8','bytes32','bytes32'],['ExploreChem/PrivateDocument/v1',11155111,ANALYSIS_CONTRACT,request.lotId,request.id,request.providerActorId,Number(request.kind),sha,salt]));}
+async function adCreateRequest(){
+ const lotId=adQ('ad-lot-id').value.trim(),provider=adQ('ad-provider').value,kind=Number(adQ('ad-kind').value),previous=adQ('ad-previous').value.trim()||ethers.ZeroHash,scope=adQ('ad-scope').value.trim(),files=[...adQ('ad-context-files').files];
+ if(!adHash(lotId)||!adHash(provider)||!adHash(previous))throw Error('Enter a valid lot ID, service company and optional previous record ID.');
+ if(!scope)throw Error('Describe the work to be performed.');if(files.length>10)throw Error('Attach up to 10 files.');
+ const signer=await adAuthorized(AD.actor),c=await adReadContext();const holder=await c.lots.holderOf(lotId);
+ if(!adSame(holder.holder||holder[0],AD.actor)||![1,2,3].includes(Number(holder.state??holder[1])))throw Error('This company is not the holder of an available lot.');
+ await adWalletAccess();
+ const fileData=[];for(const f of files){const mime=adMime(f),bytes=new Uint8Array(await f.arrayBuffer());fileData.push({file:f,mime,bytes,sha256:await adSha(bytes)});}
+ const fingerprint=JSON.stringify([lotId,AD.actor,provider,kind,previous,scope,fileData.map(f=>[f.file.name,f.sha256])]);
+ if(!AD.draft||AD.draft.fingerprint!==fingerprint){const id=ethers.hexlify(crypto.getRandomValues(new Uint8Array(32))),manifest=JSON.stringify({schema:'ExploreChem/RequestScope/v1',lotId,requestId:id,requesterActorId:AD.actor,providerActorId:provider,kind,scope,files:fileData.map(f=>({name:f.file.name,sha256:f.sha256})),salt:ethers.hexlify(crypto.getRandomValues(new Uint8Array(32)))});AD.draft={id,manifest,fingerprint};}
+ const {id,manifest}=AD.draft;const commitment=ethers.keccak256(ethers.toUtf8Bytes(manifest));let request;
+ try{request=await c.contract.getRequest(id);}catch{}
+ if(!request){adStatus('Confirm the documentary service request in MetaMask.');await adWait(await signer.contract.requestService(id,lotId,AD.actor,provider,kind,commitment,previous));}
+ else if(!adSame(request.contextCommitment,commitment))throw Error('The existing request has a different scope.');
+ AD.scopeDrafts.set(id,manifest);adSaveBlob(ethers.toUtf8Bytes(manifest),'application/json','ExploreChem-request-scope-'+id.slice(2,10)+'.json');
+ adStatus('Request confirmed. Saving private scope documents…');
+ try{await adUploadContext(id,manifest,fileData);AD.draft=null;AD.tab='sent';await adRefresh();adStatus('Service request confirmed. Scope and documents are available to its participants.');}
+ catch(error){AD.tab='sent';await adRefresh();throw Error('Request '+id+' is already confirmed. Scope upload is pending: '+(error.message||error)+'. Use Attach scope documents with the downloaded scope receipt.');}
+}
+async function adUploadContext(requestId,manifest,files=[]){
+ const bytes=ethers.toUtf8Bytes(manifest);await adApi('upload',{requestId,phase:'context',fileName:'Request-scope.json',mime:'application/json',data:adBase64(bytes),contextManifest:manifest});
+ for(const f of files)await adApi('upload',{requestId,phase:'context',fileName:f.file.name,mime:f.mime,data:adBase64(f.bytes),contextManifest:manifest});
+}
+function adDialog(title,body){const d=adQ('ad-dialog');d.innerHTML=`<div class="ad-card-top"><h2>${adEsc(title)}</h2><button class="btn ghost" id="ad-close" type="button">Close</button></div>${body}<p id="ad-dialog-status" aria-live="polite"></p>`;adQ('ad-close').onclick=()=>d.close();d.showModal();return d;}
+async function adPanelAction(event){
+ const button=event.target.closest('[data-ad-action]');if(!button)return;const action=button.dataset.adAction,id=button.dataset.request;
+ await adRun(async()=>{
+  if(['history','certificates'].includes(action)){await adHistory(action==='certificates');return;}
+  const request=AD.requests.find(r=>r.id===id);if(!request)throw Error('Refresh the requests list.');
+  if(action==='details'){await adDetails(request);return;}
+  if(action==='scope'){adScopeDialog(request);return;}
+  if(action==='result'){await adResultDialog(request);return;}
+  const w=await adAuthorized(action==='cancel'?request.requesterActorId:request.providerActorId);
+  adStatus('Confirm the '+action+' action in MetaMask.');await adWait(await (action==='cancel'?w.contract.cancelPendingRequest(id):w.contract.respond(id,action==='accept')));await adRefresh();adStatus('Request updated.');
+ });
+}
+function adScopeDialog(request){
+ const cached=AD.scopeDrafts.get(request.id);
+ adDialog('Attach scope documents',`<p>Use the scope receipt downloaded when the request was sent. Its commitment must match the on-chain request.</p>${cached?'<p>The scope receipt is still available in this tab.</p>':''}<label for="ad-scope-receipt">Scope receipt JSON</label><input id="ad-scope-receipt" type="file" accept=".json"><label for="ad-scope-attachments">Original attachments</label><input id="ad-scope-attachments" type="file" multiple accept=".pdf,.json,.txt,.png,.jpg,.jpeg"><button class="btn" id="ad-scope-upload">Save private scope</button>`);
+ adQ('ad-scope-upload').onclick=()=>adRun(async()=>{await adAuthorized(request.requesterActorId);const receipt=adQ('ad-scope-receipt').files[0],manifest=receipt?await receipt.text():cached;if(!manifest)throw Error('Select the original scope receipt.');if(!adSame(ethers.keccak256(ethers.toUtf8Bytes(manifest)),request.contextCommitment))throw Error('This scope receipt does not match the request.');const files=[];for(const f of adQ('ad-scope-attachments').files){files.push({file:f,mime:adMime(f),bytes:new Uint8Array(await f.arrayBuffer())});}await adUploadContext(request.id,manifest,files);adQ('ad-dialog').close();adStatus('Private scope documents saved.');});
+}
+async function adDetails(request){
+ adStatus('Verifying access to the request documents…');const out=await adApi('list',{requestId:request.id});
+ const records=await adRequestRecords(request.id);const matched=new Map(records.map(r=>[r.documentCommitment.toLowerCase(),r]));
+ const docs=out.documents;
+ adDialog(ANALYSIS_KINDS[request.kind]+' · request documents',`<p>Lot <span class="mono">${request.lotId}</span></p><p>${adEsc(adName(request.requesterActorId))} → ${adEsc(adName(request.providerActorId))}</p><div id="ad-file-list">${docs.length?docs.map(d=>{const record=matched.get(d.commitment.toLowerCase());return `<article class="ad-file"><b>${adEsc(d.file_name)}</b><span>${d.phase==='context'?'Shared scope':d.public_document?'Public certificate':'Private result'}${record?.revoked?' · REVOKED':''}</span><small>${record?'Proof verified':d.phase==='context'?'Bound to request scope':'Awaiting on-chain proof'}</small><div class="ad-actions">${d.phase==='context'||record?`<button class="btn ghost" data-ad-download="${d.id}">Download &amp; verify</button>`:`<button class="btn" data-ad-publish="${d.id}">Publish pending upload</button>`}</div></article>`;}).join(''):'<p>No documents uploaded for this request yet.</p>'}</div>`);
+ for(const b of document.querySelectorAll('[data-ad-download]'))b.onclick=()=>adRun(async()=>{const doc=docs.find(d=>d.id===b.dataset.adDownload),record=matched.get(doc.commitment.toLowerCase());await adDownload(request,doc,record?.id);});
+ for(const b of document.querySelectorAll('[data-ad-publish]'))b.onclick=()=>adRun(async()=>{const doc=docs.find(d=>d.id===b.dataset.adPublish);await adPublish(request,{id:doc.id,commitment:doc.commitment,publicDocument:doc.public_document,publicUrl:doc.public_url});adQ('ad-dialog').close();await adRefresh();adStatus('Documentary proof confirmed.');});
+ adStatus('Only files authorized for this request are shown.');
+}
+async function adRequestRecords(id){const c=await adReadContext(),count=Number(await c.contract.requestRecordCount(id)),records=[];for(let i=0;i<count;i++){const recordId=await c.contract.requestRecordAt(id,i),r=await c.contract.getRecord(recordId);records.push({id:recordId,...r.toObject()});}return records;}
+async function adResultDialog(request){
+ await adAuthorized(request.providerActorId);const cert=request.kind===4;
+ adDialog(cert?'Publish public certificate':'Add private documentary record',`<p>${cert?'This certificate file will be publicly available.':'The original document remains private. Only its salted commitment is recorded on-chain.'}</p><label for="ad-result-file">${cert?'Certificate':'Document'} · up to 10 MB</label><input id="ad-result-file" type="file" accept=".pdf,.json,.txt,.png,.jpg,.jpeg"><p>Corrections create a new revision; previous records remain in history.</p><button class="btn" id="ad-result-publish">${cert?'Upload and publish certificate':'Upload and register proof'}</button>`);
+ adQ('ad-result-publish').onclick=()=>adRun(async()=>{
+  const file=adQ('ad-result-file').files[0];if(!file)throw Error('Select a document.');const mime=adMime(file),bytes=new Uint8Array(await file.arrayBuffer());
+  adStatus('Uploading '+(cert?'public certificate':'private document')+'…');
+  const uploaded=await adApi('upload',{requestId:request.id,phase:'record',fileName:file.name,mime,data:adBase64(bytes),salt:cert?null:ethers.hexlify(crypto.getRandomValues(new Uint8Array(32)))});
+  AD.recordDrafts.set(request.id,uploaded);
+  try{await adPublish(request,uploaded);AD.recordDrafts.delete(request.id);adQ('ad-dialog').close();await adRefresh();adStatus('Documentary record confirmed.');}
+  catch(error){throw Error('File saved; on-chain publication is pending. Open Scope & documents → Publish pending upload to resume. '+(error.shortMessage||error.message));}
+ });
+}
+async function adPublish(request,document){
+ const w=await adAuthorized(request.providerActorId),c=await adReadContext();
+ // Recover already-confirmed submissions instead of recording the same file twice.
+ let record=(await adRequestRecords(request.id)).find(r=>adSame(r.documentCommitment,document.commitment));
+ if(!record){const previous=await c.contract.latestRecordForRequest(request.id);adStatus('Confirm the documentary proof in MetaMask.');const tx=document.publicDocument?await w.contract.publishCertificate(request.id,document.commitment,document.publicUrl,previous):await w.contract.recordPrivateEvidence(request.id,document.commitment,previous);await adWait(tx);record=(await adRequestRecords(request.id)).find(r=>adSame(r.documentCommitment,document.commitment));}
+ if(!record)throw Error('Could not find the confirmed proof. Refresh before retrying.');
+ await adApi('finalize',{requestId:request.id,documentId:document.id,recordId:record.id});
+}
+async function adDownload(request,document,recordId){
+ const result=await adApi('download',{requestId:request.id,documentId:document.id,recordId});
+ const response=await fetch(result.url,{cache:'no-store'});if(!response.ok)throw Error('Download failed: HTTP '+response.status);const bytes=new Uint8Array(await response.arrayBuffer()),sha=await adSha(bytes);
+ if(!adSame(sha,result.sha256))throw Error('INTEGRITY MISMATCH: the downloaded file was modified.');
+ if(document.phase==='context'){
+  const manifest=JSON.parse(result.contextManifest);if(!adSame(ethers.keccak256(ethers.toUtf8Bytes(result.contextManifest)),request.contextCommitment))throw Error('Scope commitment mismatch.');
+  if(document.file_name==='Request-scope.json'){if(!adSame(ethers.keccak256(bytes),request.contextCommitment))throw Error('Scope file integrity mismatch.');}
+  else if(!manifest.files?.some(f=>f.name===document.file_name&&adSame(f.sha256,sha)))throw Error('This attachment does not match the signed scope.');
+ }else{
+  const c=await adReadContext(),record=await c.contract.getRecord(recordId),commit=result.publicDocument?sha:adPrivateCommitment(request,sha,result.salt);
+  if(!adSame(commit,record.documentCommitment))throw Error('INTEGRITY MISMATCH: the file does not match its on-chain documentary proof.');
+ }
+ adSaveBlob(bytes,result.mime,result.fileName);adStatus('File integrity verified against its on-chain commitment.');
+}
+async function adHistory(certificatesOnly){
+ const input=adQ(certificatesOnly?'ad-certificate-lot':'ad-history-lot'),lotId=input.value.trim();if(!adHash(lotId))throw Error('Enter a valid lot ID.');
+ const target=adQ(certificatesOnly?'ad-certificates':'ad-history');target.textContent='Loading documentary history…';const c=await adReadContext(),count=Number(await c.contract.lotRecordCount(lotId)),records=[];
+ for(let i=0;i<count;i++){const id=await c.contract.lotRecordAt(lotId,i),r=await c.contract.getRecord(id);if(!certificatesOnly||r.publicDocument)records.push({id,...r.toObject()});}
+ const latest=new Map();for(const record of records)latest.set(record.requestId,await c.contract.latestRecordForRequest(record.requestId));
+ target.innerHTML=records.length?records.map(r=>`<article class="ad-file"><div class="ad-card-top"><h3>${adEsc(ANALYSIS_KINDS[Number(r.kind)])}</h3><span class="ec-chip">${r.revoked?'REVOKED':adSame(latest.get(r.requestId),r.id)?'Latest revision':'Previous revision'}</span></div><p>${adEsc(adName(r.actorId))} · ${adEsc(new Date(Number(r.recordedAt)*1000).toLocaleString('en-US'))}</p><p>${r.publicDocument?'Public certificate':'Private document'}</p><details><summary>On-chain proof</summary><p class="mono">Record: ${r.id}<br>Commitment: ${r.documentCommitment}<br>Request: ${r.requestId}</p></details><div class="ad-actions">${r.publicDocument?`<button class="btn" data-ad-public="${r.id}">Download &amp; verify certificate</button>`:`<button class="btn ghost" data-ad-record-request="${r.requestId}">Open authorized documents</button>`}${!r.revoked?`<button class="btn ghost" data-ad-revoke="${r.id}">Revoke · issuer only</button>`:''}</div></article>`).join(''):'<p>No '+(certificatesOnly?'certificates':'documentary records')+' for this lot.</p>';
+ for(const b of target.querySelectorAll('[data-ad-public]'))b.onclick=()=>adRun(async()=>{const r=records.find(r=>r.id===b.dataset.adPublic),url=new URL(r.publicDocumentURI);if(url.protocol!=='https:')throw Error('Unsupported certificate URL.');const response=await fetch(url.href,{cache:'no-store'});if(!response.ok)throw Error('Certificate download failed.');const bytes=new Uint8Array(await response.arrayBuffer());if(!adSame(await adSha(bytes),r.documentCommitment))throw Error('Certificate hash mismatch.');adSaveBlob(bytes,response.headers.get('content-type')||'application/octet-stream','ExploreChem-certificate-'+r.id.slice(2,10));adStatus('Certificate integrity verified.'+(r.revoked?' This certificate is revoked.':''));});
+ for(const b of target.querySelectorAll('[data-ad-record-request]'))b.onclick=()=>adRun(async()=>{let r=AD.requests.find(r=>r.id===b.dataset.adRecordRequest);if(!r)r=adNormalizeRequest(b.dataset.adRecordRequest,await c.contract.getRequest(b.dataset.adRecordRequest));await adDetails(r);});
+ for(const b of target.querySelectorAll('[data-ad-revoke]'))b.onclick=()=>adRun(async()=>{const record=records.find(r=>r.id===b.dataset.adRevoke),w=await adAuthorized(record.actorId),reason=prompt('Reason for revocation · the text stays off-chain:');if(!reason?.trim())return;const commitment=ethers.keccak256(ethers.toUtf8Bytes(JSON.stringify({reason:reason.trim(),salt:ethers.hexlify(crypto.getRandomValues(new Uint8Array(32)))})));await adWait(await w.contract.revokeRecord(record.id,commitment));await adHistory(certificatesOnly);adStatus('Revocation confirmed; history preserved.');});
+ adStatus('Documentary history loaded. This does not change the lot’s title or state.');
+}
+const analysisOriginalRender=render;
+render=function(){if(role==='analysis')adRender();else analysisOriginalRender();};
+const analysisEthereum=getWalletProvider();
+if(analysisEthereum?.on){analysisEthereum.on('accountsChanged',()=>{AD.token=null;AD.tokenExpires=0;if(role==='analysis')adStatus('Wallet changed. Access will be verified again for private actions.');});analysisEthereum.on('chainChanged',()=>{AD.token=null;AD.tokenExpires=0;});}
+if(role==='analysis')queueMicrotask(()=>adRun(adRefresh));
+
+/* ANALYSIS EXTENSION END */
 carregarAtorAtivo();
 render();
 restoreWallet();
@@ -7476,3 +7706,4 @@ if(walletProvider&&typeof walletProvider.on==="function"){
 
 
 </body></html>
+
