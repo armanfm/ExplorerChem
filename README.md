@@ -30,23 +30,6 @@ Traceability today pays through market access and risk management, not through a
 
 The technical demo follows these steps on Ethereum Sepolia and Solana Devnet. It uses an issuer (producer) wallet, a financier wallet and a third wallet that exercises transfer mechanics, plus the configured attestor when it is a different signer.
 
-## Documentary layer
-
-A separate contract links third-party documents to existing lots without changing custody, lot state or the RWA flow.
-
-Flow: the current lot holder requests a service (sampling, laboratory analysis, sample custody, audit or certification) from another registered company; the provider accepts or rejects; the provider records a private document (salted commitment on-chain, file in private storage) or publishes a certificate (SHA-256 and URI on-chain). Corrections create linked revisions; the issuer can revoke a record. Previous revisions and revocations remain visible.
-
-**What a record proves:** which registered company recorded which document, for which lot and request, and when; and whether a downloaded file matches that record.
-
-**What it does not prove:** that the content is scientifically correct, that the issuer is accredited, or that the lot complies with any regulation. The issuer attests authorship, not regulatory accreditation.
-
-### Limitations of the documentary layer
-
-- No on-chain conflict-of-interest rule: a holder can name itself or an affiliated   company as provider. Provider independence must be checked off-chain.
-- Documents are not tied to MUF/Elemental proof status; a lot with a divergent mass balance can still receive documents.
-- Certificates have no mandatory validity period.
-- In the demo, one wallet is authorized for several synthetic companies.
-
 | Step | Action | System behavior |
 |---|---|---|
 | 1. Evidence | The producer submits a private industrial JSON document | Anchor its hash and actor reference on Ethereum |
@@ -63,6 +46,23 @@ The 1, 2 and 3 SOL values illustrate separate funding, transfer and settlement a
 **Transfer restriction (roadmap).** The current Devnet program allows any wallet to take a listed offer, so step 6 demonstrates transfer mechanics only. The target design is not an open marketplace: transfers are restricted to enabled financing parties, with price and terms kept off-chain and only their hash on-chain.
 
 **Before requesting redemption:** the token is removed from circulation while the request is pending. The current program has no redemption-cancellation instruction or automatic timeout return. If nobody pays, the token remains in escrow for an indefinite period; the holder can update the requested amount but cannot resell the locked unit. Cancelling a marketplace offer is a separate operation that returns its sale-escrow token.
+
+## Documentary layer
+
+A separate contract links third-party documents to existing lots without changing custody, lot state or the RWA flow.
+
+Flow: the current lot holder requests a service (sampling, laboratory analysis, sample custody, audit or certification) from another registered company; the provider accepts or rejects; the provider records a private document (salted commitment on-chain, file in private storage) or publishes a certificate (SHA-256 and URI on-chain). Corrections create linked revisions; the issuer can revoke a record. Previous revisions and revocations remain visible.
+
+**What a record proves:** which registered company recorded which document, for which lot and request, and when; and whether a downloaded file matches that record.
+
+**What it does not prove:** that the content is scientifically correct, that the issuer is accredited, or that the lot complies with any regulation. The issuer attests authorship, not regulatory accreditation.
+
+### Limitations of the documentary layer
+
+- No on-chain conflict-of-interest rule: a holder can name itself or an affiliated   company as provider. Provider independence must be checked off-chain.
+- Documents are not tied to MUF/Elemental proof status; a lot with a divergent mass balance can still receive documents.
+- Certificates have no mandatory validity period.
+- In the demo, one wallet is authorized for several synthetic companies.
 
 ## Architecture
 
@@ -121,8 +121,8 @@ The issuer must retain and provide the original content. On-chain discovery alon
 | Ethereum Sepolia, chain ID `11155111` | ActorRegistry | `0x2fb8a06A929299fEFCAfef63fCf663C0b07016F8` |
 | Ethereum Sepolia | ProofRegistry E1 | `0x1934305d8FC0a426a0eF5D475E941341d8c9fC1e` |
 | Ethereum Sepolia | Lots E1 | `0x92eFE5Cf48d9e18d2B66F1547D3E6D445b1774a3` |
-| Solana Devnet | RWA program | `A2sUfkL18Znfo6A3u9mPHbMm1avm1A9J7NDpvwSTqT79` |
 | Ethereum Sepolia | DocumentaryRegistry | `0x0D3bB1A96bBaaB2e3b1f5F06ed91F672418c1b1f` |
+| Solana Devnet | RWA program | `A2sUfkL18Znfo6A3u9mPHbMm1avm1A9J7NDpvwSTqT79` |
 
 Solana `Config` specifies the permitted source chain and Lots address. The Config administrator can update that origin through the frontend's Phantom operation. Program upgrades, IDL publication and Config changes are separate operations; existing series retain their original source references.
 
@@ -165,7 +165,7 @@ Synthetic industrial JSON examples for use with the MUF and Elemental workflows 
 | [Physical model](docs/physical-model.md) | Terminology, evidence/proof states, balances, private openings, lot states and integrity controls |
 | [Economic model](docs/economic-model.md) | Attestation, lineage, prices, escrow, payment/burn, terms recovery and commitment encoding |
 | [Operations](docs/operations.md) | Repository paths, dependencies, CRE configuration, E1 wiring, Solana builds and migration considerations |
-- [Documentary layer contract](contracts/ExploreChemDocumentaryRegistry.sol): request states, record revisions, certificate publication and revocation.
+| [Documentary layer contract](contracts/ExploreChemDocumentaryRegistry.sol) | Request states, record revisions, certificate publication and revocation |
 
 ## Use of AI tools
 
