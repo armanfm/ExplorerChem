@@ -8,7 +8,7 @@ ExploreChem lets a rare-earth producer prove where a lot came from and how its m
 
 Here, an **economic obligation** means the issuer identity and origin/terms commitments recorded for a series, together with the token holder's ability to request a SOL settlement. In the intended use, the holder is the financier and the settlement is the issuer's repayment. The program executes settlement when a payer signs and funds it. It does not automatically debit the issuer or enforce free-form commercial terms.
 
-[Pitch video](https://youtu.be/HURDA09KyJc) · [Technical demo](https://youtu.be/gpj7f8joUoE) · [Live application](https://armanfm.github.io/ExplorerChem/) · [Source repository](https://github.com/armanfm/ExplorerChem)
+[Pitch video](https://youtu.be/HURDA09KyJc) · [Documentary layer demo](https://youtu.be/TAQMFwsR4Vc) · [Economic flow demo](https://youtu.be/gpj7f8joUoE) · [Live application](https://armanfm.github.io/ExplorerChem/) · [Source repository](https://github.com/armanfm/ExplorerChem)
 
 > Testnet MVP. Companies, documents and quantities used in examples are synthetic. Demonstration tokens do not create real commercial payment obligations and are not offered to the public. Any real commercial enforceability depends on agreements and validation outside the protocol.
 
@@ -29,6 +29,23 @@ Traceability today pays through market access and risk management, not through a
 ## Demonstration flow
 
 The technical demo follows these steps on Ethereum Sepolia and Solana Devnet. It uses an issuer (producer) wallet, a financier wallet and a third wallet that exercises transfer mechanics, plus the configured attestor when it is a different signer.
+
+## Documentary layer
+
+A separate contract links third-party documents to existing lots without changing custody, lot state or the RWA flow.
+
+Flow: the current lot holder requests a service (sampling, laboratory analysis, sample custody, audit or certification) from another registered company; the provider accepts or rejects; the provider records a private document (salted commitment on-chain, file in private storage) or publishes a certificate (SHA-256 and URI on-chain). Corrections create linked revisions; the issuer can revoke a record. Previous revisions and revocations remain visible.
+
+**What a record proves:** which registered company recorded which document, for which lot and request, and when; and whether a downloaded file matches that record.
+
+**What it does not prove:** that the content is scientifically correct, that the issuer is accredited, or that the lot complies with any regulation. The issuer attests authorship, not regulatory accreditation.
+
+### Limitations of the documentary layer
+
+- No on-chain conflict-of-interest rule: a holder can name itself or an affiliated   company as provider. Provider independence must be checked off-chain.
+- Documents are not tied to MUF/Elemental proof status; a lot with a divergent mass balance can still receive documents.
+- Certificates have no mandatory validity period.
+- In the demo, one wallet is authorized for several synthetic companies.
 
 | Step | Action | System behavior |
 |---|---|---|
@@ -57,6 +74,7 @@ The 1, 2 and 3 SOL values illustrate separate funding, transfer and settlement a
 | Chainlink CRE workflows | Integrity checks, total-mass accounting and elemental calculations using private evidence |
 | Solana RWA program | Issuer-linked economic series, Token-2022 issuance, coverage-reservation (anti-double-pledge) controls, transfer escrow and paid settlement/burn |
 | Private storage and frontend | Controlled evidence/results, authorized lot inspection and wallet-based operations |
+| DocumentaryRegistry on Ethereum | Service requests, provider acceptance, private document commitments, public certificates, revisions and revocation per lot |
 
 Ethereum records **commitments, custody states and declared physical lineage**. Solana records the economic instrument, token transfers, offers and SOL settlements. The design uses separate physical and economic state machines; it is not a token bridge.
 
@@ -104,6 +122,7 @@ The issuer must retain and provide the original content. On-chain discovery alon
 | Ethereum Sepolia | ProofRegistry E1 | `0x1934305d8FC0a426a0eF5D475E941341d8c9fC1e` |
 | Ethereum Sepolia | Lots E1 | `0x92eFE5Cf48d9e18d2B66F1547D3E6D445b1774a3` |
 | Solana Devnet | RWA program | `A2sUfkL18Znfo6A3u9mPHbMm1avm1A9J7NDpvwSTqT79` |
+| Ethereum Sepolia | DocumentaryRegistry | `0x0D3bB1A96bBaaB2e3b1f5F06ed91F672418c1b1f` |
 
 Solana `Config` specifies the permitted source chain and Lots address. The Config administrator can update that origin through the frontend's Phantom operation. Program upgrades, IDL publication and Config changes are separate operations; existing series retain their original source references.
 
@@ -136,7 +155,9 @@ Synthetic industrial JSON examples for use with the MUF and Elemental workflows 
 - Issuance creates accounts with storage deposits in addition to transaction fees. Closing eligible empty accounts refunds their deposits. The frontend adjusts compute limits from simulation and batches catalogue reads; [cost and RPC behavior](docs/economic-model.md#transaction-costs-and-optimizations) describes the details.
 - Lineage protection covers registered relationships and issuer identities. The registry holds up to 64 nodes and 32 reservations. Ethereum lot operations have their own state and proof requirements.
 - Measurements depend on their producers, and origin transfer depends on attestation. Commitments bind data; they do not independently certify laboratory measurements or provide zero-knowledge proofs.
-
+- The UI label "COMPLIANT" means only that MUF and Elemental proofs reached the calculated, in-tolerance state. It is not a regulatory compliance statement; implementing rules under CRMA (Regulation (EU) 2024/1252) Article 29 have not been adopted.
+- Documentary request metadata, actor IDs, document hashes and certificate URIs are   public on Sepolia. Private documents stay off-chain; access is enforced by the storage backend, not by the contract.
+  
 ## Documentation
 
 | Document | Contents |
@@ -144,6 +165,7 @@ Synthetic industrial JSON examples for use with the MUF and Elemental workflows 
 | [Physical model](docs/physical-model.md) | Terminology, evidence/proof states, balances, private openings, lot states and integrity controls |
 | [Economic model](docs/economic-model.md) | Attestation, lineage, prices, escrow, payment/burn, terms recovery and commitment encoding |
 | [Operations](docs/operations.md) | Repository paths, dependencies, CRE configuration, E1 wiring, Solana builds and migration considerations |
+- [Documentary layer contract](contracts/ExploreChemDocumentaryRegistry.sol): request states, record revisions, certificate publication and revocation.
 
 ## Use of AI tools
 
