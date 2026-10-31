@@ -59,7 +59,7 @@ Flow: the current lot holder requests a service (sampling, laboratory analysis, 
 
 ### Limitations of the documentary layer
 
-- No on-chain conflict-of-interest rule: a holder can name itself or an affiliated   company as provider. Provider independence must be checked off-chain.
+- No on-chain conflict-of-interest rule: a holder can name itself or an affiliated company as provider. Provider independence must be checked off-chain.
 - Documents are not tied to MUF/Elemental proof status; a lot with a divergent mass balance can still receive documents.
 - Certificates have no mandatory validity period.
 - In the demo, one wallet is authorized for several synthetic companies.
